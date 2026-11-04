@@ -2,7 +2,7 @@
 
 An 8-bit chat room where you play a few coins, talk to a character for two minutes, and call it: real human, yes or no. Some characters are other players. Some are bots running on NEAR AI's confidential models, and every word they say is signed inside the enclave, so when the round ends the room can prove who was a bot. Read the room right and you take the coins of those who read it wrong. Fool the room and you earn too.
 
-**Status, 2026-11-04: the end-to-end test variant runs on NEAR testnet** at https://realsies.xyz and https://realsies.lol, with test users instead of login and test coins (tREAL) instead of REAL. Mainnet launch planned for 2026-11-11 with the REAL token raised on meme.cooking. Built for the NEAR Hackathon (deadline 2026-11-14). Tracks: games, privacy, memecoins, open.
+**Status, 2026-11-04: the end-to-end test variant runs on NEAR testnet** at https://realsies.lol (realsies.xyz redirects there), with test users instead of login and test coins (tREAL) instead of REAL. Mainnet launch planned for 2026-11-11 with the REAL token raised on meme.cooking. Built for the NEAR Hackathon (deadline 2026-11-14). Tracks: games, privacy, memecoins, open.
 
 ## The problem
 
@@ -10,7 +10,7 @@ Human or Not proved people want to play this: AI21's 2023 run had over 10 millio
 
 ## Try the test variant (testnet, now)
 
-1. Open https://realsies.xyz. See "Who are you?" with six test users. Pick one, for example Ana.
+1. Open https://realsies.lol. See "Who are you?" with six test users. Pick one, for example Ana.
 2. See "Deposit to earn". Tap it for 100 test coins, or skip to play free. See your coins, or "Free mode", on the pillar.
 3. See the room: ten characters on pedestals, each with a gamertag and a face generated only for you. Tap one, choose 5 coins or Play free.
 4. Chat for up to two minutes. Then answer Real human? Yes / No. See "Locked until the round ends".
@@ -32,7 +32,7 @@ The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet
 
 Once live:
 
-1. Open https://realsies.xyz. Tap Play, pick a NEAR wallet, sign a message. See the room with 10 characters whose names and faces were generated for you.
+1. Open https://realsies.lol. Tap Play, pick a NEAR wallet, sign a message. See the room with 10 characters whose names and faces were generated for you.
 2. Deposit a few REAL to earn, or skip and play free. See your coin balance, or "Free mode", on the pillar.
 3. Tap a character, choose 5 coins if you hold any, chat for two minutes, answer Real human? Yes / No. See "Locked until the round ends" with the clock.
 4. When the round ends, open Results. See each character revealed, your score and rating, your coins won if you played coins, and a Verified button on every bot.
