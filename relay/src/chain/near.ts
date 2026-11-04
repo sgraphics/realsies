@@ -229,6 +229,8 @@ export class NearChain implements ChainAdapter {
       endsAtMs: r.ends_at_ms,
       revealed: r.status === 'revealed' || r.status === 'settled',
       settled: r.status === 'settled',
+      plays: typeof r.plays === 'number' ? r.plays : undefined,
+      characters: Array.isArray(r.characters) ? r.characters.length : undefined,
       raw: r,
     };
   }
@@ -410,6 +412,11 @@ export class NearChain implements ChainAdapter {
   }
   settleRound(roundId: number) {
     return this.op('settle_round', { round_id: roundId }, 300, 'FINAL');
+  }
+  async pruneRound(roundId: number, limit = 200): Promise<TxOutcome & { remaining?: number }> {
+    const out = await this.op('prune_round', { round_id: roundId, limit }, 300, 'FINAL');
+    const n = typeof out.value === 'number' ? out.value : Number(out.value);
+    return { ...out, remaining: out.ok && Number.isFinite(n) ? n : undefined };
   }
 
   play(account: string, roundId: number, handle: string, coins: number) {

@@ -7,6 +7,7 @@ import { MockChain } from './chain/mock.js';
 import { NearChain, readSecrets } from './chain/near.js';
 import { MockNearAi, RealNearAi, type NearAi } from './nearai/client.js';
 import { loadPersonas } from './personas.js';
+import { BotmasterHub, loadBotmasters } from './bot/remote.js';
 import { Game } from './game/game.js';
 import { createServer } from './server.js';
 import { logger, setLogLevel } from './log.js';
@@ -54,6 +55,7 @@ export interface App {
   ai: NearAi;
   game: Game;
   port: number;
+  hub: BotmasterHub;
   close(): Promise<void>;
 }
 
@@ -64,15 +66,27 @@ export async function createApp(overrides: Partial<Config> = {}, deps: { chain?:
   const chain = deps.chain ?? (await createChain(cfg, db));
   const ai = deps.ai ?? createAi(cfg, chain);
   const personas = loadPersonas(cfg.personasDir);
-  const game = new Game(cfg, db, chain, ai, personas);
+  const hub = new BotmasterHub(loadBotmasters(cfg.botmastersDir), cfg.remoteSilenceSeconds * 1000);
+  for (const p of personas) {
+    if (p.brain.kind !== 'remote') continue;
+    const bm = hub.get(p.brain.botmaster);
+    if (!bm || !bm.personas.includes(p.id)) {
+      log.warn(`persona ${p.id} names botmaster ${p.brain.botmaster}, which ${bm ? 'does not list it' : 'is not registered'}; it plays with the default brain`);
+    }
+  }
+  const game = new Game(cfg, db, chain, ai, personas, hub);
   await game.start();
-  const srv = createServer(game, { webDist: cfg.webDist, testMode: cfg.testMode });
+  const srv = createServer(game, { webDist: cfg.webDist, testMode: cfg.testMode, hub });
   const port = await srv.listen(cfg.port);
-  log.info(`relay on http://localhost:${port} (chain ${chain.kind} ${chain.contractId}, ai ${ai.kind}, ${personas.length} personas, test mode ${cfg.testMode})`);
+  log.info(
+    `relay on http://localhost:${port} (chain ${chain.kind} ${chain.contractId}, ai ${ai.kind}, ${personas.length} personas, ` +
+      `${hub.botmasters.length} botmasters, test mode ${cfg.testMode})`,
+  );
   return {
-    cfg, db, chain, ai, game, port,
+    cfg, db, chain, ai, game, port, hub,
     async close() {
       await game.stop();
+      hub.close();
       await srv.close();
       db.close();
     },

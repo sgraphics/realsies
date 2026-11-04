@@ -123,3 +123,46 @@ test('a bad commitment is reported, not opened; snapshot round-trips', async () 
   copy.restore(chain.snapshot());
   assert.deepEqual(await copy.getRound(1), await chain.getRound(1));
 });
+
+test('prune_round: like the contract, settled rounds only, plays then characters, until 0', async () => {
+  const { chain, at } = setup();
+  await chain.faucetDeposit('carol.testnet', 100n * COIN);
+  at(1000);
+  await chain.startRound(1, V.secret_hash, 1_793_800_000_000 + 600_000);
+  at(2000);
+  await chain.commitCharacters(1, [
+    { character_id: V.bot.character_id, commitment: V.bot.commitment },
+    { character_id: V.human.character_id, commitment: V.human.commitment },
+  ]);
+  at(10_000);
+  assert.ok((await chain.play('carol.testnet', 1, V.handles.carol_human, 10)).ok);
+  assert.ok((await chain.call('carol.testnet', 1, V.handles.carol_human, true)).ok);
+  assert.equal((await chain.pruneRound(2)).error, 'no such round');
+  assert.equal((await chain.pruneRound(1)).error, 'round is not settled', 'an open round cannot be pruned');
+  at(140_000);
+  await chain.endRoundNow(1);
+  at(141_000);
+  await chain.revealRound(1, V.secret);
+  assert.equal((await chain.pruneRound(1)).error, 'round is not settled', 'a revealed round cannot be pruned');
+  await chain.openCharacters(1, [humanOpening(['carol.testnet'])]);
+  assert.ok((await chain.settleRound(1)).ok);
+  const before = await chain.balanceOf('carol.testnet');
+  assert.deepEqual([(await chain.getRound(1))?.plays, (await chain.getRound(1))?.characters], [1, 2]);
+  // one play and two characters, one entry at a time (limit 0 clamps to 1, as in the contract)
+  assert.equal((await chain.pruneRound(1, 1)).remaining, 2);
+  assert.equal(await chain.getPlay(1, V.handles.carol_human), null, 'plays go first');
+  assert.ok(await chain.getCharacter(1, V.bot.character_id), 'characters still there');
+  assert.equal((await chain.pruneRound(1, 0)).remaining, 1);
+  assert.equal((await chain.pruneRound(1)).remaining, 0);
+  assert.equal((await chain.pruneRound(1, 500)).remaining, 0, 'pruning an empty round is a no-op');
+  assert.deepEqual(await chain.getRoundPlays(1), []);
+  assert.equal(await chain.getCharacter(1, V.human.character_id), null);
+  const r = await chain.getRound(1);
+  assert.ok(r?.settled, 'the round record stays, settled');
+  assert.deepEqual([r?.plays, r?.characters], [0, 0]);
+  assert.equal(await chain.balanceOf('carol.testnet'), before, 'balances are untouched');
+  // survives a snapshot
+  const copy = new MockChain();
+  copy.restore(chain.snapshot());
+  assert.deepEqual([(await copy.getRound(1))?.plays, (await copy.getRound(1))?.characters], [0, 0]);
+});

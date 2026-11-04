@@ -5,6 +5,9 @@ import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ServerMsg } from '../../shared/protocol.js';
 import { Game, GameError, type Conn } from './game/game.js';
+import type { BotmasterHub } from './bot/remote.js';
+import { BRAIN_PROTOCOL, INTENTS, LENGTHS, LIMITS, TOPICS } from './bot/api.js';
+import { STEERING, STEERING_SHA256, STEER_VERSION } from './bot/intents.js';
 import { errMsg } from './util.js';
 import { logger } from './log.js';
 
@@ -62,7 +65,7 @@ async function readBody(req: http.IncomingMessage): Promise<any> {
 
 type Handler = (m: RegExpMatchArray, req: http.IncomingMessage, url: URL) => Promise<unknown> | unknown;
 
-export function createServer(game: Game, opts: { webDist: string; testMode: boolean }) {
+export function createServer(game: Game, opts: { webDist: string; testMode: boolean; hub?: BotmasterHub }) {
   const routes: { method: string; re: RegExp; fn: Handler }[] = [];
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
 
@@ -85,6 +88,15 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
     if (!opts.testMode) throw new GameError('not_test_mode', 'test mode only', 403);
     await game.devEndRound();
     return { ok: true };
+  });
+  // the bot engine's published steering catalogue (docs/bot-api.md): what verifiers check system messages against
+  route('GET', /^\/api\/bot\/steering$/, () => ({
+    protocol: BRAIN_PROTOCOL, version: STEER_VERSION, sha256: STEERING_SHA256, intents: INTENTS, topics: TOPICS, lengths: LENGTHS, limits: LIMITS,
+    entries: STEERING.map((e) => ({ id: e.id, kind: e.kind, text: e.text })),
+  }));
+  route('GET', /^\/api\/dev\/bot-trace\/([^/]+)$/, (m, _req, url) => {
+    if (!opts.testMode) throw new GameError('not_test_mode', 'test mode only', 403);
+    return game.botTrace(decodeURIComponent(m[1]), url.searchParams.get('account') ?? '');
   });
   route('GET', /^\/api\/dev\/state$/, () => {
     if (!opts.testMode) throw new GameError('not_test_mode', 'test mode only', 403);
@@ -159,6 +171,15 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/bot/ws') {
+      if (!opts.hub) {
+        socket.write('HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nno remote brains on this relay\r\n');
+        socket.destroy();
+        return;
+      }
+      opts.hub.handleUpgrade(req, socket, head);
+      return;
+    }
     if (url.pathname !== '/ws') {
       socket.destroy();
       return;

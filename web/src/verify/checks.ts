@@ -5,6 +5,7 @@
 
 import type { VerifyBundle, VerifyCompletion } from '../../../shared/protocol.ts';
 import { normAddr, recoverEip191, sha256Hex } from './crypto.ts';
+import { isSteeringMessage, STEER_VERSION, STEERING_SHA256 } from '../../../shared/steering.ts';
 
 export type CheckStatus = 'pass' | 'fail' | 'na';
 export interface Check {
@@ -321,9 +322,30 @@ export function runChecks(bundle: VerifyBundle, opts: { localTranscript?: LocalL
         const reply = hb[ha.length];
         const prevVariants = [prev, prev.trim(), stripThink(prev).trim(), bubblesOf(prev).join('\n')];
         if (!reply || reply.role !== 'assistant' || !prevVariants.includes(reply.content)) { bad = i; why = 'previous reply missing or altered'; break; }
-        if (hb.slice(ha.length + 1).some((m) => m.role !== 'user')) { bad = i; why = 'unexpected non-player turn'; break; }
+        if (hb.slice(ha.length + 1).some((m) => m.role !== 'user' && !(m.role === 'system' && isSteeringMessage(m.content)))) { bad = i; why = 'unexpected non-player turn'; break; }
       }
       checks.push({ id: 'chain', label: 'Each request = previous request + previous reply + your new messages', status: ok(bad < 0), detail: bad < 0 ? `${comps.length} requests chained` : `Request ${bad + 1}: ${why}` });
+    }
+    // steering: the only text besides the persona prompt, the skin message and the player's lines
+    {
+      let notes = 0;
+      const foreign: string[] = [];
+      reqs.forEach((r, i) => {
+        if (!r) return;
+        r.messages.slice(2).forEach((m) => {
+          if (m.role !== 'system') return;
+          if (isSteeringMessage(m.content)) notes++;
+          else foreign.push(`request ${i + 1}`);
+        });
+      });
+      checks.push({
+        id: 'steering',
+        label: `Every extra system message is a published steering note (${STEER_VERSION})`,
+        status: comps.length ? ok(foreign.length === 0) : 'na',
+        detail: foreign.length
+          ? `Unknown system text in ${[...new Set(foreign)].join(', ')}`
+          : `${notes} note${notes === 1 ? '' : 's'} checked against the catalogue (sha256 ${STEERING_SHA256.slice(0, 16)}…)`,
+      });
     }
     // relay transcript vs signed replies
     const botLines = bundle.transcript.filter((m) => m.from === 'bot');

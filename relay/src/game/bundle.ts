@@ -4,7 +4,8 @@
 import type { SignaturePayload, VerifyBundle } from '../../../shared/protocol.js';
 import type { CompletionRow } from '../db.js';
 import type { AttestInfo, CharacterRec, ChatSide, RoundRec } from './types.js';
-import type { StoredMsg } from './bot.js';
+import type { StoredMsg } from '../bot/session.js';
+import { STEER_VERSION, STEERING_SHA256, steeringEntry } from '../bot/intents.js';
 
 export interface BundleExtras {
   /** index of the completion submitted on chain as this viewer's proof, if any (extra field) */
@@ -12,7 +13,26 @@ export interface BundleExtras {
   /** the contract's open report for this character (extra field) */
   openReport?: unknown;
   /** relay-side check of each completion (extra field) */
-  relayChecks?: { index: number; ok: boolean; validSignature: boolean; signerAttested: boolean }[];
+  relayChecks?: { index: number; ok: boolean; validSignature: boolean; signerAttested: boolean; steeringOk: boolean }[];
+  /** steering catalogue used by the bot engine and the steering message of each request (extra field) */
+  steering?: { version: string; catalogueSha256: string; requests: { index: number; ids: string[] }[] };
+}
+
+/** Steering ids of a request's system messages after message 1, or null if one is not in the catalogue. */
+export function steeringOf(request: string): string[] | null {
+  try {
+    const msgs = JSON.parse(request).messages as { role: string; content: unknown }[];
+    const ids: string[] = [];
+    for (const m of msgs.slice(2)) {
+      if (m.role !== 'system') continue;
+      const e = typeof m.content === 'string' ? steeringEntry(m.content) : undefined;
+      if (!e) return null;
+      ids.push(e.id);
+    }
+    return ids;
+  } catch {
+    return null;
+  }
 }
 
 export function buildBundle(a: {
@@ -79,8 +99,17 @@ export function buildBundle(a: {
     openReport: character.openReport,
     relayChecks: a.completions.map((c) => {
       const v = c.verify ? JSON.parse(c.verify) : null;
-      return { index: c.idx, ok: !!v?.ok, validSignature: !!v?.validSignature, signerAttested: !!v?.signerAttested };
+      return { index: c.idx, ok: !!v?.ok, validSignature: !!v?.validSignature, signerAttested: !!v?.signerAttested, steeringOk: steeringOf(c.request) !== null };
     }),
+    steering: {
+      version: STEER_VERSION,
+      catalogueSha256: STEERING_SHA256,
+      requests: a.completions.map((c) => {
+        const ids = steeringOf(c.request) ?? [];
+        // the steering message of this request is its last one (earlier ones are history)
+        return { index: c.idx, ids: ids.length ? [ids[ids.length - 1]] : [] };
+      }),
+    },
   };
 }
 

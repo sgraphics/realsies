@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { jsonStringify } from './util.js';
+import type { DraftRow } from './bot/session.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -33,6 +34,11 @@ CREATE TABLE IF NOT EXISTS bundles (chat_id TEXT PRIMARY KEY, round_id INTEGER N
 CREATE TABLE IF NOT EXISTS txs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, round_id INTEGER, kind TEXT NOT NULL,
   signer TEXT, hash TEXT, ok INTEGER NOT NULL, error TEXT, ms INTEGER);
+CREATE TABLE IF NOT EXISTS bot_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, say_id INTEGER NOT NULL, at INTEGER NOT NULL, steering TEXT NOT NULL,
+  request TEXT NOT NULL, response TEXT NOT NULL, completion_id TEXT, signature TEXT, verify TEXT, reason TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS bot_drafts_chat ON bot_drafts(chat_id);
+CREATE TABLE IF NOT EXISTS bot_traces (chat_id TEXT PRIMARY KEY, data TEXT NOT NULL);
 `;
 
 export interface CompletionRow {
@@ -188,6 +194,35 @@ export class Db {
       latencyMs: r.latency_ms,
       error: r.error,
     }));
+  }
+  /** Completions made for a say that was never shown (cancelled, unusable, late, unsigned): kept for audit, not in bundles. */
+  saveDraft(d: DraftRow): void {
+    this.sql
+      .prepare('INSERT INTO bot_drafts (chat_id, say_id, at, steering, request, response, completion_id, signature, verify, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(d.chatId, d.sayId, d.at, d.steering, d.request, d.response, d.completionId, d.signature, d.verify, d.reason);
+  }
+  loadDrafts(chatId: string): DraftRow[] {
+    const rows = this.sql.prepare('SELECT * FROM bot_drafts WHERE chat_id = ? ORDER BY id').all(chatId) as Record<string, any>[];
+    return rows.map((r) => ({
+      chatId: r.chat_id, sayId: r.say_id, at: r.at, steering: r.steering, request: r.request, response: r.response,
+      completionId: r.completion_id, signature: r.signature, verify: r.verify, reason: r.reason,
+    }));
+  }
+  /** The bot engine's event and action trace of one chat (diagnostics). */
+  saveTrace(chatId: string, data: unknown): void {
+    this.sql.prepare('INSERT INTO bot_traces (chat_id, data) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET data = excluded.data').run(chatId, jsonStringify(data));
+  }
+  loadTrace(chatId: string): unknown {
+    const r = this.sql.prepare('SELECT data FROM bot_traces WHERE chat_id = ?').get(chatId) as { data: string } | undefined;
+    return r ? JSON.parse(r.data) : undefined;
+  }
+  /** Settled rounds whose chain storage is not pruned yet, oldest first. */
+  settledUnpruned<T>(limit = 50): T[] {
+    return (
+      this.sql
+        .prepare("SELECT data FROM rounds WHERE status = 'settled' AND json_extract(data, '$.prunedAt') IS NULL ORDER BY round_id LIMIT ?")
+        .all(limit) as { data: string }[]
+    ).map((r) => JSON.parse(r.data));
   }
   completionStats(): { calls: number; promptChars: number; responseChars: number } {
     const r = this.sql.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(request)),0) AS q, COALESCE(SUM(LENGTH(response)),0) AS s FROM completions').get() as any;

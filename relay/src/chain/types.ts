@@ -60,6 +60,9 @@ export interface ChainRound {
   endsAtMs: number;
   revealed: boolean;
   settled: boolean;
+  /** plays and characters still stored for the round (0 and 0 once pruned) */
+  plays?: number;
+  characters?: number;
   raw: unknown;
 }
 
@@ -128,6 +131,12 @@ export interface ChainAdapter {
   revealRound(roundId: number, secret: string): Promise<TxOutcome>;
   openCharacters(roundId: number, openings: Opening[]): Promise<TxOutcome & { reports?: OpenReport[] }>;
   settleRound(roundId: number): Promise<TxOutcome>;
+  /**
+   * Frees a settled round's storage: deletes up to `limit` (default 200, 1 to 500) of its plays, then
+   * characters. `remaining` is how many are left; call until 0. Afterwards get_play, get_round_plays and
+   * get_character return nothing for the round; get_round still returns it (settled, empty lists).
+   */
+  pruneRound(roundId: number, limit?: number): Promise<TxOutcome & { remaining?: number }>;
 
   // players, signed with the test users' function-call keys in test mode
   play(account: string, roundId: number, handle: string, coins: number): Promise<TxOutcome>;

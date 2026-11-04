@@ -12,6 +12,10 @@ import type { ChainAdapter } from '../src/chain/types.js';
 import type { NearAi } from '../src/nearai/client.js';
 import { runScenario } from './scenario.js';
 import { WsClient, http } from './client.js';
+import { failures, loadBrowserChecks } from './browser-checks.js';
+import { STEERING_SHA256 } from '../src/bot/intents.js';
+import { LIMITS } from '../src/bot/api.js';
+import { charsOf } from '../src/bot/typing.js';
 
 function tmpDb(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'realsies-relay-'));
@@ -31,6 +35,7 @@ async function startApp(extra: Record<string, unknown> = {}, deps: { chain?: Cha
     devCallSeconds: 2,
     partnerLeftSeconds: 1,
     logLevel: 'warn',
+    devTraces: true,
     webDist: path.join(os.tmpdir(), 'no-web-dist'),
     ...extra,
   }, deps);
@@ -49,6 +54,119 @@ test('full scenario on the mock chain', { timeout: 120_000 }, async () => {
       log: () => {},
     });
     assert.ok(report.checks.length > 60, `ran ${report.checks.length} checks`);
+
+    // the paid bot chat's bundle through the web app's own Verify checks (web/src/verify/checks.ts)
+    const bundle = await http<any>(base, 'GET', `/api/verify/${report.bundleChatId}?account=cleo.realsies.testnet`);
+    assert.equal(bundle.steering.version, 'steer-v1');
+    assert.equal(bundle.steering.catalogueSha256, STEERING_SHA256);
+    assert.ok(bundle.relayChecks.every((c: any) => c.ok && c.steeringOk), 'relay checks');
+    const local = report.localTranscript;
+    assert.ok(local.some((l) => l.from === 'them'), 'the player saw bot lines');
+    const asIs = await loadBrowserChecks('as-is');
+    if (asIs) {
+      // today's checks pass everything except, once a request follows a steered one, the chain rule
+      const groups = asIs.runChecks(bundle, { localTranscript: local });
+      const f = failures(groups);
+      const n = groups.flatMap((g) => g.checks).length;
+      console.log(`  web checks as they are: ${n - f.length} of ${n} pass${f.length ? `; failing: ${f.join(' | ')}` : ''}`);
+      assert.ok(f.every((x) => /Each request = previous request.*unexpected non-player turn/.test(x)), `only the chain rule may fail:\n${f.join('\n')}`);
+    } else console.log('  web/src/verify/checks.ts not found: browser checks skipped');
+    const patched = await loadBrowserChecks('patched');
+    if (patched) {
+      const groups = patched.runChecks(bundle, { localTranscript: local });
+      console.log(`  web checks with the proposed steering change: ${groups.flatMap((g) => g.checks).filter((c) => c.status === 'pass').length} pass, ${failures(groups).length} fail`);
+      assert.deepEqual(failures(groups), [], 'with the proposed change every browser check passes');
+      const steer = groups.flatMap((g) => g.checks).find((c) => c.id === 'steering');
+      assert.equal(steer?.status, 'pass');
+      assert.equal(groups.find((g) => g.id === 'local')?.status, 'pass', 'your conversation matches the signed request');
+    } else console.log('  checks.ts changed shape: the patched run is skipped');
+  } finally {
+    await app.close();
+  }
+});
+
+test('a bot trace names the persona, so it is refused until the round settles', { timeout: 30_000 }, async () => {
+  const app = await startApp({ devTraces: false });
+  try {
+    const base = `http://localhost:${app.port}`;
+    const c = await WsClient.connect(base, 'eve.realsies.testnet');
+    await c.waitT('welcome', 5000);
+    for (let i = 0; i < 40; i++) {
+      const s = await http<any>(base, 'GET', '/api/dev/state');
+      if (s.round?.ready && (s.characters['human-committed'] ?? 0) >= 1) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    c.send({ t: 'pick_seat', level: 2, seatIndex: 0, mode: 'free' });
+    const m = (await c.waitT('matched', 10_000)).chat;
+    await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chatId);
+    c.send({ t: 'dev_end_chat', chatId: m.chatId });
+    await c.waitT('chat_ended', 3000);
+    await new Promise((r) => setTimeout(r, 300));
+    await assert.rejects(http(base, 'GET', `/api/dev/bot-trace/${m.chatId}?account=eve.realsies.testnet`), /409.*not_settled/);
+    await assert.rejects(http(base, 'GET', `/api/dev/bot-trace/${m.chatId}?account=ana.realsies.testnet`), /403.*forbidden/);
+    const st = await http<any>(base, 'GET', '/api/bot/steering');
+    assert.equal(st.entries.length, 37);
+    assert.equal(st.sha256, STEERING_SHA256);
+    c.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('bot chats: typing shows before every bot line, at human speed; player typing reaches the bot', { timeout: 60_000 }, async () => {
+  const scale = 0.25;
+  const app = await startApp({ chatSeconds: 30, botTimeScale: scale });
+  try {
+    const base = `http://localhost:${app.port}`;
+    const P = 'dex.realsies.testnet';
+    const c = await WsClient.connect(base, P);
+    await c.waitT('welcome', 5000);
+    for (let i = 0; i < 40; i++) {
+      const s = await http<any>(base, 'GET', '/api/dev/state');
+      if (s.round?.ready && (s.characters['human-committed'] ?? 0) >= 1) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    const seen: { t: string; on?: boolean; text?: string; at: number }[] = [];
+    c.send({ t: 'pick_seat', level: 1, seatIndex: 5, mode: 'free' });
+    const m = (await c.waitT('matched', 10_000)).chat;
+    await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chatId);
+    const t0 = Date.now();
+    const off = (() => {
+      const h = (ev: MessageEvent) => {
+        const x = JSON.parse(String(ev.data));
+        if (x.chatId !== m.chatId) return;
+        if (x.t === 'typing') seen.push({ t: 'typing', on: x.on, at: Date.now() });
+        if (x.t === 'message' && x.msg.from === 'them') seen.push({ t: 'message', text: x.msg.text, at: Date.now() });
+      };
+      (c as any).ws.addEventListener('message', h);
+      return () => (c as any).ws.removeEventListener('message', h);
+    })();
+    await new Promise((r) => setTimeout(r, 4000));
+    c.send({ t: 'typing', chatId: m.chatId, on: true });
+    await new Promise((r) => setTimeout(r, 800));
+    c.send({ t: 'say', chatId: m.chatId, text: 'hey, where are you from? what are you up to today' });
+    await c.waitT('message', 15_000, (x) => x.chatId === m.chatId && x.msg.from === 'them' && x.msg.at > t0 + 4800);
+    await new Promise((r) => setTimeout(r, 3000));
+    off();
+    c.send({ t: 'dev_end_chat', chatId: m.chatId });
+    await c.waitT('chat_ended', 3000);
+    await new Promise((r) => setTimeout(r, 300));
+    const msgs = seen.filter((x) => x.t === 'message');
+    assert.ok(msgs.length >= 2, `bot lines: ${msgs.length}`);
+    let prev = t0;
+    for (const msg of msgs) {
+      // the first indicator-on since the previous bot line, and the indicator on right before this one
+      const ons = seen.filter((x) => x.t === 'typing' && x.on && x.at >= prev && x.at <= msg.at);
+      assert.ok(ons.length > 0, `typing shown before "${msg.text}"`);
+      const typedMs = msg.at - ons[0].at;
+      const floor = Math.max(LIMITS.minBubbleMs, (charsOf(msg.text!) / LIMITS.maxCps) * 1000) * scale;
+      assert.ok(typedMs >= floor - 40, `"${msg.text}" after ${typedMs} ms of typing, floor ${floor}`);
+      prev = msg.at;
+    }
+    const trace = await http<any>(base, 'GET', `/api/dev/bot-trace/${m.chatId}`);
+    assert.ok(trace.trace.some((e: any) => e.k === 'event' && e.d.type === 'player_typing' && e.d.on), 'player typing reached the bot');
+    assert.ok(trace.trace.some((e: any) => e.k === 'event' && e.d.type === 'player_message'), 'player message reached the bot');
+    c.close();
   } finally {
     await app.close();
   }
@@ -89,7 +207,10 @@ test('natural round end, seal completion as the proof, model failures stay silen
     c.send({ t: 'pick_seat', level: 3, seatIndex: 1, mode: 'free' });
     const f = (await c.waitT('matched', 10_000)).chat;
     await c.waitT('chat_started', 10_000, (x) => x.chatId === f.chatId);
-    await new Promise((r) => setTimeout(r, 1500));
+    // the bot's first say (its opener) hits both failures; it shows nothing and backs off
+    for (let i = 0; i < 100 && ai.failNext > 0; i++) await new Promise((r) => setTimeout(r, 100));
+    assert.equal(ai.failNext, 0, 'the bot tried to speak');
+    await new Promise((r) => setTimeout(r, 400));
     assert.equal(c.msgs.filter((x) => x.t === 'message' && x.chatId === f.chatId).length, 0, 'silent after two failures');
     c.send({ t: 'say', chatId: f.chatId, text: 'hello?' });
     await c.waitT('message', 8000, (x) => x.chatId === f.chatId && x.msg.from === 'them');
@@ -174,6 +295,96 @@ test('partner_left, reconnect resumes the chat, room_empty, bad input', { timeou
     a2.send({ t: 'ping' });
     await a2.waitT('pong', 2000);
     a2.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('after results are stored the round is pruned on chain; results and bundles are still served', { timeout: 90_000 }, async () => {
+  const chain = new MockChain();
+  chain.callGraceMs = 1500;
+  chain.txLatencyMs = 5;
+  const app = await startApp({ chatSeconds: 8, pruneDelaySeconds: 0 }, { chain });
+  try {
+    const base = `http://localhost:${app.port}`;
+    const C = 'finn.realsies.testnet';
+    await http(base, 'POST', `/api/test-users/${C}/faucet`, { coins: 50 });
+    const c = await WsClient.connect(base, C);
+    const w = await c.waitT('welcome', 5000);
+    const R = w.round.roundId;
+    for (let i = 0; i < 40; i++) {
+      const s = await http<any>(base, 'GET', '/api/dev/state');
+      if (s.round?.ready && (s.characters['human-committed'] ?? 0) >= 1) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    c.send({ t: 'pick_seat', level: 1, seatIndex: 0, mode: 'paid', coins: 5 });
+    const m = (await c.waitT('matched', 10_000)).chat;
+    await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chatId);
+    c.send({ t: 'say', chatId: m.chatId, text: 'hi there' });
+    await c.waitT('chat_ended', 20_000, (x) => x.chatId === m.chatId);
+    c.send({ t: 'call', chatId: m.chatId, human: false });
+    await c.waitT('call_recorded', 5000, (x) => x.chatId === m.chatId);
+    const before = await chain.getRound(R);
+    assert.ok((before?.characters ?? 0) > 1 && before?.plays === 1, `round ${R} stores characters and the play`);
+    await http(base, 'POST', '/api/dev/end-round');
+    await c.waitT('results_ready', 40_000, (x) => x.roundId === R);
+    let after = await chain.getRound(R);
+    for (let i = 0; i < 50 && (after?.plays !== 0 || after?.characters !== 0); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      after = await chain.getRound(R);
+    }
+    assert.ok(after?.settled, 'the round record stays, settled');
+    assert.deepEqual([after?.plays, after?.characters], [0, 0], 'plays and characters pruned');
+    assert.deepEqual(await chain.getRoundPlays(R), []);
+    assert.ok(chain.txLog.some((t) => t.method === 'prune_round' && t.ok));
+    assert.ok(app.db.loadRound<any>(R)?.prunedAt, 'the relay recorded it');
+    // everything the player sees comes from the relay's store, not from chain views
+    const res = await http<any>(base, 'GET', `/api/rounds/${R}/results/${C}`);
+    assert.equal(res.chats.find((x: any) => x.chatId === m.chatId)?.right, true);
+    const b = await http<any>(base, 'GET', `/api/verify/${m.chatId}?account=${C}`);
+    assert.ok(b.completions.length >= 1);
+    // the next round is open and not pruned
+    const next = await chain.getRound(R + 1);
+    assert.ok(next && !next.settled && (next.characters ?? 0) > 0);
+    c.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('idle: no new round while nobody is connected; a connecting human starts one', { timeout: 90_000 }, async () => {
+  const chain = new MockChain();
+  chain.callGraceMs = 1500;
+  chain.txLatencyMs = 5;
+  // 33 s rounds: setup sends start_round only while more than 30 s are left
+  const app = await startApp({ roundMinutes: 0.55, chatSeconds: 5, callSeconds: 2, idleMinutes: 0.05 }, { chain });
+  try {
+    const base = `http://localhost:${app.port}`;
+    let s = await http<any>(base, 'GET', '/api/dev/state');
+    const R = s.round.roundId;
+    assert.equal(s.idle, false, 'a fresh relay starts its first round');
+    for (let i = 0; i < 40 && !(await chain.getRound(R)); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(await chain.getRound(R), 'round R went on chain');
+    // nobody connects: round R ends and no round R + 1 starts
+    const endsAt = s.round.endsAt;
+    await new Promise((r) => setTimeout(r, Math.max(0, endsAt - Date.now()) + 2500));
+    s = await http<any>(base, 'GET', '/api/dev/state');
+    assert.equal(s.round, null, 'no current round');
+    assert.equal(s.idle, true);
+    assert.equal(await chain.getRound(R + 1), null, 'no start_round on chain');
+    const txs = chain.txLog.length;
+    await new Promise((r) => setTimeout(r, 2000));
+    assert.equal(chain.txLog.filter((t, i) => i >= txs && (t.method === 'start_round' || t.method === 'commit_characters')).length, 0, 'no starts or commits while idle');
+    // a human connects: a round starts right away and the welcome shows it
+    const c = await WsClient.connect(base, 'ana.realsies.testnet');
+    const w = await c.waitT('welcome', 10_000);
+    assert.equal(w.round.roundId, R + 1);
+    assert.equal(w.round.status, 'open');
+    for (let i = 0; i < 40 && !(await chain.getRound(R + 1)); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(await chain.getRound(R + 1), 'start_round sent');
+    s = await http<any>(base, 'GET', '/api/dev/state');
+    assert.equal(s.idle, false);
+    c.close();
   } finally {
     await app.close();
   }

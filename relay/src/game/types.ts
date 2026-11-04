@@ -102,6 +102,8 @@ export interface RoundRec {
   settleTx?: string;
   settledAt?: number;
   resultsDone: boolean;
+  /** prune_round finished: the chain no longer stores this round's plays and characters */
+  prunedAt?: number;
   lastError?: string;
   attest: Record<string, AttestInfo>;
 }

@@ -50,6 +50,16 @@ export interface Config {
   chain: 'auto' | 'near' | 'mock';
   webDist: string;
   personasDir: string;
+  /** botmaster registrations for remote brains (relay/botmasters/*.json) */
+  botmastersDir: string;
+  /** a remote brain silent this long (seconds of brain time) is replaced by the default brain */
+  remoteSilenceSeconds: number;
+  /** serve /api/dev/bot-trace before the round settles (tests only: a trace names the persona) */
+  devTraces: boolean;
+  /** prune_round a settled round this long after its results are stored (0 = at once) */
+  pruneDelaySeconds: number;
+  /** no human connected for this long: no new rounds until one connects (0 = never idle) */
+  idleMinutes: number;
   /** Multiplies every bot delay (opener, debounce, typing). 1 in production; tests use less. */
   botTimeScale: number;
   /** Search delay range in seconds, [2.5, 6] per spec. */
@@ -94,6 +104,11 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     chain: (env.CHAIN as Config['chain']) || 'auto',
     webDist: resolveFromRepo(env.WEB_DIST || 'web/dist'),
     personasDir: resolveFromRepo(env.PERSONAS || 'relay/personas'),
+    botmastersDir: resolveFromRepo(env.BOTMASTERS || 'relay/botmasters'),
+    remoteSilenceSeconds: num('REMOTE_SILENCE_SECONDS', 20),
+    devTraces: env.DEV_TRACES === '1',
+    pruneDelaySeconds: num('PRUNE_DELAY_SECONDS', 300),
+    idleMinutes: num('IDLE_MINUTES', 10),
     botTimeScale: num('BOT_TIME_SCALE', 1),
     searchDelay: [num('SEARCH_MIN_SECONDS', 2.5), num('SEARCH_MAX_SECONDS', 6)],
     partnerLeftSeconds: num('PARTNER_LEFT_SECONDS', 15),

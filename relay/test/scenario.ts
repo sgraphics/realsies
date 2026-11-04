@@ -31,6 +31,8 @@ export interface ScenarioReport {
   results: Record<string, RoundResults>;
   bundleChatId: string;
   botMessages: string[];
+  /** the paid bot chat as the player's client saw it (for the browser's "Your conversation" check) */
+  localTranscript: { from: 'me' | 'them'; text: string }[];
 }
 
 const sha = (s: string | Uint8Array) => crypto.createHash('sha256').update(s).digest('hex');
@@ -111,8 +113,21 @@ export function verifyBundleIndependently(b: VerifyBundle, chainCommitment: stri
     check.eq(req.model, b.model, `completion ${c.index}: request model`);
     check.eq(req.messages[0], { role: 'system', content: b.personaPrompt }, `completion ${c.index}: message 0 is the persona prompt`);
     check.eq(req.messages[1], { role: 'system', content: b.skinMessage }, `completion ${c.index}: message 1 is the skin message with the tag`);
-    const turns = req.messages.slice(2);
-    if (prevTurns) check.eq(turns.slice(0, prevTurns.length), prevTurns, `completion ${c.index}: history extends the previous request`);
+    const turns = req.messages.slice(2) as { role: string; content: string }[];
+    // the bot engine's steering notes (relay/src/bot/intents.ts, steer-v1) are the only other system text
+    const steering = turns.filter((m) => m.role === 'system');
+    check.ok(
+      steering.every((m) => /^\[steer-v1\/[a-z_]+(\/[a-z_]+)?\] .+ Write only the message\.$/.test(m.content)),
+      `completion ${c.index}: every system message after message 1 is a steer-v1 note (${steering.length})`,
+    );
+    if (prevTurns) {
+      check.eq(turns.slice(0, prevTurns.length), prevTurns, `completion ${c.index}: history extends the previous request`);
+      const prevContent = JSON.parse(b.completions[b.completions.indexOf(c) - 1].response)?.choices?.[0]?.message?.content ?? '';
+      const reply = turns[prevTurns.length];
+      const variants = [prevContent, prevContent.trim(), bubbles(prevContent).join('\n')];
+      check.ok(reply?.role === 'assistant' && variants.includes(reply.content), `completion ${c.index}: then the previous reply`);
+      check.ok(turns.slice(prevTurns.length + 1).every((m) => m.role === 'user' || m.role === 'system'), `completion ${c.index}: then only player lines and a steering note`);
+    }
     prevTurns = turns;
     const content = JSON.parse(c.response)?.choices?.[0]?.message?.content;
     const all = bubbles(content);
@@ -356,7 +371,10 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     const rounds = await http<any[]>(o.base, 'GET', '/api/rounds');
     check.ok(rounds.some((x) => x.roundId === R && x.status === 'settled' && x.paidPlays === 2), 'rounds list shows the settled round');
     check.ok(rounds[0].roundId > R, 'next round started');
-    return { roundId: R, txs, checks: check.list, results: res, bundleChatId: paidC.chatId, botMessages };
+    const localTranscript = cc.msgs
+      .filter((m): m is Extract<ServerMsg, { t: 'message' }> => m.t === 'message' && m.chatId === paidC.chatId)
+      .map((m) => ({ from: m.msg.from, text: m.msg.text }));
+    return { roundId: R, txs, checks: check.list, results: res, bundleChatId: paidC.chatId, botMessages, localTranscript };
   } finally {
     for (const c of clients) c.close();
   }

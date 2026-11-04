@@ -20,7 +20,9 @@ import {
 import { randomHex } from '../crypto.js';
 import { splitPlay } from '../settlement.js';
 import { RATING_START } from '../scoring.js';
-import { BotSession, type BotHost, type StoredMsg } from './bot.js';
+import { BotSession, type BotHost, type BrainChoice, type StoredMsg } from '../bot/session.js';
+import { defaultBrain } from '../bot/brain.js';
+import type { BotmasterHub } from '../bot/remote.js';
 import { buildBundle, lastSignedCompletion } from './bundle.js';
 import { computeResults } from './results.js';
 import type { AttestInfo, CharacterRec, ChatSide, RoundRec, Search, UserRec } from './types.js';
@@ -97,6 +99,12 @@ export class Game implements BotHost {
   private settling = new Map<number, Promise<void>>();
   private housekeeping: NodeJS.Timeout | null = null;
   private startingRound: Promise<RoundRec> | null = null;
+  /** last time any human (test user) was connected; persisted as kv last_human_at */
+  private lastHumanAt = Date.now();
+  private lastHumanSaved = 0;
+  private pruning = false;
+  /** round -> consecutive prune failures and when to try again */
+  private pruneRetry = new Map<number, { n: number; at: number }>();
   stopped = false;
 
   constructor(
@@ -105,6 +113,8 @@ export class Game implements BotHost {
     readonly chain: ChainAdapter,
     readonly ai: NearAi,
     readonly personas: Persona[],
+    /** remote brains of registered botmasters (/bot/ws) */
+    readonly hub?: BotmasterHub,
   ) {
     this.botTimeScale = cfg.botTimeScale;
   }
@@ -150,9 +160,28 @@ export class Game implements BotHost {
       explorerAccount: `https://${this.chain.network === 'testnet' ? 'testnet.' : ''}nearblocks.io/address/{account}`,
     };
     this.loadUsers();
+    const seen = Number(this.db.getKv('last_human_at') ?? '');
+    this.lastHumanAt = Number.isFinite(seen) && seen > 0 ? seen : Date.now();
     await this.resume();
-    if (!this.current) await this.startRound();
+    if (!this.current) {
+      if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; the next round starts when one connects`);
+      else await this.startRound();
+    }
     this.housekeeping = setInterval(() => this.housekeep(), 30_000);
+  }
+
+  /** No human connected for IDLE_MINUTES: no new rounds (no start_round, no commits) until one connects. */
+  isIdle(): boolean {
+    return this.cfg.idleMinutes > 0 && this.conns.size === 0 && Date.now() - this.lastHumanAt >= this.cfg.idleMinutes * 60_000;
+  }
+
+  private markHuman(persist = false): void {
+    const now = Date.now();
+    this.lastHumanAt = now;
+    if (persist || now - this.lastHumanSaved > 15_000) {
+      this.lastHumanSaved = now;
+      this.db.setKv('last_human_at', String(now));
+    }
   }
 
   async stop(): Promise<void> {
@@ -257,11 +286,62 @@ export class Game implements BotHost {
 
   private housekeep(): void {
     try {
+      if (this.conns.size > 0) this.markHuman();
       if (this.current) this.db.pruneAttestationRaw(this.current.id - 30);
       for (const r of this.rounds.values()) if (r.status === 'settling' && !this.settling.has(r.id)) void this.settle(r);
-      if (!this.current && !this.startingRound && !this.stopped) void this.startRound();
+      if (!this.current && !this.startingRound && !this.stopped && !this.isIdle()) void this.startRound();
+      void this.pruneSettled();
     } catch (e) {
       log.error('housekeeping', e);
+    }
+  }
+
+  /**
+   * prune_round every settled round whose results, ratings and bundles are stored, PRUNE_DELAY_SECONDS
+   * after settlement (chain views stay readable for a while for anyone checking). Repeats until the
+   * contract reports 0 left; a round already empty on chain (pruned by hand) needs no transaction.
+   */
+  private async pruneSettled(): Promise<void> {
+    if (this.pruning || this.stopped) return;
+    this.pruning = true;
+    try {
+      const delay = this.cfg.pruneDelaySeconds * 1000;
+      for (const r of this.db.settledUnpruned<RoundRec>(50)) {
+        if (this.stopped) return;
+        if (!r.resultsDone || Date.now() < (r.settledAt ?? 0) + delay) continue;
+        const retry = this.pruneRetry.get(r.id);
+        if (retry && Date.now() < retry.at) continue;
+        let left: number | null = null;
+        if (r.startOk) {
+          const view = await this.chain.getRound(r.id).catch(() => undefined);
+          if (view === undefined) continue; // RPC trouble: next time
+          if (view === null || (view.plays === 0 && view.characters === 0)) left = 0;
+          else if (!view.settled) {
+            log.warn(`round ${r.id} is settled here but not on chain; not pruning`);
+            continue;
+          }
+          for (let i = 0; i < 20 && left !== 0; i++) {
+            const res = await this.chain.pruneRound(r.id, 200);
+            if (!res.ok || res.remaining === undefined) {
+              const n = (retry?.n ?? 0) + 1;
+              const wait = Math.min(30 * 60_000, 30_000 * 2 ** (n - 1));
+              this.pruneRetry.set(r.id, { n, at: Date.now() + wait });
+              log.warn(`prune_round ${r.id} failed (${n}x): ${res.error ?? 'no return value'}; next try in ${Math.round(wait / 1000)} s`);
+              break;
+            }
+            left = res.remaining;
+          }
+        } else left = 0; // never started on chain: nothing stored there
+        if (left !== 0) continue;
+        r.prunedAt = Date.now();
+        this.pruneRetry.delete(r.id);
+        this.db.saveRound(r.id, r.status, r);
+        log.info(`round ${r.id}: chain storage pruned`);
+      }
+    } catch (e) {
+      log.warn(`pruning: ${errMsg(e)}`);
+    } finally {
+      this.pruning = false;
     }
   }
 
@@ -445,7 +525,7 @@ export class Game implements BotHost {
     const id = newCharacterId();
     const salt = newSalt();
     const sorted = normalizeSigners(signers);
-    const payout = this.chain.accounts.bots;
+    const payout = p.payout ?? this.chain.accounts.bots;
     const preimage = botPreimage({ roundId: r.id, characterId: id, model: p.model, promptHash: p.promptHash, signers: sorted, payout, salt });
     const c: CharacterRec = {
       id, roundId: r.id, kind: 'bot', level, personaId: p.id, model: p.model, prompt: p.prompt, promptHash: p.promptHash,
@@ -565,7 +645,10 @@ export class Game implements BotHost {
     log.info(`round ${r.id} ended; settling in the background`);
     if (this.current === r) {
       this.current = null;
-      if (!this.stopped) await this.startRound();
+      if (this.stopped) {
+        /* shutting down */
+      } else if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; no new round until one connects`);
+      else await this.startRound();
     }
     void this.settle(r);
   }
@@ -573,8 +656,13 @@ export class Game implements BotHost {
   /** Test mode: force-end chats with a short call window, end_round_now, start the next round, settle. */
   async devEndRound(): Promise<void> {
     if (!this.cfg.testMode || !this.chainCfg.testMode) throw new GameError('not_test_mode', 'dev end-round needs test mode', 403);
+    this.markHuman(true); // a tester is here
     const r = this.current;
-    if (!r) throw new GameError('no_round', 'no open round', 409);
+    if (!r) {
+      // idle: nothing to end; a fresh round is what the caller is after
+      if (!this.stopped) await this.startRound();
+      return;
+    }
     if (r.endedEarly || r.status === 'settling' || r.status === 'settled') return;
     r.endedEarly = true;
     r.status = 'closing';
@@ -688,6 +776,8 @@ export class Game implements BotHost {
         this.broadcast({ t: 'results_ready', roundId: r.id });
         for (const account of this.conns.keys()) void this.pushMe(account);
         log.info(`round ${r.id} results ready`);
+        // results, ratings and bundles are stored: the chain may now free the round's storage
+        setTimeout(() => void this.pruneSettled(), this.cfg.pruneDelaySeconds * 1000 + 200).unref?.();
         return;
       } catch (e) {
         r.lastError = errMsg(e);
@@ -852,6 +942,13 @@ export class Game implements BotHost {
       clearTimeout(lt);
       this.leftTimers.delete(a);
     }
+    const wasIdle = !this.current && this.cfg.idleMinutes > 0 && Date.now() - this.lastHumanAt >= this.cfg.idleMinutes * 60_000;
+    this.markHuman(true);
+    if (!this.current && !this.stopped) {
+      // idle (or between rounds): a human is here, so a round starts now and the welcome shows it
+      if (wasIdle) log.info(`${a} connected while idle; starting a round`);
+      await this.startRound().catch((e) => log.error(`round start on connect of ${a}`, e));
+    }
     void this.ensureHuman(a).catch((e) => log.warn(`ensureHuman ${a}`, e));
     try {
       const me = await this.me(a);
@@ -868,6 +965,7 @@ export class Game implements BotHost {
     set?.delete(conn);
     if (set && set.size > 0) return;
     this.conns.delete(a);
+    this.markHuman(true); // connected until now: the idle clock starts here
     if (this.searches.has(a)) this.cancelSearch(a, false);
     const live = [...this.sides.values()].filter((s) => s.viewer === a && s.partnerKind === 'human' && (s.phase === 'placing' || s.phase === 'chatting'));
     if (live.length === 0) return;
@@ -1341,10 +1439,31 @@ export class Game implements BotHost {
         log.error(`bot chat ${side.chatId}: persona missing`);
         return;
       }
-      const session = new BotSession(this, side, persona, side.skinMessage!, r.attest[persona.model]?.attested ?? []);
+      const session = new BotSession(this, side, persona, side.skinMessage!, r.attest[persona.model]?.attested ?? [], {
+        brain: this.brainFor(persona, side.chatId),
+      });
       this.bots.set(side.chatId, session);
       session.start();
     }
+  }
+
+  /** The persona's remote brain when its botmaster drives it and is connected, else the default brain. */
+  private brainFor(persona: Persona, chatId: string): BrainChoice {
+    const seed = `${chatId}|${randomId(8)}`;
+    if (persona.brain.kind === 'remote' && this.hub) {
+      const name = persona.brain.botmaster;
+      const bm = this.hub.get(name);
+      if (bm && this.hub.drives(name, persona.id)) {
+        log.info(`bot chat ${chatId}: persona ${persona.id} driven by botmaster ${name}`);
+        return {
+          kind: 'remote', name, brain: this.hub.brain(name, chatId, persona.id),
+          silenceMs: this.hub.silenceMsOf(name),
+          onFallback: (why) => this.hub?.notice(chatId, name, 'fallback', `the default brain took over this chat: ${why}`),
+        };
+      }
+      log.info(`bot chat ${chatId}: botmaster ${name} of ${persona.id} is ${bm ? (bm.personas.includes(persona.id) ? 'offline' : 'not registered for it') : 'unknown'}; default brain`);
+    }
+    return { kind: 'default', brain: defaultBrain({ seed }) };
   }
 
   isChatting(side: ChatSide): boolean {
@@ -1357,9 +1476,10 @@ export class Game implements BotHost {
     this.sendTo(side.viewer, { t: 'message', chatId: side.chatId, msg: this.publicMsg(m) });
   }
 
-  botSay(side: ChatSide, text: string, completionIndex: number): void {
-    if (side.phase !== 'chatting') return;
+  botSay(side: ChatSide, text: string, completionIndex: number): boolean {
+    if (side.phase !== 'chatting' || this.stopped) return false;
     this.appendMessage(side, { id: randomId(6), from: 'them', text, at: Date.now(), ci: completionIndex });
+    return true;
   }
 
   botTyping(side: ChatSide, on: boolean): void {
@@ -1388,13 +1508,18 @@ export class Game implements BotHost {
       const other = this.sides.get(side.partnerChatId);
       if (other && other.phase === 'chatting') this.appendMessage(other, { id, from: 'them', text: t, at: now });
     } else {
-      this.bots.get(side.chatId)?.onPlayerMessage();
+      this.bots.get(side.chatId)?.onPlayerMessage({ id, text: t });
     }
   }
 
   typing(account: string, chatId: string, on: boolean): void {
     const side = this.sideOf(account, chatId);
-    if (side.partnerKind !== 'human' || !side.partnerChatId || side.phase !== 'chatting') return;
+    if (side.phase !== 'chatting') return;
+    if (side.partnerKind === 'bot') {
+      this.bots.get(side.chatId)?.onPlayerTyping(on);
+      return;
+    }
+    if (!side.partnerChatId) return;
     const other = this.sides.get(side.partnerChatId);
     if (other) this.sendTo(other.viewer, { t: 'typing', chatId: other.chatId, on });
   }
@@ -1415,6 +1540,8 @@ export class Game implements BotHost {
     for (const id of conv.sides) {
       const s = this.sides.get(id);
       if (!s || (s.phase !== 'placing' && s.phase !== 'chatting')) continue;
+      // a bot reply that has started to appear is shown in full, so screen and signed record agree
+      this.bots.get(s.chatId)?.flush();
       s.phase = 'calling';
       s.endedAt = now;
       s.endReason = reason;
@@ -1631,6 +1758,19 @@ export class Game implements BotHost {
     };
   }
 
+  /** The bot engine's trace of a chat. It names the persona, so like a bundle it is for the viewer after settlement (unless DEV_TRACES). */
+  botTrace(chatId: string, account: string): unknown {
+    const side = this.sides.get(chatId) ?? this.db.loadChat<ChatSide>(chatId);
+    if (!side || side.partnerKind !== 'bot') throw new GameError('unknown_chat', 'no such bot chat', 404);
+    if (!this.cfg.devTraces && side.viewer !== account) throw new GameError('forbidden', 'only the chat viewer can open its trace', 403);
+    const r = this.rounds.get(side.roundId) ?? this.db.loadRound<RoundRec>(side.roundId);
+    if (!this.cfg.devTraces && (!r || r.status !== 'settled')) throw new GameError('not_settled', 'bot traces are published after the round settles', 409);
+    const trace = this.db.loadTrace(chatId);
+    if (!trace) throw new GameError('not_found', 'no bot trace for that chat (yet)', 404);
+    const drafts = this.db.loadDrafts(chatId).map((d) => ({ sayId: d.sayId, steering: d.steering, reason: d.reason }));
+    return { chatId, ...(trace as object), completions: this.db.loadCompletions(chatId).length, drafts };
+  }
+
   verify(chatId: string, account: string): VerifyBundle {
     const side = this.sides.get(chatId) ?? this.db.loadChat<ChatSide>(chatId);
     if (!side) throw new GameError('unknown_chat', 'no such chat', 404);
@@ -1672,6 +1812,8 @@ export class Game implements BotHost {
       online: [...this.conns.keys()],
       searches: [...this.searches.values()].map((s) => ({ account: s.account, level: s.level, seat: s.seatIndex, mode: s.mode })),
       activeChats: [...this.sides.values()].filter((s) => s.phase !== 'called' && s.phase !== 'missed').length,
+      idle: this.isIdle(),
+      lastHumanAt: this.lastHumanAt,
       queues: this.chain.queueDepth(),
       ai: this.ai.kind,
       chain: this.chain.kind,

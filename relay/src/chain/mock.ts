@@ -111,7 +111,10 @@ export class MockChain implements ChainAdapter {
   async getRound(roundId: number): Promise<ChainRound | null> {
     const r = this.rounds.get(roundId);
     if (!r) return null;
-    return { roundId, secretHash: r.secretHash, endsAtMs: r.endsAt, revealed: r.secret !== null, settled: r.settled, raw: { mock: true } };
+    return {
+      roundId, secretHash: r.secretHash, endsAtMs: r.endsAt, revealed: r.secret !== null, settled: r.settled, plays: r.plays.size, characters: r.chars.size,
+      raw: { mock: true, characters: [...r.chars.keys()], plays: r.plays.size },
+    };
   }
   async getCharacter(roundId: number, characterId: string): Promise<ChainCharacter | null> {
     const c = this.rounds.get(roundId)?.chars.get(characterId);
@@ -337,6 +340,28 @@ export class MockChain implements ChainAdapter {
       }
       r.settled = true;
     });
+  }
+
+  /** Same rules as the contract: settled rounds only; up to `limit` (default 200, 1 to 500) plays, then characters. */
+  async pruneRound(roundId: number, limit?: number): Promise<TxOutcome & { remaining?: number }> {
+    const out = await this.tx(this.accounts.operator, 'prune_round', () => {
+      const r = this.round(roundId);
+      if (!r.settled) throw new ContractError('round is not settled');
+      const lim = Math.min(500, Math.max(1, Math.floor(limit ?? 200)));
+      let n = 0;
+      for (const h of [...r.plays.keys()]) {
+        if (n >= lim) break;
+        r.plays.delete(h);
+        n++;
+      }
+      for (const c of [...r.chars.keys()]) {
+        if (n >= lim) break;
+        r.chars.delete(c);
+        n++;
+      }
+      return r.plays.size + r.chars.size;
+    });
+    return { ...out, remaining: out.ok ? (out.value as number) : undefined };
   }
 
   // ---------- players ----------

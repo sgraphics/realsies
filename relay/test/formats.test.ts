@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import {
   botPreimage, chatTag, commitmentOf, handleOf, humanPreimage, normalizeSigners, promptHash, secretHash, skinMessage, seatSeed,
 } from '../src/formats.js';
-import { gamertag } from '../../shared/names.js';
+import { gamertag, WORDS } from '../../shared/names.js';
+import { sha256Hex } from '../src/crypto.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const vectorsFile = path.resolve(here, '../../contracts/game/tests/vectors.json');
@@ -76,5 +77,34 @@ test('seat seeds are deterministic per viewer, round, level and seat', () => {
   assert.notEqual(a, seatSeed('k', 3, 'ben.realsies.testnet', 2, 4));
   assert.notEqual(a, seatSeed('k', 3, 'ana.realsies.testnet', 2, 5));
   assert.match(a, /^[0-9a-f]{64}$/);
-  assert.match(gamertag(a), /^[A-Z][a-z]+[A-Z][a-z]+\d{2,3}$/);
+  assert.match(gamertag(a), /^[A-Z][a-z]+\d{2,3}$/);
+});
+
+test('gamertags v2: one word plus 2 or 3 digits, deterministic, no bot words', () => {
+  const words = new Set(WORDS);
+  assert.ok(words.size >= 100 && words.size === WORDS.length, 'word list without duplicates');
+  for (const w of WORDS) {
+    assert.match(w, /^[A-Z][a-z]+$/, `one capitalised word: ${w}`);
+    assert.ok(!/^(bot|robot|droid|android|cyborg|ai|gpt|llm|model|machine|cpu|chip)$/i.test(w), `no bot hint: ${w}`);
+  }
+  let two = 0;
+  const seen = new Set<string>();
+  const N = 3000;
+  for (let i = 0; i < N; i++) {
+    const seed = sha256Hex(`names|${i}`);
+    const g = gamertag(seed);
+    assert.equal(gamertag(seed), g, 'deterministic');
+    const m = /^([A-Z][a-z]+)(\d{2,3})$/.exec(g);
+    assert.ok(m, `format: ${g}`);
+    assert.ok(words.has(m![1]), `word from the list: ${g}`);
+    const n = Number(m![2]);
+    if (m![2].length === 2) {
+      two++;
+      assert.ok(n >= 10 && n <= 99, g);
+    } else assert.ok(n >= 100 && n <= 999, g);
+    seen.add(m![1]);
+  }
+  assert.ok(Math.abs(two / N - 86 / 256) < 0.04, `about a third have two digits (${two} of ${N})`);
+  assert.ok(seen.size > WORDS.length * 0.9, `words spread across the list (${seen.size} of ${WORDS.length})`);
+  assert.equal(gamertag('not hex at all'), gamertag('not hex at all'));
 });
