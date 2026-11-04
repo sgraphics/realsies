@@ -15,7 +15,7 @@ import { CallScreen } from './screens/Call.tsx';
 import { ResultsScreen } from './screens/Results.tsx';
 import { VerifyDrawer } from './screens/Verify.tsx';
 import { PastRounds } from './screens/PastRounds.tsx';
-import { DevToolbar } from './screens/DevToolbar.tsx';
+import { TermsScreen } from './screens/Terms.tsx';
 import { Button, Icon } from './ui/kit.tsx';
 import { applyTheme } from './ui/theme.ts';
 import { runQa } from './qa.ts';
@@ -31,6 +31,7 @@ export function App({ store }: { store: Store }) {
   const s = useStore(store);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [verify, setVerify] = useState<string | null>(null);
+  const [terms, setTerms] = useState(false);
   const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info'; at: number } | null>(null);
   const gated = useRef(new Set<string>());
   const lastReady = useRef(0);
@@ -44,6 +45,7 @@ export function App({ store }: { store: Store }) {
       if (what === 'rounds') setOverlay({ kind: 'rounds' });
       if (what === 'results') setOverlay({ kind: 'results', roundId: arg as number });
       if (what === 'verify') setVerify(arg as string);
+      if (what === 'terms') setTerms(true);
     }).catch((e) => console.warn(e));
   }, [store]);
 
@@ -84,12 +86,13 @@ export function App({ store }: { store: Store }) {
     return () => clearTimeout(t);
   }, [toast?.at]);
 
-  const testnet = s.config?.testMode || s.config?.network === 'testnet';
+  const testnet = !!(s.config?.testMode || s.config?.network === 'testnet');
+  const openTerms = () => setTerms(true);
   let screen;
-  if (!s.accountId) screen = <WhoScreen store={store} />;
-  else if (s.search && !s.chat) screen = <ChatScreen store={store} />;
-  else if (s.chat && (s.chat.phase === 'searching' || s.chat.phase === 'placing' || s.chat.phase === 'chatting')) screen = <ChatScreen store={store} />;
-  else if (s.chat) screen = <CallScreen store={store} onBack={() => store.actions.clearChat()} />;
+  if (!s.accountId) screen = <WhoScreen store={store} onTerms={openTerms} />;
+  else if (s.search && !s.chat) screen = <ChatScreen store={store} onTerms={openTerms} />;
+  else if (s.chat && (s.chat.phase === 'searching' || s.chat.phase === 'placing' || s.chat.phase === 'chatting')) screen = <ChatScreen store={store} onTerms={openTerms} />;
+  else if (s.chat) screen = <CallScreen store={store} onBack={() => store.actions.clearChat()} onTerms={openTerms} />;
   else
     screen = (
       <LobbyScreen
@@ -109,6 +112,7 @@ export function App({ store }: { store: Store }) {
           setOverlay(null);
           store.actions.logout();
         }}
+        onTerms={openTerms}
       />
     );
 
@@ -152,8 +156,7 @@ export function App({ store }: { store: Store }) {
         />
       )}
       {verify && <VerifyDrawer store={store} chatId={verify} onClose={() => setVerify(null)} />}
-      {s.config?.testMode && s.accountId && <DevToolbar store={store} />}
-      {testnet && <div class="testnet-ribbon">TESTNET</div>}
+      {terms && <TermsScreen testnet={testnet} onClose={() => setTerms(false)} />}
       {s.accountId && s.status !== 'open' && s.welcomed && (
         <div class="toast-stack"><div class="px-panel tight toast">Reconnecting…</div></div>
       )}

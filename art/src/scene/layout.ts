@@ -1,10 +1,11 @@
-// Layouts in game pixels for every screen composition, both orientations, any logical size that
-// chooseScale produces. Rects returned here are where the web app puts its DOM overlay.
+// Layouts in game pixels for every screen composition, both orientations, any logical size.
+// Rects returned here are where the web app puts its DOM overlay. chooseScale() picks the largest
+// integer scale at which the lobby (or the test-user hall) fits under the HUD; the other screens
+// use the same scale so the pixel size never jumps between screens.
 
-import type { CallLayout, ChatLayout, HallLayout, LobbyLayout, Orientation, Point, Rect, SeatSlot } from './types.ts';
-import { LOGO_H, LOGO_W } from '../themes/logo.ts';
+import type { CallLayout, ChatLayout, HallLayout, LabelSpec, LobbyLayout, Orientation, Point, Rect, ScaleInfo, SeatSlot } from './types.ts';
 
-/** Foreground frame thickness on every side. */
+/** Foreground frame thickness on every side (the top bar sits under the HUD when there is one). */
 export const FRAME = 14;
 /** Arch border thickness drawn outside each opening. */
 export const ARCH_T = 8;
@@ -12,11 +13,10 @@ export const PED_W = 48;
 export const PED_H = 24;
 /** Character box top relative to the pedestal top (feet at row 45 land on the pedestal's top face). */
 export const CHAR_ON_PED = 40;
-/** Pedestal face plaque, relative to the pedestal: the DOM gamertag sits here. */
-export const PLAQUE = { x: 7, y: 12, w: 34, h: 9 };
-
-export const TABS_W = 104;
-export const TABS_H = 18;
+/** Gamertag tag top relative to the pedestal top: just under the solid part, over the faded-out base. */
+export const LABEL_DY = 18;
+/** Rows at the top of a character box that may touch the tag of the row behind (the median head starts at row 3). */
+const HEAD_SLACK = 3;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -28,24 +28,43 @@ function orient(w: number, h: number): Orientation {
   return w >= h ? 'landscape' : 'portrait';
 }
 
-/** Text-safe rect on a canvas pillar: a tall column keeps clear of capital and base; a wide strip is a tablet. */
-export function pillarTextRect(r: Rect, bottom?: number): Rect {
-  if (r.w > r.h * 1.3) return { x: r.x + 6, y: r.y + 5, w: r.w - 12, h: r.h - 10 };
-  const y = r.y + 16;
-  const b = bottom ?? r.y + r.h - 12;
-  return { x: r.x + 8, y, w: r.w - 16, h: Math.max(8, b - y) };
+export interface LayoutOpts {
+  /** CSS px per game px: sizes the DOM tags and panels in game px. Default 2. */
+  cssPx?: number;
+  /** Composition (chooseScale decides it once for every screen). Default: from the aspect. */
+  orientation?: Orientation;
+  /** Call screen after the call: no question panel, the partner moves up. */
+  locked?: boolean;
 }
 
-/** A seat on a pedestal whose top-left is (px, py); label sits on the pedestal plaque. */
-export function seatAt(index: number, px: number, py: number, labelW = 64, labelH = 9, cellW = 60): SeatSlot {
-  const cx = px + PED_W / 2;
-  const lw = Math.min(labelW, Math.max(44, cellW - 2));
+/**
+ * Tag size for a gamertag under a pedestal, in game px. One line holds an 11-character tag
+ * (Pickle435) at a readable size; when the cell is too narrow in CSS px it becomes two lines
+ * (word, then digits).
+ */
+export function labelSpec(cellW: number, cssPx: number, lines?: 1 | 2): LabelSpec {
+  const k = Math.max(0.25, cssPx);
+  const one = clamp(Math.round(k * 9), 17, 38); // CSS px of a one-line tag (grows with the room's zoom)
+  const n: 1 | 2 = lines ?? (cellW * k < 82 ? 2 : 1); // 11 characters need about 82 CSS px at 11 px
+  const css = n === 1 ? one : Math.round(one * 1.8);
+  return { h: Math.max(7, Math.ceil(css / k)), lines: n };
+}
+
+/** A seat on a pedestal whose top-left is (px, py); the tag is centred beneath the pedestal. */
+export function seatAt(index: number, px: number, py: number, cellW: number, lab: LabelSpec, k = 1): SeatSlot {
+  const pw = PED_W * k;
+  const cx = px + pw / 2;
+  const lw = Math.max(pw - 4, Math.floor(cellW - 2));
+  const label: Rect = { x: Math.round(cx - lw / 2), y: py + LABEL_DY * k, w: lw, h: lab.h };
+  const charTop = py - CHAR_ON_PED * k;
+  const hw = Math.max(pw, Math.floor(cellW - 2));
   return {
     index,
-    pedestal: { x: px, y: py, w: PED_W, h: PED_H },
-    char: { x: px + (PED_W - 32) / 2, y: py - CHAR_ON_PED },
-    label: { x: Math.round(cx - lw / 2), y: py + PLAQUE.y, w: lw, h: labelH },
-    hit: { x: Math.round(cx - Math.max(PED_W, cellW - 2) / 2), y: py - CHAR_ON_PED + 4, w: Math.max(PED_W, cellW - 2), h: CHAR_ON_PED - 4 + PED_H },
+    pedestal: { x: px, y: py, w: pw, h: PED_H * k },
+    char: { x: px + 8 * k, y: charTop },
+    label,
+    hit: { x: Math.round(cx - hw / 2), y: charTop + 2 * k, w: hw, h: label.y + label.h - (charTop + 2 * k) },
+    scale: k,
   };
 }
 
@@ -60,16 +79,20 @@ export interface LayoutExtras {
   arches: ArchSpec[];
   /** Horizon of the deep floor inside the main arch. */
   floorY: number;
-  /** Pillar-like canvas columns to draw. */
+  /** Pillar-like canvas columns to draw (none since the HUD carries the stats). */
   pillars: Rect[];
-  /** Plates drawn on canvas (banner). */
+  /** Plates drawn on canvas (none since the HUD carries the level banner). */
   plates: Rect[];
-  /** Logo top-left, if drawn. */
+  /** Logo top-left, if drawn on the canvas (the HUD draws it now). */
   logoAt?: Point;
-  /** Where wall-mounted props may go (left and right of the main arch). */
+  /** Where wall-mounted props may go (chat: either side of the partner). */
   wallSpots: Point[];
   /** Big empty wall areas a theme may decorate (shields, vines, murals). */
   decor: Rect[];
+  /** The area the eye should land on; the renderer dims the room away from it. */
+  focus: Rect;
+  /** Extra dimming behind DOM text that sits on the world (chat bubbles). */
+  calm: Rect[];
 }
 
 const EXTRAS = new WeakMap<object, LayoutExtras>();
@@ -95,29 +118,92 @@ export function extrasOf(l: object): LayoutExtras {
   const e = EXTRAS.get(l);
   if (e) return e;
   // a cloned or hand-made layout: rebuild the extras from its kind and size
-  const a = l as { kind?: string; w: number; h: number; seats?: unknown[] };
+  const a = l as { kind?: string; w: number; h: number; orientation?: Orientation; seats?: unknown[] };
+  const o = { orientation: a.orientation };
   const again =
-    a.kind === 'lobby' ? layoutLobby(a.w, a.h, a.seats?.length ?? 10) :
-    a.kind === 'chat' ? layoutChat(a.w, a.h) :
-    a.kind === 'call' ? layoutCall(a.w, a.h) :
-    layoutHall(a.w, a.h, a.seats?.length ?? 0);
+    a.kind === 'lobby' ? layoutLobby(a.w, a.h, a.seats?.length ?? 10, o) :
+    a.kind === 'chat' ? layoutChat(a.w, a.h, o) :
+    a.kind === 'call' ? layoutCall(a.w, a.h, o) :
+    layoutHall(a.w, a.h, a.seats?.length ?? 0, o);
   return EXTRAS.get(again)!;
+}
+
+// ---------------------------------------------------------------- scale
+
+/** Largest scale tried (4K monitors at 1 dppx land around 10 to 12). */
+const MAX_SCALE = 12;
+
+/**
+ * The world scale for a window: the largest integer number of device pixels per game pixel at
+ * which the composition fits in the box under the HUD (`hud` CSS px tall; its top frame bar
+ * hides under the HUD). Lobby, chat and call share the lobby's scale; the hall checks its own.
+ */
+export function chooseScale(cssW: number, cssH: number, dpr = 1, hud = 0, kind: 'lobby' | 'hall' = 'lobby'): ScaleInfo {
+  const devW = Math.max(1, Math.round(cssW * dpr));
+  const devH = Math.max(1, Math.round(Math.max(1, cssH - hud) * dpr));
+  const hidden = hud > 0 ? FRAME : 0;
+  const pref: Orientation = cssW >= cssH - hud ? 'landscape' : 'portrait';
+  const make = (s: number, orientation: Orientation): ScaleInfo => {
+    const cssPx = s / dpr;
+    return { scale: s, cssPx, w: Math.ceil(devW / s), h: Math.ceil(devH / s) + hidden, orientation, top: hud - hidden * cssPx };
+  };
+  const fits = (si: ScaleInfo, orientation: Orientation): boolean => {
+    const o = { cssPx: si.cssPx, orientation };
+    return kind === 'hall' ? layoutHall(si.w, si.h, 6, o).fit : layoutLobby(si.w, si.h, 10, o).fit;
+  };
+  for (let s = MAX_SCALE; s >= 1; s--) {
+    const si = make(s, pref);
+    const okL = fits(si, 'landscape');
+    const okP = fits(si, 'portrait');
+    if (!okL && !okP) continue;
+    return make(s, okL && okP ? pref : okL ? 'landscape' : 'portrait');
+  }
+  return make(1, pref);
 }
 
 // ---------------------------------------------------------------- lobby
 
-export function layoutLobby(w: number, h: number, n = 10): LobbyLayout {
-  return orient(w, h) === 'landscape' ? lobbyLandscape(w, h, n) : lobbyPortrait(w, h, n);
-}
-
-function gridSeats(arch: ArchSpec, n: number, cols: number, rows: number, bottom: number, minPitch: number, maxPitch: number): { seats: SeatSlot[]; pitch: number } {
-  const a = arch.rect;
-  const cell = (a.w - 6) / cols;
-  const frontY = bottom - PED_H + 1; // pedestal base just above the frame
-  // the back row's characters must clear the arch cap at the outer columns
-  const capClear = a.y + Math.round(arch.rise * 0.42) - 4;
-  const room = frontY - CHAR_ON_PED - capClear;
-  const pitch = rows > 1 ? clamp(Math.floor(room / (rows - 1)), minPitch, maxPitch) : 0;
+/**
+ * Ten pedestals under an arch that spans the room: 5 x 2 in landscape, 2 x 5 in portrait. Rows
+ * are spaced so the heads in front never sit under the tags of the row behind; spare height goes
+ * mostly above the back row (under the arch) and a little below the front tags.
+ */
+export function layoutLobby(w: number, h: number, n = 10, o: LayoutOpts = {}): LobbyLayout {
+  const orientation = o.orientation ?? orient(w, h);
+  const cssPx = o.cssPx ?? 2;
+  const land = orientation === 'landscape';
+  const inner = innerRect(w, h);
+  const cols = land ? (n > 5 ? Math.ceil(n / 2) : Math.max(1, n)) : n > 5 ? 2 : 1;
+  const rows = Math.max(1, Math.ceil(n / cols));
+  const ax = inner.x + 2 + ARCH_T;
+  const aw = inner.w - 4 - ARCH_T * 2;
+  const aTop = inner.y + 2 + ARCH_T;
+  const cell = Math.min(land ? 80 : 100, (aw - 6) / cols);
+  const minCell = land ? 52 : 56;
+  const lab = labelSpec(cell, cssPx);
+  const lb = LABEL_DY + lab.h; // tag bottom below the pedestal top
+  const minPitch = CHAR_ON_PED - HEAD_SLACK + lb;
+  const maxPitch = minPitch + 10;
+  const frontMax = inner.y + inner.h - 1 - lb;
+  // heads of the outer back-row characters clear the arch cap
+  const gridW = cell * cols;
+  const gx = ax + 3 + (aw - 6 - gridW) / 2;
+  const nx = Math.min(0.995, Math.abs(gx + cell / 2 - 12 - (ax + aw / 2)) / Math.max(1, aw / 2));
+  const capK = 1 - Math.sqrt(1 - nx * nx);
+  const riseMax = clamp(Math.round(aw * (land ? 0.14 : 0.22)), 14, 44);
+  const riseMin = 10;
+  const room = frontMax - (aTop + CHAR_ON_PED - HEAD_SLACK); // for (rows - 1) pitches + the cap depth
+  let rise = riseMax;
+  let pitch = rows > 1 ? Math.floor((room - capK * rise) / (rows - 1)) : 0;
+  if (rows > 1 && pitch < minPitch) {
+    rise = clamp(Math.floor((room - minPitch * (rows - 1)) / Math.max(0.05, capK)), riseMin, riseMax);
+    pitch = Math.floor((room - capK * rise) / (rows - 1));
+  }
+  if (rows > 1) pitch = Math.min(pitch, maxPitch);
+  const fit = cell >= minCell && (rows === 1 || pitch >= minPitch) && room - capK * rise >= 0;
+  if (rows > 1) pitch = Math.max(pitch, 40);
+  const slack = Math.max(0, room - capK * rise - pitch * (rows - 1));
+  const frontY = Math.round(frontMax - slack * 0.35);
   const seats: SeatSlot[] = [];
   for (let r = 0; r < rows; r++) {
     const py = frontY - (rows - 1 - r) * pitch;
@@ -125,156 +211,96 @@ function gridSeats(arch: ArchSpec, n: number, cols: number, rows: number, bottom
     const rowOff = ((cols - inRow) * cell) / 2;
     for (let c = 0; c < inRow; c++) {
       const i = r * cols + c;
-      const px = Math.round(a.x + 3 + rowOff + cell * (c + 0.5) - PED_W / 2);
-      seats.push(seatAt(i, px, py, 72, 9, cell));
+      const px = Math.round(gx + rowOff + cell * (c + 0.5) - PED_W / 2);
+      seats.push(seatAt(i, px, py, cell, lab));
     }
   }
-  return { seats, pitch };
-}
-
-function lobbyLandscape(w: number, h: number, n: number): LobbyLayout {
-  const inner = innerRect(w, h);
-  const hdr = LOGO_H + 6;
-  const logo: Rect = { x: inner.x + 6, y: inner.y + 3, w: LOGO_W, h: LOGO_H };
-  const tabs: Rect = { x: inner.x + inner.w - 6 - TABS_W, y: inner.y + 5, w: TABS_W, h: TABS_H };
-  const bodyY = inner.y + hdr;
-  const pillarW = clamp(Math.round(inner.w * 0.18), 70, 100);
-  const pillar: Rect = { x: inner.x + 6, y: bodyY + 2, w: pillarW, h: inner.y + inner.h - 3 - (bodyY + 2) };
-  const actions: Rect = { x: pillar.x + 5, y: pillar.y + pillar.h - 44, w: pillar.w - 10, h: 38 };
-  const ax = pillar.x + pillar.w + 8 + ARCH_T;
-  const aTop = bodyY + ARCH_T + 4;
-  const aw = inner.x + inner.w - 4 - ARCH_T - ax;
-  const bottom = inner.y + inner.h;
-  const rows = n > 5 ? 2 : 1;
-  const cols = Math.ceil(n / rows);
-  let rise = clamp(Math.round(aw * 0.16), 20, 44);
-  let arch: ArchSpec = { rect: { x: ax, y: aTop, w: aw, h: bottom + 6 - aTop }, rise };
-  let g = gridSeats(arch, n, cols, rows, bottom, 50, 74);
-  // flatten the arch if the back row is too high for it
-  const need = (s: SeatSlot) => s.char.y + 4;
-  if (rows > 1 && need(g.seats[0]) < aTop + rise * 0.42) {
-    rise = Math.max(12, Math.floor((need(g.seats[0]) - aTop) / 0.42));
-    arch = { rect: arch.rect, rise };
-    g = gridSeats(arch, n, cols, rows, bottom, 50, 74);
-  }
-  const bannerW = clamp(Math.round(aw * 0.42), 112, 168);
-  const banner: Rect = { x: Math.round(ax + aw / 2 - bannerW / 2), y: aTop - ARCH_T - 4, w: bannerW, h: 14 };
-  const layout: LobbyLayout = { kind: 'lobby', w, h, orientation: 'landscape', inner, logo, banner, tabs, pillar, arch: arch.rect, seats: g.seats, actions, pillarText: pillarTextRect(pillar, actions.y - 4) };
-  return done(layout, {
-    arches: [arch],
-    floorY: Math.round(g.seats[0].pedestal.y + PED_H * 0.3 - (rows > 1 ? 6 : 0)),
-    pillars: [pillar],
-    plates: [banner],
-    logoAt: { x: logo.x, y: logo.y },
-    wallSpots: [
-      { x: ax - ARCH_T - 5, y: aTop + 6 },
-      { x: ax + aw + ARCH_T + 3, y: aTop + 6 },
-    ],
-    decor: [],
-  });
-}
-
-function lobbyPortrait(w: number, h: number, n: number): LobbyLayout {
-  const inner = innerRect(w, h);
-  const logo: Rect = { x: Math.round(inner.x + inner.w / 2 - LOGO_W / 2), y: inner.y + 3, w: LOGO_W, h: LOGO_H };
-  const tight = inner.h < 420;
-  const stripH = tight ? 26 : 32;
-  const pillar: Rect = { x: inner.x + 4, y: logo.y + logo.h + 2, w: inner.w - 8, h: stripH };
-  const rowY = pillar.y + pillar.h + 3;
-  const tabs: Rect = { x: inner.x + 4, y: rowY, w: TABS_W, h: TABS_H - (tight ? 2 : 0) };
-  const actions: Rect = { x: tabs.x + tabs.w + 4, y: rowY, w: inner.x + inner.w - 4 - (tabs.x + tabs.w + 4), h: tabs.h };
-  const aTop = rowY + tabs.h + 4 + ARCH_T + 2;
-  const ax = inner.x + 2 + ARCH_T;
-  const aw = inner.w - 4 - ARCH_T * 2;
-  const bottom = inner.y + inner.h;
-  const cols = n > 5 ? 2 : 1;
-  const rows = Math.ceil(n / cols);
-  let rise = clamp(Math.round(aw * 0.22), 18, 46);
-  let arch: ArchSpec = { rect: { x: ax, y: aTop, w: aw, h: bottom + 6 - aTop }, rise };
-  let g = gridSeats(arch, n, cols, rows, bottom, 46, 76);
-  if (rows > 1 && g.seats[0].char.y + 4 < aTop + rise * 0.42) {
-    rise = Math.max(10, Math.floor((g.seats[0].char.y + 4 - aTop) / 0.42));
-    arch = { rect: arch.rect, rise };
-    g = gridSeats(arch, n, cols, rows, bottom, 46, 76);
-  }
-  const bannerW = clamp(aw - 24, 100, 150);
-  const banner: Rect = { x: Math.round(ax + aw / 2 - bannerW / 2), y: aTop - ARCH_T - 3, w: bannerW, h: 13 };
-  const layout: LobbyLayout = { kind: 'lobby', w, h, orientation: 'portrait', inner, logo, banner, tabs, pillar, arch: arch.rect, seats: g.seats, actions, pillarText: pillarTextRect(pillar) };
-  return done(layout, {
-    arches: [arch],
-    floorY: Math.round(g.seats[Math.max(0, g.seats.length - 2 * cols)]?.pedestal.y ?? aTop + 40),
-    pillars: [pillar],
-    plates: [banner],
-    logoAt: { x: logo.x, y: logo.y },
-    wallSpots: [],
-    decor: [],
-  });
+  const arch: ArchSpec = { rect: { x: ax, y: aTop, w: aw, h: inner.y + inner.h + 6 - aTop }, rise };
+  const backY = seats[0]?.pedestal.y ?? frontY;
+  const floorY = land ? backY + 4 : seats[Math.max(0, seats.length - 2 * cols)]?.pedestal.y ?? backY;
+  const top = (seats[0]?.char.y ?? aTop) - 2;
+  const focus: Rect = { x: gx, y: top, w: gridW, h: frontY + lb - top };
+  const layout: LobbyLayout = { kind: 'lobby', w, h, orientation, inner, arch: arch.rect, seats, label: lab, fit };
+  return done(layout, { arches: [arch], floorY, pillars: [], plates: [], wallSpots: [], decor: [], focus, calm: [] });
 }
 
 // ---------------------------------------------------------------- chat
 
-export function layoutChat(w: number, h: number): ChatLayout {
-  return orient(w, h) === 'landscape' ? chatLandscape(w, h) : chatPortrait(w, h);
+export function layoutChat(w: number, h: number, o: LayoutOpts = {}): ChatLayout {
+  const orientation = o.orientation ?? orient(w, h);
+  return orientation === 'landscape' ? chatLandscape(w, h, o.cssPx ?? 2) : chatPortrait(w, h, o.cssPx ?? 2);
 }
 
-function chatLandscape(w: number, h: number): ChatLayout {
+/** Fuse along the top of the room (just under the HUD), from the right end to a bomb at `bombX`. */
+function fuseFrom(w: number, y: number, bombX: number): Point[] {
+  const out: Point[] = [];
+  for (let x = w - FRAME - 6; x >= bombX + 12; x--) out.push({ x, y });
+  return out;
+}
+
+function chatLandscape(w: number, h: number, cssPx: number): ChatLayout {
   const inner = innerRect(w, h);
-  const lc = clamp(Math.round(inner.w * 0.25), 100, 150);
-  const px = Math.round(inner.x + lc / 2 - PED_W / 2);
-  const py = inner.y + 4 + CHAR_ON_PED;
-  const partner = seatAt(0, px, py, Math.min(lc - 8, 96), 9, lc);
-  const pillar: Rect = { x: inner.x + 6, y: py + PED_H + 4, w: lc - 12, h: inner.y + inner.h - 4 - (py + PED_H + 4) };
+  // the bubbles keep at least 420 CSS px; the partner's column takes up to a third of the room
+  const chatMin = Math.ceil(420 / cssPx);
+  const lc = clamp(Math.min(Math.round(inner.w * 0.36), inner.w - 8 - ARCH_T - chatMin), 92, 150);
+  const lab = labelSpec(lc - 8, cssPx);
+  const infoMin = Math.ceil(72 / cssPx); // the left box needs about 72 CSS px
+  const big = lc >= 104 && inner.h >= 2 + (CHAR_ON_PED + LABEL_DY) * 2 + Math.ceil(lab.h * 1.4) + 3 + infoMin;
+  const k = big ? 2 : 1;
+  const px = Math.round(inner.x + lc / 2 - (PED_W * k) / 2);
+  const py = inner.y + (k === 2 ? 2 : 4) + CHAR_ON_PED * k;
+  const tag = k === 2 ? { ...lab, h: Math.ceil(lab.h * 1.4) } : lab;
+  const partner = seatAt(0, px, py, lc - 6, tag, k);
+  const iy = partner.label.y + tag.h + 3;
+  const info: Rect = { x: inner.x + 4, y: iy, w: lc - 8, h: inner.y + inner.h - 3 - iy };
   const divX = inner.x + lc + ARCH_T;
-  const cy = inner.y + 46;
-  const rise = 84;
+  const cy = inner.y + 34;
+  const rise = 74;
   const arch: ArchSpec = { rect: { x: divX, y: cy - rise, w: (w + 40 - divX) * 2, h: inner.y + inner.h + 6 - (cy - rise) }, rise };
-  const right = inner.x + inner.w - 6;
-  const input: Rect = { x: divX + 6, y: inner.y + inner.h - 24, w: right - (divX + 6), h: 20 };
-  // the fuse runs along the top frame from the right corner to a bomb above the bubbles
-  const fuseY = Math.round(FRAME / 2);
-  const bombX = divX + 34;
-  const fuse: Point[] = [];
-  for (let x = w - FRAME - 4; x >= bombX + 2; x--) fuse.push({ x, y: fuseY });
-  const timer: Rect = { x: bombX - 20, y: inner.y + 3, w: 40, h: 11 };
-  const messages: Rect = { x: divX + 6, y: inner.y + 28, w: right - (divX + 6), h: input.y - 4 - (inner.y + 28) };
-  const layout: ChatLayout = { kind: 'chat', w, h, orientation: 'landscape', inner, partner, pillar, timer, fuse, messages, input, pillarText: pillarTextRect(pillar) };
+  const right = inner.x + inner.w - 4;
+  const fuse = fuseFrom(w, inner.y + 6, divX + 6);
+  const chat: Rect = { x: divX + 4, y: inner.y + 18, w: right - (divX + 4), h: inner.y + inner.h - 3 - (inner.y + 18) };
+  const layout: ChatLayout = { kind: 'chat', w, h, orientation: 'landscape', inner, partner, partnerScale: k, info, chat, fuse, label: tag };
   return done(layout, {
     arches: [arch],
-    floorY: Math.round(inner.y + inner.h * 0.66),
-    pillars: [pillar],
+    floorY: Math.round(inner.y + inner.h * 0.62),
+    pillars: [],
     plates: [],
-    wallSpots: [{ x: inner.x + 6, y: inner.y + 8 }, { x: inner.x + lc - 10, y: inner.y + 8 }],
+    wallSpots: [{ x: inner.x + 6, y: inner.y + 10 }, { x: inner.x + lc - 10, y: inner.y + 10 }],
     decor: [],
+    focus: { x: inner.x, y: inner.y, w: inner.w, h: inner.h },
+    calm: [chat],
   });
 }
 
-function chatPortrait(w: number, h: number): ChatLayout {
+function chatPortrait(w: number, h: number, cssPx: number): ChatLayout {
   const inner = innerRect(w, h);
   const px = inner.x + 4;
-  const py = inner.y + 2 + CHAR_ON_PED;
-  const partner = seatAt(0, px, py, 64, 9, 56);
+  const py = inner.y + 4 + CHAR_ON_PED;
+  const lab = labelSpec(PED_W + 10, cssPx);
+  const partner = seatAt(0, px, py, PED_W + 10, lab, 1);
+  partner.label.x = Math.max(inner.x + 1, partner.label.x);
+  partner.hit.x = Math.max(inner.x, partner.hit.x);
   const sideX = px + PED_W + 6;
   const right = inner.x + inner.w - 4;
-  const bombX = sideX + 12;
-  const fuseY = Math.round(FRAME / 2);
-  const fuse: Point[] = [];
-  for (let x = w - FRAME - 4; x >= bombX + 2; x--) fuse.push({ x, y: fuseY });
-  const timer: Rect = { x: bombX - 8, y: inner.y + 2, w: 44, h: 11 };
-  const pillar: Rect = { x: sideX, y: inner.y + 16, w: right - sideX, h: py + PED_H - (inner.y + 16) - 2 };
-  const dTop = py + PED_H + 4 + ARCH_T;
+  const fuse = fuseFrom(w, inner.y + 6, sideX);
+  const iy = inner.y + 20;
+  const info: Rect = { x: sideX, y: iy, w: right - sideX, h: Math.max(16, partner.label.y + lab.h - iy) };
+  const dTop = partner.label.y + lab.h + 4 + ARCH_T;
   const aw = inner.w - 4 - ARCH_T * 2;
-  const arch: ArchSpec = { rect: { x: inner.x + 2 + ARCH_T, y: dTop, w: aw, h: inner.y + inner.h + 6 - dTop }, rise: clamp(Math.round(aw * 0.16), 14, 36) };
-  const input: Rect = { x: inner.x + 4, y: inner.y + inner.h - 24, w: inner.w - 8, h: 20 };
-  const mTop = dTop + Math.round(arch.rise * 0.6);
-  const messages: Rect = { x: arch.rect.x + 2, y: mTop, w: aw - 4, h: input.y - 4 - mTop };
-  const layout: ChatLayout = { kind: 'chat', w, h, orientation: 'portrait', inner, partner, pillar, timer, fuse, messages, input, pillarText: pillarTextRect(pillar) };
+  const arch: ArchSpec = { rect: { x: inner.x + 2 + ARCH_T, y: dTop, w: aw, h: inner.y + inner.h + 6 - dTop }, rise: clamp(Math.round(aw * 0.14), 12, 32) };
+  const mTop = dTop + Math.round(arch.rise * 0.4);
+  const chat: Rect = { x: inner.x + 4, y: mTop, w: inner.w - 8, h: inner.y + inner.h - 3 - mTop };
+  const layout: ChatLayout = { kind: 'chat', w, h, orientation: 'portrait', inner, partner, partnerScale: 1, info, chat, fuse, label: lab };
   return done(layout, {
     arches: [arch],
-    floorY: Math.round(inner.y + inner.h * 0.7),
-    pillars: [pillar],
+    floorY: Math.round(inner.y + inner.h * 0.72),
+    pillars: [],
     plates: [],
     wallSpots: [],
     decor: [],
+    focus: { x: inner.x, y: inner.y, w: inner.w, h: inner.h },
+    calm: [chat],
   });
 }
 
@@ -291,106 +317,111 @@ function sideDecor(inner: Rect, arch: Rect, avoid: Rect): Rect[] {
   return out;
 }
 
-export interface CallLayoutX extends CallLayout {
-  yes: Rect;
-  no: Rect;
-}
+export type CallLayoutX = CallLayout;
 
-export function layoutCall(w: number, h: number): CallLayoutX {
-  const o = orient(w, h);
+export function layoutCall(w: number, h: number, o: LayoutOpts = {}): CallLayout {
+  const orientation = o.orientation ?? orient(w, h);
+  const cssPx = o.cssPx ?? 2;
+  const land = orientation === 'landscape';
   const inner = innerRect(w, h);
-  const k = 2;
   const cx = Math.round(inner.x + inner.w / 2);
-  const question: Rect = { x: inner.x + 10, y: inner.y + 3, w: inner.w - 20, h: 18 };
-  const timer: Rect = { x: cx - 30, y: question.y + question.h, w: 60, h: 11 };
-  const charTop = timer.y + timer.h + (o === 'portrait' ? 10 : 0);
-  const pedH = PED_H * k;
+  const qH = o.locked ? 0 : clamp(Math.ceil(76 / cssPx), 14, 44); // "Real human?" + countdown
+  const question: Rect = { x: inner.x + 6, y: inner.y + 4, w: inner.w - 12, h: qH };
+  // after the call the buttons' place holds the locked panel (about 220 CSS px tall when under the partner)
+  const bH = o.locked && !land ? clamp(Math.ceil(220 / cssPx), 40, 140) : clamp(Math.ceil(64 / cssPx), 16, 40);
+  const lab = labelSpec(120, cssPx);
+  const avail = inner.y + inner.h - 4 - bH - 4 - (question.y + qH + 4);
+  const need = (k: number) => (CHAR_ON_PED + LABEL_DY) * k + Math.ceil(lab.h * (k === 2 ? 1.4 : 1));
+  const k = avail >= need(2) + 4 ? 2 : 1;
+  const charTop = question.y + qH + 4 + Math.max(0, Math.floor((avail - need(k)) * 0.45));
   const pedY = charTop + CHAR_ON_PED * k;
   const pedX = cx - (PED_W * k) / 2;
-  const partner: SeatSlot = {
-    index: 0,
-    pedestal: { x: pedX, y: pedY, w: PED_W * k, h: pedH },
-    char: { x: pedX + ((PED_W - 32) / 2) * k, y: charTop },
-    label: { x: cx - 50, y: pedY + PLAQUE.y * k, w: 100, h: 14 },
-    hit: { x: pedX, y: charTop, w: PED_W * k, h: CHAR_ON_PED * k + pedH },
-  };
-  const bh = o === 'portrait' ? 30 : 28;
-  let by = pedY + pedH - 6;
-  by = Math.min(by, inner.y + inner.h - bh - 3);
-  const bw = clamp(inner.w - 20, 180, 280);
-  const buttons: Rect = { x: cx - bw / 2, y: by, w: bw, h: bh };
-  const yes: Rect = { x: buttons.x, y: by, w: Math.floor(bw / 2) - 4, h: bh };
-  const no: Rect = { x: cx + 4, y: by, w: Math.floor(bw / 2) - 4, h: bh };
-  const aw = clamp(Math.round(inner.w * (o === 'portrait' ? 0.8 : 0.44)), 150, 250);
-  const aTop = Math.min(charTop + 6, timer.y + 4);
+  const big = k === 2 ? { ...lab, h: Math.ceil(lab.h * 1.4) } : lab; // a bigger tag under the big partner
+  const partner = seatAt(0, pedX, pedY, Math.min(inner.w - 8, 160), big, k);
+  const by = Math.min(partner.label.y + big.h + 4, inner.y + inner.h - 2 - bH);
+  const bw = Math.min(inner.w - 20, 300, Math.max(150, Math.ceil(560 / cssPx))); // at most ~560 CSS px wide
+  const buttons: Rect = { x: cx - bw / 2, y: by, w: bw, h: bH };
+  const yes: Rect = { x: buttons.x, y: by, w: Math.floor(bw / 2) - 4, h: bH };
+  const no: Rect = { x: cx + 4, y: by, w: Math.floor(bw / 2) - 4, h: bH };
+  // the locked panel: beside the partner on wide screens, under it on tall ones
+  const sideX = cx + (PED_W * k) / 2 + 10;
+  const sideW = inner.x + inner.w - 6 - sideX;
+  const lockedSide = land && sideW * cssPx >= 230;
+  const locked: Rect = lockedSide
+    ? { x: sideX, y: inner.y + 6, w: sideW, h: inner.h - 12 }
+    : { x: inner.x + 6, y: by, w: inner.w - 12, h: inner.y + inner.h - 3 - by };
+  const aw = clamp(Math.round(inner.w * (land ? 0.44 : 0.8)), 110, 260);
+  const aTop = Math.max(inner.y + 2 + ARCH_T, charTop - 6);
   const arch: ArchSpec = { rect: { x: cx - Math.round(aw / 2), y: aTop, w: aw, h: inner.y + inner.h + 6 - aTop }, rise: Math.round(aw * 0.3) };
-  const layout: CallLayoutX = { kind: 'call', w, h, orientation: o, inner, partner, partnerScale: k, question, buttons, timer, yes, no };
+  const layout: CallLayout = { kind: 'call', w, h, orientation, inner, partner, partnerScale: k, question, buttons, yes, no, locked, label: big };
   return done(layout, {
     arches: [arch],
-    floorY: pedY + 14,
+    floorY: pedY + 7 * k,
     pillars: [],
     plates: [],
     wallSpots: [
       { x: arch.rect.x - ARCH_T - 5, y: aTop + 14 },
       { x: arch.rect.x + aw + ARCH_T + 3, y: aTop + 14 },
     ],
-    decor: sideDecor(inner, arch.rect, buttons),
+    decor: sideDecor(inner, arch.rect, lockedSide ? { ...buttons, y: inner.y + inner.h } : buttons),
+    focus: { x: pedX - 8, y: charTop, w: PED_W * k + 16, h: partner.label.y + big.h - charTop },
+    calm: [],
   });
 }
 
 // ---------------------------------------------------------------- hall
 
-export interface HallLayoutX extends HallLayout {
-  title: Rect;
-}
-
-export function layoutHall(w: number, h: number, n = 0): HallLayoutX {
-  const o = orient(w, h);
+/**
+ * The test-user picker: six characters on pedestals right under the HUD (one row of six on
+ * wide screens, 3 x 2 or 2 x 3 elsewhere), two-line tags (name, coins and rating), and a free
+ * area under them for a DOM panel.
+ */
+export function layoutHall(w: number, h: number, n = 6, o: LayoutOpts = {}): HallLayout {
+  const orientation = o.orientation ?? orient(w, h);
+  const cssPx = o.cssPx ?? 2;
+  const land = orientation === 'landscape';
   const inner = innerRect(w, h);
-  const logo: Rect = { x: Math.round(inner.x + inner.w / 2 - LOGO_W / 2), y: inner.y + 3, w: LOGO_W, h: LOGO_H };
-  const title: Rect = { x: inner.x + 10, y: logo.y + logo.h + 2, w: inner.w - 20, h: 14 };
-  const top = title.y + title.h + 2;
+  const ax = inner.x + 2 + ARCH_T;
+  const aw = inner.w - 4 - ARCH_T * 2;
+  const aTop = inner.y + 2 + ARCH_T;
+  const count = Math.max(1, n);
+  let cols = land ? ((aw - 6) / count >= 60 ? count : Math.ceil(count / 2)) : (aw - 6) / 3 >= 60 && count > 4 ? 3 : 2;
+  cols = Math.max(1, Math.min(cols, count));
+  const rows = Math.ceil(count / cols);
+  const cell = Math.min(land ? 104 : 120, (aw - 6) / cols);
+  const lab = labelSpec(cell, cssPx, 2);
+  const lb = LABEL_DY + lab.h;
+  const pitch = CHAR_ON_PED - HEAD_SLACK + lb + 6;
+  const rise = clamp(Math.round(aw * 0.1), 12, 30);
+  const firstY = aTop + Math.round(rise * 0.5) + CHAR_ON_PED;
+  const gridW = cell * cols;
+  const gx = ax + 3 + (aw - 6 - gridW) / 2;
   const seats: SeatSlot[] = [];
-  const aTop = logo.y + logo.h + ARCH_T + 4;
-  const aw = inner.w - 20 - ARCH_T * 2;
-  const arch: ArchSpec = { rect: { x: inner.x + 10 + ARCH_T, y: aTop, w: aw, h: inner.y + inner.h + 6 - aTop }, rise: clamp(Math.round(aw * 0.12), 14, 40) };
-  let content: Rect = { x: inner.x + 8, y: top, w: inner.w - 16, h: inner.y + inner.h - 6 - top };
-  if (n > 0) {
-    const labelH = 22;
-    const perRow = o === 'landscape' ? Math.min(n, Math.max(1, Math.floor((aw - 8) / 62))) : Math.min(n, Math.max(1, Math.floor((aw - 4) / 70)));
-    const rows = Math.ceil(n / perRow);
-    const cell = (aw - 6) / perRow;
-    const bottom = inner.y + inner.h;
-    const rowH = CHAR_ON_PED + PED_H + labelH - 8;
-    const avail = bottom - 4 - top - 8;
-    const pitch = clamp(Math.floor(avail / rows), 56, rowH + 16);
-    const startY = bottom - 2 - labelH - (rows - 1) * pitch - PED_H + 8;
-    for (let r = 0; r < rows; r++) {
-      const inRow = Math.min(perRow, n - r * perRow);
-      const off = ((perRow - inRow) * cell) / 2;
-      for (let c = 0; c < inRow; c++) {
-        const i = r * perRow + c;
-        const pxx = Math.round(arch.rect.x + 3 + off + cell * (c + 0.5) - PED_W / 2);
-        const pyy = startY + r * pitch;
-        const s = seatAt(i, pxx, pyy, Math.min(cell - 2, 90), labelH, cell);
-        s.label = { x: Math.round(pxx + PED_W / 2 - Math.min(cell - 2, 90) / 2), y: pyy + PED_H - 6, w: Math.min(cell - 2, 90), h: labelH };
-        s.hit = { x: s.label.x, y: s.char.y + 4, w: s.label.w, h: s.label.y + labelH - (s.char.y + 4) };
-        seats.push(s);
-      }
+  for (let r = 0; r < rows; r++) {
+    const inRow = Math.min(cols, count - r * cols);
+    const off = ((cols - inRow) * cell) / 2;
+    for (let c = 0; c < inRow; c++) {
+      const i = r * cols + c;
+      seats.push(seatAt(i, Math.round(gx + off + cell * (c + 0.5) - PED_W / 2), firstY + r * pitch, cell, lab));
     }
-    content = { x: inner.x + 8, y: top, w: inner.w - 16, h: Math.max(10, seats[0].char.y - top) };
   }
-  const layout: HallLayoutX = { kind: 'hall', w, h, orientation: o, inner, logo, content, seats, title };
+  const lastBottom = firstY + (rows - 1) * pitch + lb;
+  const fit = n === 0 || (cell >= 54 && lastBottom <= inner.y + inner.h - 2);
+  const cy = lastBottom + 6;
+  const content: Rect = { x: inner.x + 8, y: cy, w: inner.w - 16, h: Math.max(0, inner.y + inner.h - 4 - cy) };
+  const arch: ArchSpec = { rect: { x: ax, y: aTop, w: aw, h: inner.y + inner.h + 6 - aTop }, rise };
+  const layout: HallLayout = { kind: 'hall', w, h, orientation, inner, seats, content, label: lab, fit };
+  const top = (seats[0]?.char.y ?? aTop) - 2;
   return done(layout, {
     arches: [arch],
     floorY: seats.length ? seats[seats.length - 1].pedestal.y + 4 : inner.y + inner.h - 40,
     pillars: [],
     plates: [],
-    logoAt: { x: logo.x, y: logo.y },
-    wallSpots: [
-      { x: arch.rect.x - ARCH_T - 5, y: aTop + 8 },
-      { x: arch.rect.x + aw + ARCH_T + 3, y: aTop + 8 },
-    ],
+    wallSpots: [],
     decor: [],
+    focus: { x: gx, y: top, w: gridW, h: lastBottom - top },
+    calm: [],
   });
 }
+
+export type HallLayoutX = HallLayout;

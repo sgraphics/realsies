@@ -1,4 +1,5 @@
-// Call: "Real human?" with big YES / NO and a countdown, then "Locked until the round ends".
+// Call: "Real human?" with the countdown in one panel, the partner big on a glowing pedestal with
+// its gamertag beneath, big YES / NO, then "Locked until the round ends" with the round clock.
 
 import { useEffect } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
@@ -7,19 +8,11 @@ import { fmtClock, txUrl } from '../state/format.ts';
 import { World } from '../world/World.tsx';
 import { useNow, useRig } from '../ui/hooks.ts';
 import { Button, Icon } from '../ui/kit.tsx';
+import { Hud } from '../ui/Hud.tsx';
+import { NameTag } from '../ui/NameTag.tsx';
 import { themeFor } from '../../../shared/protocol.ts';
-import type { Rect } from '../../../art/src/scene/types.ts';
 
-/** The locked panel sits below the partner (buttons + timer area), never over the face. */
-function lockedBox(l: { buttons: Rect; timer: Rect; inner: Rect }): Rect {
-  const y = l.buttons.y;
-  const bottom = Math.max(l.buttons.y + l.buttons.h, l.timer.y + l.timer.h);
-  const x = Math.min(l.buttons.x, l.timer.x);
-  const w = Math.max(l.buttons.x + l.buttons.w, l.timer.x + l.timer.w) - x;
-  return { x, y, w, h: Math.max(bottom, l.inner.y + l.inner.h) - y };
-}
-
-export function CallScreen({ store, onBack }: { store: Store; onBack(): void }) {
+export function CallScreen({ store, onBack, onTerms }: { store: Store; onBack(): void; onTerms(): void }) {
   const s = useStore(store);
   const now = useNow(250);
   const chat = s.chat!;
@@ -43,64 +36,59 @@ export function CallScreen({ store, onBack }: { store: Store; onBack(): void }) 
   };
 
   return (
-    <World theme={theme} kind="call" partner={rig}>
-      {(w) => {
-        const l = w.layout.kind === 'call' ? w.layout : null;
-        if (!l) return null;
-        return (
-          <>
-            <div class="seat-label" style={w.box(l.partner.label)}>
-              <span>{chat.partner.name}</span>
-            </div>
-            {deciding ? (
-              <>
-                <div class="call-q" style={w.box(l.question)}>
-                  <h1 class="px-big">Real human?</h1>
-                  {chat.endedReason === 'partner_left' && <p class="px-sub">They left the chat. Make your call.</p>}
-                </div>
-                {(() => {
-                  const yes = (l as typeof l & { yes?: Rect }).yes, no = (l as typeof l & { no?: Rect }).no;
-                  const yesB = <Button kind="good" class="huge" disabled={!!chat.callPending} onClick={() => call(true)}><Icon name="user" /> Yes</Button>;
-                  const noB = <Button kind="danger" class="huge" disabled={!!chat.callPending} onClick={() => call(false)}><Icon name="bot" /> No</Button>;
-                  if (yes && no)
-                    return (
+    <>
+      <Hud store={store} kind="call" onTerms={onTerms} />
+      <World theme={theme} kind="call" partner={rig} locked={!deciding}>
+        {(w) => {
+          const l = w.layout.kind === 'call' ? w.layout : null;
+          if (!l) return null;
+          return (
+            <>
+              <NameTag rect={l.partner.label} cssPx={w.scale.cssPx} name={chat.partner.name} lines={l.label.lines} tone="live" />
+              {deciding ? (
+                <>
+                  <div class="call-q-slot" style={w.box(l.question)}>
+                    <div class="px-panel tight call-q sheet-enter">
+                      <h1 class="px-big">Real human?</h1>
+                      <p class={'call-count' + (left < 6000 ? ' low' : '')}>
+                        <Icon name="clock" /> {fmtClock(left)} {chat.endedReason === 'partner_left' ? <span class="call-why">They left the chat. Make your call.</span> : <span class="call-why">to make your call</span>}
+                      </p>
+                    </div>
+                  </div>
+                  <div class="call-slot" style={w.box(l.yes)}>
+                    <Button kind="good" class="huge" disabled={!!chat.callPending} onClick={() => call(true)}><Icon name="user" /> Yes</Button>
+                  </div>
+                  <div class="call-slot" style={w.box(l.no)}>
+                    <Button kind="danger" class="huge" disabled={!!chat.callPending} onClick={() => call(false)}><Icon name="bot" /> No</Button>
+                  </div>
+                </>
+              ) : (
+                <div class="call-locked-slot" style={w.box(l.locked)}>
+                  <div class="px-panel px-center sheet-enter call-locked">
+                    {chat.phase === 'called' ? (
                       <>
-                        <div class="call-slot" style={w.box(yes)}>{yesB}</div>
-                        <div class="call-slot" style={w.box(no)}>{noB}</div>
+                        <p class="px-sub px-dim">You called</p>
+                        <p class="px-title">{chat.myCall ? 'Real human' : 'Bot'}</p>
                       </>
-                    );
-                  return <div class="call-buttons" style={w.box(l.buttons)}>{yesB}{noB}</div>;
-                })()}
-                <div class={'timer-text' + (left < 6000 ? ' low' : '')} style={w.box(l.timer)}>
-                  <Icon name="clock" /> {fmtClock(left)}
+                    ) : (
+                      <>
+                        <p class="px-title">Time's up</p>
+                        <p class="px-sub px-dim">{chat.mode === 'paid' ? 'No call: your coins count as a wrong call.' : 'No call this time.'}</p>
+                      </>
+                    )}
+                    <p class="px-sub call-lock-line"><Icon name="lock" /> Locked until the round ends</p>
+                    <p class="px-title"><Icon name="clock" /> {fmtClock(roundLeft)}</p>
+                    {chat.callTx && (
+                      <p class="px-sub"><a class="px-link" href={txUrl(cfg, chat.callTx)} target="_blank" rel="noreferrer">Call on chain <Icon name="link" /></a></p>
+                    )}
+                    <Button kind="primary" onClick={onBack}>Back to room</Button>
+                  </div>
                 </div>
-              </>
-            ) : (
-              <div class="call-q" style={w.box(lockedBox(l))}>
-                <div class="px-panel px-center sheet-enter" style={{ pointerEvents: 'auto', maxWidth: '100%', marginTop: 'auto', marginBottom: 'auto' }}>
-                  {chat.phase === 'called' ? (
-                    <>
-                      <p class="px-sub px-dim">You called</p>
-                      <p class="px-title" style={{ margin: '6px 0' }}>{chat.myCall ? 'Real human' : 'Bot'}</p>
-                    </>
-                  ) : (
-                    <>
-                      <p class="px-title" style={{ marginBottom: '6px' }}>Time's up</p>
-                      <p class="px-sub px-dim">{chat.mode === 'paid' ? 'No call: your coins count as a wrong call.' : 'No call this time.'}</p>
-                    </>
-                  )}
-                  <p class="px-sub" style={{ marginTop: '10px' }}><Icon name="lock" /> Locked until the round ends</p>
-                  <p class="px-title" style={{ margin: '6px 0 10px' }}><Icon name="clock" /> {fmtClock(roundLeft)}</p>
-                  {chat.callTx && (
-                    <p class="px-sub"><a class="px-link" href={txUrl(cfg, chat.callTx)} target="_blank" rel="noreferrer">Call on chain <Icon name="link" /></a></p>
-                  )}
-                  <Button kind="primary" onClick={onBack}>Back to room</Button>
-                </div>
-              </div>
-            )}
-          </>
-        );
-      }}
-    </World>
+              )}
+            </>
+          );
+        }}
+      </World>
+    </>
   );
 }

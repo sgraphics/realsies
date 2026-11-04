@@ -9,7 +9,7 @@ import {
   type RoundStatus, type RoundSummary, type Seat, type ServerMsg, type Skin, type TestUser, type ThemeId, type Truth,
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
 } from '../../../shared/protocol.ts';
-import { gamertag } from '../../../shared/names.ts';
+import { gamertag, WORDS } from '../../../shared/names.ts';
 import { sha256Hex } from '../verify/crypto.ts';
 import { bubblesOf, commitmentPreimage } from '../verify/checks.ts';
 import { PERSONAS, HUMAN_NUDGE, HUMAN_OPENERS, humanReply, personaById, personaOpener, personaReply } from './mock/personas.ts';
@@ -42,6 +42,8 @@ export interface MockOptions {
   playFailChance?: number;
   /** localStorage key for persistence; null disables it. */
   storageKey?: string | null;
+  /** QA: give every seat the longest possible gamertag (an 8-letter word plus 3 digits, 11 characters). */
+  longNames?: boolean;
   startRoundId?: number;
 }
 
@@ -495,6 +497,10 @@ export class MockGameClient implements GameClient {
 
   private skin(roundId: number, viewer: string, level: Level, seat: number): Skin {
     const seed = this.seatSeed(roundId, viewer, level, seat);
+    if (this.o.longNames) {
+      const long = WORDS.filter((w) => w.length === 8);
+      return { seed, name: long[parseInt(seed.slice(0, 4), 16) % long.length] + String(100 + (parseInt(seed.slice(4, 8), 16) % 900)) };
+    }
     return { seed, name: gamertag(seed) };
   }
 
@@ -952,7 +958,7 @@ export class MockGameClient implements GameClient {
           return;
         }
         const text = bubbles[i];
-        const typeMs = Math.min(this.d(7000), Math.max(this.d(1000), this.d(text.length * p.msPerChar)));
+        const typeMs = this.typingMs(text, p.msPerChar);
         b.typing = true;
         this.emit({ t: 'typing', chatId: c.chatId, on: true }, c.viewer);
         this.chatLater(c.chatId, typeMs, () => {
@@ -983,7 +989,7 @@ export class MockGameClient implements GameClient {
         return;
       }
       const text = lines[i];
-      const typeMs = Math.min(this.d(8000), Math.max(this.d(1200), this.d(text.length * this.r.range(70, 110))));
+      const typeMs = this.typingMs(text, 200);
       this.emit({ t: 'typing', chatId: c.chatId, on: true }, c.viewer);
       this.chatLater(c.chatId, typeMs, () => {
         if (c.phase !== 'chatting') return;
@@ -997,6 +1003,35 @@ export class MockGameClient implements GameClient {
       });
     };
     step(0);
+  }
+
+  /**
+   * Human typing speed for bots and fake humans alike (the relay's bots type like people too):
+   * about 200 ms per character with jitter, a per-message pace, and a short pause before typing.
+   */
+  private typingMs(text: string, msPerChar = 200): number {
+    const pace = this.r.range(0.82, 1.22);
+    let ms = this.r.range(300, 900);
+    for (let i = 0; i < text.length; i++) ms += msPerChar * pace * this.r.range(0.55, 1.45);
+    return Math.min(this.d(30000), Math.max(this.d(900), this.d(ms)));
+  }
+
+  /**
+   * QA screenshots only: append a scripted conversation to the viewer's running chat at once, as
+   * if it had been typed (no bot completions are made for these lines).
+   */
+  qaScript(lines: { from: 'me' | 'them'; text: string }[]): void {
+    const viewer = this.account;
+    const c = viewer ? this.st.chats.find((x) => x.viewer === viewer && x.phase === 'chatting') : undefined;
+    if (!c || !viewer) return;
+    let t = this.now() - lines.length * 4000;
+    for (const l of lines) {
+      t += 4000;
+      const msg: ChatMessage = { id: 'm' + randHex(this.r, 12), from: l.from, text: l.text, at: t };
+      c.messages.push(msg);
+      c.transcript.push({ from: l.from === 'me' ? 'player' : 'bot', text: l.text, at: t });
+      this.emit({ t: 'message', chatId: c.chatId, msg }, viewer);
+    }
   }
 
   private endChat(chatId: string, reason: 'time' | 'partner_left' | 'dev' | 'round_end', windowMs?: number): void {

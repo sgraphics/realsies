@@ -37,6 +37,7 @@ export function applyTheme(id: ThemeId): void {
   set('--bubble-them-ink', c.bubbleThemText);
   set('--bubble-me', centre(kit.ui.bubbleMe));
   set('--bubble-me-ink', c.bubbleMeText);
+  set('--hud-bg', c.bg);
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', c.bg);
 
   const nine = (name: string, n: NineSlice) => {
@@ -67,8 +68,16 @@ export function applyTheme(id: ThemeId): void {
   document.documentElement.classList.add('kit');
 }
 
-/** UI pixel: about 3/4 of the world pixel, at least 2 device pixels, always whole device pixels. */
-export function applyUiScale(worldScale: number, dpr: number): void {
-  const dev = Math.max(2, Math.min(worldScale, Math.round(worldScale * 0.75)));
-  document.documentElement.style.setProperty('--upx', dev / dpr + 'px');
+/**
+ * UI pixel for the 9-slice sprites of panels, buttons and bubbles: half the world pixel, between 1
+ * and 3 CSS px, always whole device pixels (big world scales must not make panel borders chunky).
+ * The HUD uses its own: 1 CSS px per sprite pixel, 2 on very wide screens.
+ */
+export function applyUiScale(cssPx: number, dpr: number): void {
+  const want = Math.min(3, Math.max(1, cssPx * 0.5));
+  const dev = Math.max(1, Math.round(want * dpr));
+  const root = document.documentElement.style;
+  root.setProperty('--upx', dev / dpr + 'px');
+  const hud = Math.max(1, Math.round((window.innerWidth >= 1800 ? 2 : 1) * dpr));
+  root.setProperty('--hud-upx', hud / dpr + 'px');
 }

@@ -15,7 +15,7 @@ Human or Not proved people want to play this: AI21's 2023 run had over 10 millio
 3. See the room: ten characters on pedestals, each with a gamertag and a face generated only for you. Tap one, choose 5 coins or Play free.
 4. Chat for up to two minutes. Then answer Real human? Yes / No. See "Locked until the round ends".
 5. To meet a human instead of a bot, open a second browser window as another test user and tap a character in both windows within a few seconds.
-6. Rounds last 10 minutes on testnet. To skip ahead, use End round in the dev toolbar. See Results: who was who, your score and rating, coins won, and a Verify button on every bot chat.
+6. Rounds last 10 minutes on testnet. To skip ahead, open the menu at the top right and choose End round now. See Results: who was who, your score and rating, coins won, and a Verify button on every bot chat.
 7. Tap Verify. See the commitment, the handle and chat tag, every enclave signature recovered in your browser, the persona prompt hash, your own conversation matched against the signed request, and links to the on-chain transactions on testnet.nearblocks.io.
 
 Run it locally instead:

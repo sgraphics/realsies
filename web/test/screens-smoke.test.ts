@@ -1,4 +1,4 @@
-// Smoke render of Results, Verify, PastRounds and DevToolbar against a minimal fake DOM,
+// Smoke render of Results, Verify, PastRounds, the dev menu and Terms against a minimal fake DOM,
 // driven by the mock relay. Catches runtime errors in the screens without a browser.
 
 import { readFileSync } from 'node:fs';
@@ -87,6 +87,10 @@ const doc = {
 const g = globalThis as Record<string, unknown>;
 g.document = doc;
 g.window = globalThis;
+if (typeof g.addEventListener !== 'function') {
+  g.addEventListener = () => {};
+  g.removeEventListener = () => {};
+}
 g.devicePixelRatio = 1;
 (doc as Record<string, unknown>).documentElement = doc.createElement('html');
 (doc as Record<string, unknown>).querySelector = () => null;
@@ -110,7 +114,9 @@ const { createStore } = await import('../src/state/store.ts');
 const { ResultsScreen } = await import('../src/screens/Results.tsx');
 const { VerifyDrawer } = await import('../src/screens/Verify.tsx');
 const { PastRounds } = await import('../src/screens/PastRounds.tsx');
-const { DevToolbar } = await import('../src/screens/DevToolbar.tsx');
+const { DevMenu } = await import('../src/screens/DevMenu.tsx');
+const { TermsScreen } = await import('../src/screens/Terms.tsx');
+const consent = await import('../src/state/consent.ts');
 const { EVIDENCE_CHAT_ID } = await import('../src/net/mock/evidence.ts');
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -176,9 +182,18 @@ try {
   await sleep(150);
   ok(/Past rounds/.test(root.textContent) && /Round \d+/.test(root.textContent), 'Past rounds renders');
 
-  render(h(DevToolbar, { store }), root as unknown as Element);
+  render(h(DevMenu, { store }), root as unknown as Element);
   await sleep(50);
-  ok(/End round now/.test(root.textContent), 'Dev toolbar renders');
+  ok(/End round now/.test(root.textContent) && /Contract/.test(root.textContent), 'Dev menu renders (end round now, contract)');
+
+  render(h(TermsScreen, { onClose() {}, testnet: true }), root as unknown as Element);
+  await sleep(30);
+  const tt = root.textContent;
+  ok(/18 or older/.test(tt) && /transcripts/.test(tt) && /coins/.test(tt) && /token/.test(tt), 'Terms: 18+, coins are the token, public transcripts');
+  consent.forgetTerms();
+  ok(!consent.termsAccepted(), 'terms not accepted on first entry');
+  consent.acceptTerms();
+  ok(consent.termsAccepted(), 'terms acceptance remembered');
   render(null, root as unknown as Element);
 } catch (e) {
   failures++;
@@ -189,7 +204,7 @@ try {
 }
 ok(errors.length === 0, 'no uncaught errors' + (errors.length ? ': ' + String(errors[0]) : ''));
 const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
-for (const f of ['Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevToolbar.tsx']) {
+for (const f of ['Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Who.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }

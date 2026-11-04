@@ -50,7 +50,7 @@ export interface ThemeColors {
   bg: string;
   /** Text on the canvas banner plate (lobby level banner). */
   plateText: string;
-  /** Gamertag text on the dark pedestal plaques. */
+  /** Gamertag text on the dark tags under the pedestals. */
   labelText: string;
   /** Outline/shadow colour for DOM text over the world. */
   textShadow: string;
@@ -71,6 +71,8 @@ export interface Prop {
   layer: 'far' | 'mid' | 'near';
   /** For QA sheets: a name and the rough area the prop animates in. */
   name?: string;
+  /** A light source (flame, glowing crystal, console lights, stars): drawn at full brightness in the dimmed room. */
+  lit?: boolean;
   at?: Rect;
   draw(c: Clip, now: number): void;
 }
@@ -107,6 +109,19 @@ export interface ThemeDef {
   fuse: { rope: [Color, Color]; burnt: Color };
   /** Glow colours (selected pedestal beam etc.), light to dark. */
   glow: [Color, Color, Color];
+  /**
+   * How far the room is dimmed behind the characters and bubbles, in palette steps per depth layer
+   * (deep backdrop, wall, arch border, frame) plus a vignette away from the focus. Bright themes dim more.
+   */
+  dim?: Partial<RoomDim>;
+}
+
+export interface RoomDim {
+  deep: number;
+  wall: number;
+  arch: number;
+  frame: number;
+  vignette: number;
 }
 
 export type { Point };

@@ -1,4 +1,4 @@
-/* Results, Verify drawer, Past rounds, Dev toolbar. */
+/* Results, Verify drawer, Past rounds. */
 
 .px-small { font-size: clamp(12px, calc(var(--px) * 4), 16px); }
 .px-wrap { flex-wrap: wrap; }
@@ -84,12 +84,15 @@ html.kit .px-results, html.kit .px-rounds { box-shadow: 0 0 0 100vmax rgba(24, 2
 .px-tag.open { background: #0099db; color: #fff; }
 .px-tag.closing, .px-tag.settling { background: #f77622; color: #181425; }
 
-/* dev toolbar */
-.px-devbar { position: fixed; left: 8px; bottom: calc(8px + var(--kb)); z-index: 45; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 16px); padding: 6px 8px; background: rgba(24, 20, 37, 0.82); border: 2px solid #f77622; font-size: 12px; color: #ead4aa; }
-.px-devbar.closed { padding: 4px; }
-.px-devbar .px-btn { min-height: 28px; }
-.px-devbar-toggle { font-family: var(--font-pixel); font-size: 9px; background: #f77622; color: #181425; border: 0; padding: 6px 8px; cursor: pointer; }
-html.kit .px-devbar .px-btn { border-width: calc(var(--slice-btn) * 2px); border-image-width: calc(var(--slice-btn) * 2px); padding: 2px 8px; }
-
 /* QA screenshots: no CSS animations (headless virtual time does not advance them) */
 html.qa *, html.qa *::before, html.qa *::after { animation: none !important; transition: none !important; }
+
+/* UI pass 2026-11-04: readable verdict note and intro in the Verify drawer */
+.px-verdict .px-dim { color: rgba(255, 255, 255, 0.82); }
+.px-drawer-panel > .px-sub { font-family: var(--font-body); font-size: clamp(15px, calc(var(--px) * 4), 18px); line-height: 1.4; }
+.modal .px-col > p.px-body, .modal .px-col > p.px-sub { margin: 0; }
+/* big screens: thicker kit borders need wider dialogs */
+@media (min-width: 1700px) {
+  .modal.narrow { max-width: 680px; }
+  .modal { max-width: 920px; }
+}

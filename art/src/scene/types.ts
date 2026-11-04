@@ -1,7 +1,8 @@
 // Scene contract shared by the art engine and the web app.
 // The world is drawn at a small logical resolution ("game pixels") and scaled up by an integer
 // number of device pixels. Layout functions return rects in game pixels; the web app places
-// DOM overlays (text, buttons, inputs) at rect * cssPx.
+// DOM overlays (text, buttons, inputs) at rect * cssPx. The scale itself is chosen by
+// chooseScale() in layout.ts: the largest integer at which the lobby composition fits.
 
 import type { ThemeId } from '../../../shared/protocol.ts';
 import type { Rig } from '../rig/rig.ts';
@@ -20,37 +21,38 @@ export interface Point {
 }
 export type Orientation = 'landscape' | 'portrait';
 
-/** Minimum logical size per orientation; the scale is the largest integer that keeps both dims at or above it. */
-export const MIN_LANDSCAPE = { w: 400, h: 225 };
-export const MIN_PORTRAIT = { w: 225, h: 400 };
-
 export interface ScaleInfo {
   /** Device pixels per game pixel (integer >= 1). */
   scale: number;
   /** CSS pixels per game pixel (scale / devicePixelRatio). */
   cssPx: number;
-  /** Logical size in game pixels (covers the whole viewport, the last column/row may be partly off-screen). */
+  /** Logical size in game pixels (covers the world box; the last column/row may be partly off-screen). */
   w: number;
   h: number;
+  /** Composition: 5 x 2 pedestals (landscape) or 2 x 5 (portrait). */
   orientation: Orientation;
-}
-
-export function chooseScale(cssW: number, cssH: number, dpr = 1): ScaleInfo {
-  const devW = Math.max(1, Math.round(cssW * dpr));
-  const devH = Math.max(1, Math.round(cssH * dpr));
-  const orientation: Orientation = cssW >= cssH ? 'landscape' : 'portrait';
-  const min = orientation === 'landscape' ? MIN_LANDSCAPE : MIN_PORTRAIT;
-  const scale = Math.max(1, Math.floor(Math.min(devW / min.w, devH / min.h)));
-  return { scale, cssPx: scale / dpr, w: Math.ceil(devW / scale), h: Math.ceil(devH / scale), orientation };
+  /**
+   * CSS px from the top of the window to the top of the canvas. With a HUD the top frame bar sits
+   * under the HUD, so this is the HUD height minus the frame (negative when the frame is taller).
+   */
+  top: number;
 }
 
 /** One seat in a room composition. `char` is the top-left of the 32x48 character box. */
 export interface SeatSlot {
   index: number;
-  pedestal: Rect; // pedestal sprite rect
+  pedestal: Rect; // pedestal sprite rect (48 x 24 times `scale`)
   char: Point; // top-left of the character box (feet land on the pedestal top)
-  label: Rect; // where the DOM gamertag goes (under or beside the pedestal)
-  hit: Rect; // tap target covering character + pedestal
+  label: Rect; // where the DOM gamertag tag goes: centred beneath the pedestal
+  hit: Rect; // tap target covering character + pedestal + tag
+  /** Integer upscale of character and pedestal (2 for the big partner in chat and call). */
+  scale?: number;
+}
+
+/** How a gamertag tag is sized: height in game px and 1 or 2 lines (word, then digits). */
+export interface LabelSpec {
+  h: number;
+  lines: 1 | 2;
 }
 
 export interface LobbyLayout {
@@ -58,16 +60,12 @@ export interface LobbyLayout {
   w: number;
   h: number;
   orientation: Orientation;
-  inner: Rect; // inside the foreground frame
-  logo: Rect; // canvas-drawn REALSIES logo
-  banner: Rect; // level banner plate (DOM text: "Level 1 · Castle Dungeon")
-  tabs: Rect; // level tabs 1-3 (DOM buttons)
-  pillar: Rect; // stat pillar (canvas column, DOM text on top)
+  inner: Rect; // inside the foreground frame (its top edge sits right under the HUD)
   arch: Rect; // the arch opening housing the pedestals
   seats: SeatSlot[];
-  actions: Rect; // Results / Past rounds buttons (DOM)
-  /** Text-safe area on the pillar's dark panel (above `actions` in landscape). */
-  pillarText?: Rect;
+  label: LabelSpec;
+  /** True when the composition fits without squeezing rows into each other. */
+  fit: boolean;
 }
 
 export interface ChatLayout {
@@ -76,14 +74,14 @@ export interface ChatLayout {
   h: number;
   orientation: Orientation;
   inner: Rect;
-  partner: SeatSlot; // partner on a pedestal (top left; top on phones)
-  pillar: Rect; // stats under the partner (landscape) or beside it (portrait)
-  timer: Rect; // DOM "1:42" label
+  partner: SeatSlot; // partner on a pedestal (left in landscape, top-left on phones)
+  partnerScale: number;
+  /** The left box: chat facts, a DOM panel sized to its content, aligned to the top of this rect. */
+  info: Rect;
+  /** Bubbles and the input row (DOM column: messages grow, input at the bottom). */
+  chat: Rect;
   fuse: Point[]; // fuse path in game pixels, from the burning end at progress 1 to the bomb at progress 0
-  messages: Rect; // DOM bubble list
-  input: Rect; // DOM input row
-  /** Text-safe area on the pillar's dark panel. */
-  pillarText?: Rect;
+  label: LabelSpec;
 }
 
 export interface CallLayout {
@@ -92,23 +90,30 @@ export interface CallLayout {
   h: number;
   orientation: Orientation;
   inner: Rect;
-  partner: SeatSlot; // drawn at 2x
+  partner: SeatSlot;
   partnerScale: number;
-  question: Rect; // DOM "Real human?"
+  question: Rect; // DOM "Real human?" panel with the countdown
   buttons: Rect; // DOM YES / NO
-  timer: Rect;
+  yes: Rect;
+  no: Rect;
+  /** Where the "Locked until the round ends" panel goes (under the partner). */
+  locked: Rect;
+  label: LabelSpec;
 }
 
-/** A plain themed room for overlay screens (who are you, results, past rounds). */
+/** A plain themed room for the test-user picker (who are you). */
 export interface HallLayout {
   kind: 'hall';
   w: number;
   h: number;
   orientation: Orientation;
   inner: Rect;
-  logo: Rect;
-  content: Rect; // DOM panel area
-  seats: SeatSlot[]; // optional characters (e.g. six test users)
+  seats: SeatSlot[]; // the six test users, top-aligned
+  /** Free area under the characters for a DOM panel. */
+  content: Rect;
+  label: LabelSpec;
+  /** True when every character and tag fits. */
+  fit: boolean;
 }
 
 export type AnyLayout = LobbyLayout | ChatLayout | CallLayout | HallLayout;

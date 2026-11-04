@@ -12,7 +12,7 @@ import {
   type Paint, type Opening, put, shade, bayer, ramp, fbm, n1, boulder, forRing, forInside, outsideAll, visibleCenterX, capTopAt,
   L_DEEP, L_FLOOR, L_WALL, L_ARCH, L_DECO, L_FRAME, glow, layerAt, insideOpening,
 } from './util.ts';
-import { buildPedestals, cylinder, plaque } from './pedestal.ts';
+import { buildPedestals, cylinder } from './pedestal.ts';
 import { buildUi } from './ui.ts';
 import { forFrame, frameFinish, perspectiveFloor, shadowRight, batProp, dripProp } from './shared.ts';
 
@@ -221,7 +221,8 @@ function paintPedestal(b: Rgba): void {
       if (n > 0.66) bpx(b, x, y, P.slate);
       else if (n < 0.3) bpx(b, x, y, P.navyDark);
     }
-  plaque(b, P.black, P.navyDark, P.blue);
+  // glowing veins in the rock face
+  for (const [x, y] of [[12, 12], [13, 13], [14, 13], [30, 12], [31, 12], [32, 13], [22, 14]]) bpx(b, x, y, P.blue);
   // crystal shards on the sides
   const shard = (x: number, y: number, h: number, pink: boolean) => {
     for (let j = 0; j < h; j++) {
@@ -247,6 +248,7 @@ function crystalPulseProp(spots: [number, number, number][]): Prop {
   return {
     layer: 'mid',
     name: 'crystals',
+    lit: true,
     at: spots.length ? { x: spots[0][0] - 14, y: spots[0][1] - spots[0][2] - 12, w: 28, h: spots[0][2] + 16 } : undefined,
     draw(c, now) {
       if (!now) return;
@@ -267,6 +269,7 @@ function lavaProp(x0: number, x1: number, y: number): Prop {
   return {
     layer: 'far',
     name: 'lava',
+    lit: true,
     at: { x: x0 + 20, y: y - 8, w: 80, h: 14 },
     draw(c, now) {
       if (!now) return;

@@ -12,7 +12,7 @@ import {
   type Paint, type Opening, put, shade, bayer, ramp, fbm, forRing, outsideAll, visibleCenterX, brickAt,
   L_DEEP, L_FLOOR, L_WALL, L_ARCH, L_DECO, L_FRAME, sprite, layerAt,
 } from './util.ts';
-import { buildPedestals, cylinder, plaque, inTop } from './pedestal.ts';
+import { buildPedestals, cylinder, inTop } from './pedestal.ts';
 import { buildUi } from './ui.ts';
 import { forFrame, frameFinish, perspectiveFloor, shadowRight, paintBrazier, brazierProp, cornerBoss } from './shared.ts';
 
@@ -329,7 +329,8 @@ function paintPedestal(b: Rgba): void {
     if (bget(b, x, 12) !== -1 && x % 4 === 0) bpx(b, x, 12, P.blueDark);
     else if (bget(b, x, 12) !== -1) bpx(b, x, 12, P.orange);
   }
-  plaque(b, P.blueDark, P.navyDark, P.gold);
+  // a lapis band with gold dots under the rim
+  for (let x = 4; x < 44; x++) if (bget(b, x, 14) !== -1) bpx(b, x, 14, x % 5 === 2 ? P.gold : P.blueDark);
   for (let x = 0; x < 48; x++) {
     const e = Math.min(x, 47 - x);
     if (e < 1) continue;
@@ -473,6 +474,7 @@ export const desert: ThemeDef = {
     }),
   fuse: { rope: [P.cream, P.tan], burnt: P.brown },
   glow: [P.white, P.yellow, P.gold],
+  dim: { deep: 2 }, // bright dusk sky and sand: two steps down
 };
 
 void sprite;

@@ -13,7 +13,7 @@ import {
   type Paint, type Opening, put, shade, bayer, ramp, fbm, forRing, forInside, outsideAll, visibleCenterX, capTopAt, glow,
   L_DEEP, L_FLOOR, L_WALL, L_ARCH, L_DECO, L_FRAME, layerAt, insideOpening,
 } from './util.ts';
-import { buildPedestals, cylinder, plaque, inTop, PED_TOP } from './pedestal.ts';
+import { buildPedestals, cylinder, inTop, PED_TOP } from './pedestal.ts';
 import { buildUi } from './ui.ts';
 import { forFrame, frameFinish, perspectiveFloor, shadowRight } from './shared.ts';
 
@@ -258,11 +258,8 @@ function paintPedestal(b: Rgba): void {
     }
   // face: panel lines and lights
   for (let x = 4; x < 44; x++) if (bget(b, x, 11) !== -1) bpx(b, x, 11, P.navyDark);
-  plaque(b, P.black, P.navyDark, P.blue);
-  for (const lx of [4, 43]) {
-    bpx(b, lx, 14, P.lime);
-    bpx(b, lx, 16, P.red);
-  }
+  // status lights across the face
+  for (let x = 9; x <= 39; x += 6) bpx(b, x, 13, x === 21 ? P.red : x % 12 === 9 ? P.lime : P.cyan);
   // emitter glow under the pad (gives the hover look)
   for (let x = 10; x < 38; x++) {
     const e = Math.min(x - 10, 37 - x);
@@ -280,6 +277,7 @@ function starScrollProp(area: Rect, horizon: number, w: number): Prop {
   return {
     layer: 'far',
     name: 'stars',
+    lit: true,
     at: { x: area.x, y: area.y, w: Math.min(area.w, 120), h: Math.min(60, horizon - area.y) },
     draw(c, now) {
       if (!now) return;
@@ -302,6 +300,7 @@ function consoleProp(x: number, y: number, seed: number): Prop {
   return {
     layer: 'mid',
     name: 'console',
+    lit: true,
     at: { x: x - 3, y: y - 3, w: 26, h: 12 },
     draw(c, now) {
       const t = Math.floor(now / 260);

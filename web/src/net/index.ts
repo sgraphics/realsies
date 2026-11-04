@@ -15,7 +15,14 @@ export function isMockMode(search: string = (globalThis as { location?: Location
 
 export function createClient(search?: string): GameClient {
   if (isMockMode(search)) {
-    const client = new MockGameClient();
+    const q = new URLSearchParams(search ?? (globalThis as { location?: Location }).location?.search ?? '');
+    const round = Number(q.get('round'));
+    const searchMs = Number(q.get('searchms')); // QA: hold the search this long (screenshots of "finding someone")
+    const client = new MockGameClient({
+      longNames: q.get('longnames') === '1',
+      ...(round > 1 ? { startRoundId: round } : {}),
+      ...(searchMs > 0 ? { searchMs: [searchMs, searchMs] as [number, number] } : {}),
+    });
     (globalThis as { realsiesMock?: MockGameClient }).realsiesMock = client; // console access in mock mode
     return client;
   }

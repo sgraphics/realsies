@@ -122,7 +122,7 @@ try {
   ok(store.get().welcomed && store.get().me?.accountId === ANA, 'welcome received');
   const s1 = await waitFor(store, (s) => (s.rooms[1]?.seats.length ?? 0) === 10, 'room 1');
   const roundId = s1.round!.roundId;
-  ok(s1.rooms[1]!.seats.every((x) => x.skin.seed.length === 64 && /^[A-Z][a-z]+[A-Z][a-z]+\d{2,3}$/.test(x.skin.name)), 'ten seats with seeds and gamertags');
+  ok(s1.rooms[1]!.seats.every((x) => x.skin.seed.length === 64 && /^[A-Z][a-z]+\d{2,3}$/.test(x.skin.name) && x.skin.name.length <= 11), 'ten seats with seeds and one-word gamertags (Pickle435, at most 11 characters)');
   const before = store.get().me!.balanceCoins;
   await store.actions.faucet(100);
   ok(near(store.get().me!.balanceCoins, before + 100), 'faucet +100');
@@ -363,7 +363,7 @@ console.log('store transcript copy');
     disconnect() {},
   } as unknown as import('../../shared/protocol.ts').GameClient;
   const s2 = createStore(stub);
-  const info = { chatId: 'cx', roundId: 1, level: 1 as const, seatIndex: 0, theme: 'castle' as const, partner: { seed: 'a'.repeat(64), name: 'RedFox435' }, mode: 'free' as const, coins: 0 };
+  const info = { chatId: 'cx', roundId: 1, level: 1 as const, seatIndex: 0, theme: 'castle' as const, partner: { seed: 'a'.repeat(64), name: 'Pickle435' }, mode: 'free' as const, coins: 0 };
   handler!({ t: 'matched', chat: info });
   handler!({ t: 'chat_started', chatId: 'cx', startedAt: 1, endsAt: 2 });
   s2.actions.say('first');

@@ -12,7 +12,7 @@ import {
   type Paint, type Opening, put, fill, shade, glow, dim, bayer, ramp, fbm, n1, forRing, forInside, brickAt,
   outsideAll, visibleCenterX, L_DEEP, L_FLOOR, L_WALL, L_ARCH, L_DECO, L_FRAME, sprite, frameOf, Clip, capCenterY,
 } from './util.ts';
-import { buildPedestals, cylinder, plaque } from './pedestal.ts';
+import { buildPedestals, cylinder } from './pedestal.ts';
 import { spandrels } from './shared.ts';
 import { buildUi } from './ui.ts';
 import { paintStdFrame, torchProp, paintTorchSconce, batProp, dripProp, chainProp, paintStonePillar, paintBannerPlate, perspectiveFloor } from './shared.ts';
@@ -217,12 +217,11 @@ function paintPedestal(b: Rgba): void {
   }
   // stone joints on the face
   for (const x of [9, 39]) for (let y = 11; y < 20; y++) if (bget(b, x, y) !== -1) bpx(b, x, y, P.navy);
-  plaque(b, P.navyDark, P.black, P.slate);
-  // gold studs beside the plaque
-  bpx(b, 5, 15, P.gold);
-  bpx(b, 5, 16, P.orange);
-  bpx(b, 42, 15, P.gold);
-  bpx(b, 42, 16, P.orange);
+  // a band of gold studs across the face (the base below dissolves into the floor)
+  for (let x = 8; x <= 40; x += 8) {
+    bpx(b, x, 13, P.gold);
+    bpx(b, x, 14, P.orange);
+  }
   // plinth
   for (let x = 0; x < 48; x++) {
     const e = Math.min(x, 47 - x);

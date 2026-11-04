@@ -1,5 +1,6 @@
-// The world: one full-window canvas drawn by the art engine at an integer scale, with a DOM
-// overlay whose children are placed in game-pixel rects (text, buttons, inputs).
+// The world: one canvas under the HUD drawn by the art engine at an integer scale, with a DOM
+// overlay whose children are placed in game-pixel rects (tags, panels, bubbles, inputs). The
+// canvas's top frame bar tucks under the HUD, so the room starts right at the HUD's bottom edge.
 
 import type { ComponentChildren, CSSProperties } from 'preact';
 import { createContext } from 'preact';
@@ -38,21 +39,24 @@ export interface WorldProps {
   partner?: Rig | null;
   /** Chat fuse 1..0. */
   fuse?: number;
+  /** Call screen after the call (no question panel). */
+  locked?: boolean;
   children?: (ctx: WorldCtx) => ComponentChildren;
 }
 
-function makeLayout(kind: SceneKind, w: number, h: number, n: number): AnyLayout {
+function makeLayout(kind: SceneKind, s: ScaleInfo, n: number, locked = false): AnyLayout {
+  const o = { cssPx: s.cssPx, orientation: s.orientation, locked };
   switch (kind) {
-    case 'lobby': return layoutLobby(w, h, 10);
-    case 'chat': return layoutChat(w, h);
-    case 'call': return layoutCall(w, h);
-    case 'hall': return layoutHall(w, h, n);
+    case 'lobby': return layoutLobby(s.w, s.h, 10, o);
+    case 'chat': return layoutChat(s.w, s.h, o);
+    case 'call': return layoutCall(s.w, s.h, o);
+    case 'hall': return layoutHall(s.w, s.h, n, o);
   }
 }
 
 export function World(p: WorldProps) {
-  const scale = useScale();
-  const layout = useMemo(() => makeLayout(p.kind, scale.w, scale.h, p.hallSeats ?? 0), [p.kind, scale.w, scale.h, p.hallSeats]);
+  const scale = useScale(p.kind === 'hall' ? 'hall' : 'lobby');
+  const layout = useMemo(() => makeLayout(p.kind, scale, p.hallSeats ?? 0, !!p.locked), [p.kind, scale, p.hallSeats, p.locked]);
   const canvas = useRef<HTMLCanvasElement>(null);
   const mirror = useRef<HTMLImageElement>(null);
   const renderer = useRef<SceneRenderer | null>(null);
@@ -71,8 +75,9 @@ export function World(p: WorldProps) {
     if (!ctx) return;
     let image: ImageData | null = null;
     let last = 0;
-    // QA screenshots (?qa=): headless Chrome does not always composite canvases, so mirror each frame into an <img>
+    // QA screenshots (?qa=): headless Chrome does not always composite canvases, so mirror frames into an <img>
     const qa = document.documentElement.classList.contains('qa');
+    let decoding = false;
     let reduced = prefersReducedMotion();
     const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
     const onMq = () => { reduced = !!mq?.matches; };
@@ -90,10 +95,12 @@ export function World(p: WorldProps) {
       }
       if (!image || image.data !== out.data) image = new ImageData(out.data as unknown as Uint8ClampedArray<ArrayBuffer>, out.w, out.h);
       ctx.putImageData(image, 0, 0);
-      if (qa && mirror.current) {
-        mirror.current.src = c.toDataURL();
-        const rl = (r as unknown as { layout: { w: number; h: number; seats?: { pedestal: { y: number } }[] } }).layout;
-        c.dataset.drawn = `${out.w}x${out.h} renderer=${rl.w}x${rl.h} ped0=${rl.seats?.[0]?.pedestal.y}`;
+      // one decode in flight at a time, so the mirror always shows a recent, fully decoded frame
+      const m = mirror.current;
+      if (qa && m && !decoding) {
+        decoding = true;
+        m.src = c.toDataURL();
+        m.decode().catch(() => {}).finally(() => { decoding = false; });
       }
     };
     draw(Date.now(), true);
@@ -116,13 +123,16 @@ export function World(p: WorldProps) {
 
   const cssW = layout.w * scale.cssPx;
   const cssH = layout.h * scale.cssPx;
+  const qa = typeof document !== 'undefined' && document.documentElement.classList.contains('qa');
   return (
     <Ctx.Provider value={ctx}>
-      <div class={'world world-' + p.kind} style={{ '--px': scale.cssPx + 'px' } as CSSProperties} data-layout={`${layout.w}x${layout.h}@${scale.scale}/${scale.cssPx}`}>
+      <div
+        class={'world world-' + p.kind}
+        style={{ '--px': scale.cssPx + 'px', top: scale.top + 'px' } as CSSProperties}
+        data-layout={`${layout.w}x${layout.h}@${scale.scale}/${scale.cssPx.toFixed(2)} ${scale.orientation}`}
+      >
         <canvas ref={canvas} class="world-canvas" width={layout.w} height={layout.h} style={{ width: cssW + 'px', height: cssH + 'px' }} aria-hidden="true" />
-        {typeof document !== 'undefined' && document.documentElement.classList.contains('qa') && (
-          <img ref={mirror} class="world-canvas" alt="" style={{ width: cssW + 'px', height: cssH + 'px' }} />
-        )}
+        {qa && <img ref={mirror} class="world-canvas" alt="" style={{ width: cssW + 'px', height: cssH + 'px' }} />}
         <div class="world-overlay" style={{ width: cssW + 'px', height: cssH + 'px' }}>
           {p.children?.(ctx)}
         </div>

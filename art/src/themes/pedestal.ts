@@ -1,10 +1,11 @@
-// Pedestal sprites: a shared 48x24 footprint (top face, front face with a plaque for the gamertag,
-// plinth) painted per theme, plus generic state variants (empty, occupied, dim, hover, selected glow).
+// Pedestal sprites: a shared 48x24 footprint (top face, front face, plinth) painted per theme, plus
+// generic state variants (empty, occupied, dim, hover, selected glow). There is no name plate: the
+// lower part dissolves into the floor with an ordered dither and the DOM gamertag sits beneath.
 
 import { type Rgba, createBuffer, get, px, cloneBuffer } from '../core/buffer.ts';
 import { type Color, type Ramp, TRANSPARENT, darker, lighter } from '../core/palette.ts';
 import type { PedestalSprites } from './types.ts';
-import { PLAQUE, PED_W, PED_H } from '../scene/layout.ts';
+import { PED_W, PED_H } from '../scene/layout.ts';
 import { bayer } from './util.ts';
 
 /** Top face ellipse of every pedestal (feet of a 32x48 character at row 45 land at y = 5). */
@@ -57,18 +58,20 @@ export function cylinder(b: Rgba, side: Ramp, top: Ramp, outline: Color, o: { bo
   outlineSprite(b, outline);
 }
 
-/** Recessed plaque on the front face where the DOM gamertag sits. */
-export function plaque(b: Rgba, fill: Color, edgeLo: Color, edgeHi: Color): void {
-  const { x, y, w, h } = PLAQUE;
-  for (let yy = y; yy < y + h; yy++)
-    for (let xx = x; xx < x + w; xx++) {
-      const corner = (yy === y || yy === y + h - 1) && (xx === x || xx === x + w - 1);
-      if (corner) continue;
-      let c = fill;
-      if (yy === y || xx === x) c = edgeLo; // inset: shadow on top/left
-      else if (yy === y + h - 1 || xx === x + w - 1) c = edgeHi;
-      px(b, xx, yy, c);
-    }
+/** First row of the fade: rows above stay solid (top face and the upper front face). */
+export const FADE_FROM = 12;
+/** Rows from here down are fully transparent. */
+export const FADE_TO = 22;
+
+/**
+ * Dissolve the lower part of a pedestal sprite into whatever is behind it: an ordered (Bayer)
+ * dither drops more pixels row by row, so the floor shows through, like a semi-transparent base.
+ */
+export function fadeBase(b: Rgba): void {
+  for (let y = FADE_FROM; y < b.h; y++) {
+    const t = Math.min(1, (y - FADE_FROM + 1) / (FADE_TO - FADE_FROM + 1)); // 0 solid .. 1 gone
+    for (let x = 0; x < b.w; x++) if (bayer(x, y) < t) px(b, x, y, TRANSPARENT);
+  }
 }
 
 /** Outline every opaque group with a darker shade or the given colour (4-neighbour). */
@@ -99,6 +102,7 @@ function mapAll(src: Rgba, f: (c: Color, x: number, y: number) => Color): Rgba {
 export function buildPedestals(paint: (b: Rgba) => void, glow: [Color, Color, Color]): PedestalSprites {
   const base = createBuffer(PED_W, PED_H);
   paint(base);
+  fadeBase(base);
   const occupied = base;
   const empty = mapAll(base, (c, x, y) => (inTop(x, y) ? darker(c, 1) : c));
   const dim = mapAll(base, (c) => darker(c, 1));

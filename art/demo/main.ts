@@ -2,8 +2,8 @@
 // Buttons: theme, new faces, talk, look at the bubbles, react, reduced motion, chat/call scenes.
 
 import { THEMES, THEME_NAMES, type ThemeId } from '../../shared/protocol.ts';
-import { chooseScale, type SceneSeat, type AnyLayout } from '../src/scene/types.ts';
-import { layoutLobby, layoutChat, layoutCall, SceneRenderer } from '../src/scene/index.ts';
+import type { SceneSeat, AnyLayout } from '../src/scene/types.ts';
+import { chooseScale, layoutLobby, layoutChat, layoutCall, SceneRenderer } from '../src/scene/index.ts';
 import { Rig, describeLook } from '../src/rig/rig.ts';
 import { randomSeed } from '../src/core/rng.ts';
 import { addTicker } from '../src/browser/index.ts';
@@ -28,7 +28,8 @@ function newFaces(): void {
 
 function relayout(): void {
   const s = chooseScale(innerWidth, innerHeight, devicePixelRatio || 1);
-  layout = kind === 'lobby' ? layoutLobby(s.w, s.h, 10) : kind === 'chat' ? layoutChat(s.w, s.h) : layoutCall(s.w, s.h);
+  const o = { cssPx: s.cssPx, orientation: s.orientation };
+  layout = kind === 'lobby' ? layoutLobby(s.w, s.h, 10, o) : kind === 'chat' ? layoutChat(s.w, s.h, o) : layoutCall(s.w, s.h, o);
   if (!renderer) renderer = new SceneRenderer(theme, layout);
   renderer.setTheme(theme);
   renderer.setLayout(layout);

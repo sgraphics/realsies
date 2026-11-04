@@ -1,17 +1,21 @@
-// Chat: partner on a pedestal (left; top on phones), bubbles on the right, a burning fuse for
-// the two minutes, typing indicator, and a native input that behaves with phone keyboards.
+// Chat: the HUD (chat timer, coins playing, round clock, menu with the test tools), the partner on a
+// pedestal (left; top-left on phones) with its gamertag beneath, a small box of chat facts sized to
+// its content, bubbles in the room, a burning fuse, a typing indicator, and a native input that
+// behaves with phone keyboards (the column shrinks by the keyboard inset).
 
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
-import { fmtClock, txUrl } from '../state/format.ts';
+import { txUrl } from '../state/format.ts';
 import { World } from '../world/World.tsx';
 import { useNow, useRig } from '../ui/hooks.ts';
 import { Button, Icon } from '../ui/kit.tsx';
-import { THEME_NAMES, themeFor } from '../../../shared/protocol.ts';
+import { Hud } from '../ui/Hud.tsx';
+import { NameTag } from '../ui/NameTag.tsx';
+import { themeFor } from '../../../shared/protocol.ts';
 
-export function ChatScreen({ store }: { store: Store }) {
+export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }) {
   const s = useStore(store);
   const now = useNow(250);
   const chat = s.chat;
@@ -23,7 +27,28 @@ export function ChatScreen({ store }: { store: Store }) {
   const theme = chat?.theme ?? (s.round ? s.round.themes[level] ?? themeFor(level, s.round.roundId) : 'castle');
   const rig = useRig(partner?.seed);
   const [text, setText] = useState('');
-  const list = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement | null>(null);
+  const pinned = useRef(true);
+  const ro = useRef<ResizeObserver | null>(null);
+  // the list stays pinned to the newest message, also when the keyboard or the layout resizes it
+  const listRef = useCallback((el: HTMLDivElement | null) => {
+    if (list.current === el) return;
+    ro.current?.disconnect();
+    ro.current = null;
+    list.current = el;
+    if (!el) return;
+    el.addEventListener('scroll', () => {
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+    });
+    if (typeof ResizeObserver === 'function') {
+      ro.current = new ResizeObserver(() => {
+        if (pinned.current) el.scrollTop = el.scrollHeight;
+      });
+      ro.current.observe(el);
+    }
+    el.scrollTop = el.scrollHeight;
+  }, []);
+  useEffect(() => () => ro.current?.disconnect(), []);
   const typingTimer = useRef<number | null>(null);
   const typingOn = useRef(false);
   const seen = useRef(0);
@@ -45,9 +70,13 @@ export function ChatScreen({ store }: { store: Store }) {
       return () => clearTimeout(t);
     }
   }, [msgs.length, rig]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = list.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const mine = msgs.length > 0 && msgs[msgs.length - 1].from === 'me';
+    if (el && (pinned.current || mine)) {
+      el.scrollTop = el.scrollHeight;
+      pinned.current = true;
+    }
   }, [msgs.length, chat?.partnerTyping, chat?.phase]);
   useEffect(() => () => { if (typingTimer.current) clearTimeout(typingTimer.current); }, []);
 
@@ -55,6 +84,8 @@ export function ChatScreen({ store }: { store: Store }) {
   const total = (cfg?.chatSeconds ?? 120) * 1000;
   const left = chatting && chat?.endsAt ? Math.max(0, chat.endsAt - now) : total;
   const fuse = chatting ? left / total : 1;
+  const paid = chat ? chat.mode === 'paid' && chat.coins > 0 : search?.mode === 'paid';
+  const playing = chat ? chat.coins : search?.coins ?? 0;
 
   const typing = (on: boolean) => {
     if (on === typingOn.current) return;
@@ -81,7 +112,7 @@ export function ChatScreen({ store }: { store: Store }) {
     status = (
       <div class="px-panel tight status-panel sheet-enter">
         <p class="px-sub">Finding someone to chat with…</p>
-        <p class="px-dim" style={{ fontSize: '13px', margin: '6px 0' }}>{search.mode === 'paid' ? `${search.coins} coins ready to play` : 'Free chat'}</p>
+        <p class="px-dim status-sub">{search.mode === 'paid' ? `${search.coins} coins ready to play` : 'Free chat'}</p>
         <Button small onClick={() => store.actions.cancelSearch()}>Cancel</Button>
       </div>
     );
@@ -94,86 +125,73 @@ export function ChatScreen({ store }: { store: Store }) {
   }
 
   return (
-    <World theme={theme} kind="chat" partner={rig} fuse={fuse}>
-      {(w) => {
-        const l = w.layout.kind === 'chat' ? w.layout : null;
-        if (!l) return null;
-        const portrait = l.orientation === 'portrait';
-        const msgBox = w.box(l.messages);
-        const inBox = w.box(l.input);
-        return (
-          <>
-            <div class="seat-label" style={w.box(l.partner.label)}>
-              <span>{partner?.name ?? '…'}</span>
-            </div>
-            <div class={'pillar-text' + (portrait ? ' row' : '')} style={w.box(l.pillarText ?? l.pillar)}>
-              <div class="pillar-stat">
-                <span class="k">{chat?.mode === 'paid' || search?.mode === 'paid' ? 'Playing' : 'Mode'}</span>
-                <span class="v">{chat?.mode === 'paid' ? <><Icon name="coin" />{chat.coins}</> : search?.mode === 'paid' ? <><Icon name="coin" />{search.coins}</> : 'FREE'}</span>
+    <>
+      <Hud store={store} kind="chat" onTerms={onTerms} />
+      <World theme={theme} kind="chat" partner={rig} fuse={fuse}>
+        {(w) => {
+          const l = w.layout.kind === 'chat' ? w.layout : null;
+          if (!l) return null;
+          const portrait = l.orientation === 'portrait';
+          const col = w.box(l.chat);
+          return (
+            <>
+              <NameTag rect={l.partner.label} cssPx={w.scale.cssPx} name={partner?.name ?? '…'} lines={l.label.lines} tone="live" />
+              <div class={'chat-info-slot' + (portrait ? ' side' : '')} style={w.box(l.info)}>
+                <div class="px-panel tight chat-info">
+                  <p class="ci-row">
+                    <Icon name="coin" />
+                    {paid ? <span>Playing <b>{playing}</b> coins</span> : <span>Free chat</span>}
+                  </p>
+                  <p class="ci-row ci-call">
+                    <Icon name="chat" />
+                    <span>{portrait ? 'Then call it:' : 'Two minutes, then you call it:'} <b>real human?</b></span>
+                  </p>
+                  {chat?.playTx && (
+                    <a class="px-link ci-row ci-link" href={txUrl(cfg, chat.playTx)} target="_blank" rel="noreferrer">
+                      <Icon name="link" /> play on chain
+                    </a>
+                  )}
+                </div>
               </div>
-              <div class="pillar-stat">
-                <span class="k">Level {level}</span>
-                <span class="v" style={{ fontSize: '0.8em' }}>{THEME_NAMES[theme]}</span>
+              <div class="chat-col" style={{ ...col, height: `calc(${col.height} - var(--kb))` }}>
+                <div class="chat-messages" ref={listRef} aria-live="polite">
+                  {status}
+                  {chatting && msgs.length === 0 && <div class="chat-note">Say hi. You have two minutes.</div>}
+                  {chat?.playFailed && <div class="chat-note">Coins not placed ({chat.playFailed}). This chat is free.</div>}
+                  {msgs.map((m) => (
+                    <div key={m.id} class={'bubble ' + (m.from === 'me' ? 'me' : 'them')}>{m.text}</div>
+                  ))}
+                  {chat?.partnerTyping && (
+                    <div class="bubble them typing" aria-label="typing"><i /><i /><i /></div>
+                  )}
+                </div>
+                <form
+                  class="chat-input px-panel tight"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    send();
+                  }}
+                >
+                  <input
+                    class="px-input"
+                    type="text"
+                    enterKeyHint="send"
+                    autoComplete="off"
+                    autoCorrect="on"
+                    maxLength={280}
+                    placeholder={chatting ? 'Type a message…' : 'Waiting…'}
+                    value={text}
+                    disabled={!chatting}
+                    onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+                    aria-label="Message"
+                  />
+                  <Button type="submit" kind="primary" disabled={!chatting || !text.trim()}>Send</Button>
+                </form>
               </div>
-              {!portrait && s.round && (
-                <div class="pillar-stat">
-                  <span class="k">Round ends</span>
-                  <span class="v"><Icon name="clock" />{fmtClock(s.round.endsAt - now)}</span>
-                </div>
-              )}
-              {!portrait && (
-                <div class="pillar-stat">
-                  <span class="k">Then you call</span>
-                  <span class="v" style={{ fontSize: '0.75em' }}>Real human?</span>
-                </div>
-              )}
-              {chat?.playTx && (
-                <div class="pillar-stat">
-                  <span class="k">On chain</span>
-                  <a class="px-link px-label" href={txUrl(cfg, chat.playTx)} target="_blank" rel="noreferrer">play tx <Icon name="link" /></a>
-                </div>
-              )}
-            </div>
-            <div class={'timer-text' + (chatting && left < 15000 ? ' low' : '')} style={w.box(l.timer)} aria-live="off">
-              {fmtClock(left)}
-            </div>
-            <div class="chat-messages" ref={list} style={{ ...msgBox, height: `calc(${msgBox.height} - var(--kb))` }} aria-live="polite">
-              {status}
-              {chatting && msgs.length === 0 && <div class="chat-note">Say hi. You have two minutes.</div>}
-              {chat?.playFailed && <div class="chat-note">Coins not placed ({chat.playFailed}). This chat is free.</div>}
-              {msgs.map((m) => (
-                <div key={m.id} class={'bubble ' + (m.from === 'me' ? 'me' : 'them')}>{m.text}</div>
-              ))}
-              {chat?.partnerTyping && (
-                <div class="bubble them typing" aria-label="typing"><i /><i /><i /></div>
-              )}
-            </div>
-            <form
-              class="chat-input"
-              style={{ ...inBox, transform: 'translateY(calc(var(--kb) * -1))' }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                send();
-              }}
-            >
-              <input
-                class="px-input"
-                type="text"
-                enterKeyHint="send"
-                autoComplete="off"
-                autoCorrect="on"
-                maxLength={280}
-                placeholder={chatting ? 'Type a message…' : 'Waiting…'}
-                value={text}
-                disabled={!chatting}
-                onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-                aria-label="Message"
-              />
-              <Button type="submit" kind="primary" disabled={!chatting || !text.trim()}>Send</Button>
-            </form>
-          </>
-        );
-      }}
-    </World>
+            </>
+          );
+        }}
+      </World>
+    </>
   );
 }

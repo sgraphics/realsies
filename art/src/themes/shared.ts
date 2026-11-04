@@ -294,6 +294,7 @@ export function torchProp(x: number, y: number, seed: number, blue = false): Pro
   return {
     layer: 'mid',
     name: 'torch',
+    lit: true,
     at: { x: x - 5, y: y - 18, w: 16, h: 28 },
     draw(c, now) {
       // flickering halo on the wall, then the flame
@@ -319,6 +320,7 @@ export function brazierProp(x: number, y: number, seed: number): Prop {
   return {
     layer: 'mid',
     name: 'brazier',
+    lit: true,
     at: { x: x - 4, y: y - 26, w: 22, h: 36 },
     draw(c, now) {
       const fl = Math.floor((now + seed * 50) / 120) % 3;

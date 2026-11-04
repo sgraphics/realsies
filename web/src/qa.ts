@@ -1,12 +1,20 @@
 // Mock-mode QA hooks for screenshots without a browser driver:
 //   ?mock=1&as=ana                 sign in as a test user
 //   &level=2                       open that level
-//   &qa=seat|deposit|chat|call|locked|results|verify|rounds   drive to a screen
+//   &round=10                      start the mock at this round (themes rotate per round: 7 = jungle,
+//                                  desert, cave; 10 = space, castle, jungle)
+//   &qa=seat|deposit|search|chat|call|locked|results|verify|rounds|terms   drive to a screen
 //   &mode=paid&coins=10&seat=3     how to pick the seat
+//   &long=1                        chat: a long scripted conversation
+//   &kb=300                        pretend a phone keyboard of this many CSS px is open
+//   &menu=1                        open the HUD menu
+//   &consent=1                     the 18+ / terms box already ticked (who are you)
+//   &longnames=1                   every seat gets an 11-character gamertag
 // Only active together with ?mock=1.
 
 import type { Level } from '../../shared/protocol.ts';
 import type { Store, AppState } from './state/store.ts';
+import { acceptTerms } from './state/consent.ts';
 
 export interface QaPlan {
   step: string;
@@ -45,8 +53,29 @@ function until(store: Store, pred: (s: AppState) => boolean, ms = 20000): Promis
   });
 }
 
+/** A long, natural conversation for the chat screenshots (bubbles of every length). */
+export const LONG_CHAT: { from: 'me' | 'them'; text: string }[] = [
+  { from: 'them', text: 'heyy' },
+  { from: 'me', text: 'hi! where are you from?' },
+  { from: 'them', text: 'lisbon, you?' },
+  { from: 'me', text: 'berlin. how is the weather there' },
+  { from: 'them', text: 'honestly too hot for november lol. i was at the beach this morning' },
+  { from: 'me', text: 'jealous' },
+  { from: 'them', text: 'what do you do?' },
+  { from: 'me', text: 'i teach maths to teenagers, which is a lot like this game: you never know who is actually listening' },
+  { from: 'them', text: 'haha thats dark' },
+  { from: 'me', text: 'ok be honest. are you a bot?' },
+  { from: 'them', text: 'would a bot say no?' },
+  { from: 'me', text: 'that is exactly what a bot would say' },
+];
+
 export async function runQa(store: Store, search: string, open: (what: string, arg?: unknown) => void): Promise<void> {
   const q = new URLSearchParams(search);
+  if (q.get('mock') === '1' && q.get('consent') === '1') acceptTerms();
+  if (q.get('mock') === '1' && q.get('qa') === 'terms' && !q.get('as')) {
+    open('terms');
+    return;
+  }
   const plan = qaPlan(search);
   if (!plan) return;
   const as = q.get('as')!;
@@ -67,6 +96,9 @@ export async function runQa(store: Store, search: string, open: (what: string, a
     case 'rounds':
       open('rounds');
       return;
+    case 'terms':
+      open('terms');
+      return;
     case 'results':
     case 'verify': {
       const rounds = await store.actions.listRounds();
@@ -84,14 +116,22 @@ export async function runQa(store: Store, search: string, open: (what: string, a
   store.actions.pickSeat(plan.level, seat.index, plan.mode, plan.mode === 'paid' ? plan.coins : undefined);
   if (plan.step === 'search') return;
   await until(store, (x) => x.chat?.phase === 'chatting');
-  const lines = (q.get('say') ?? 'hey! where are you from?|lol nice. are you a bot?').split('|');
-  for (const line of lines) {
-    await new Promise((r) => setTimeout(r, 1500));
-    store.actions.say(line);
-    await until(store, (x) => (x.chat?.messages.filter((m) => m.from === 'them').length ?? 0) > 0, 15000).catch(() => {});
+  if (q.get('long') === '1') {
+    const mock = store.client as unknown as { qaScript?: (l: typeof LONG_CHAT) => void };
+    mock.qaScript?.(LONG_CHAT);
+    await new Promise((r) => setTimeout(r, 600));
+    store.actions.say('prove it. what did you have for breakfast?');
+    if (plan.step === 'chat') return;
+  } else {
+    const lines = (q.get('say') ?? 'hey! where are you from?|lol nice. are you a bot?').split('|');
+    for (const line of lines) {
+      await new Promise((r) => setTimeout(r, 1500));
+      store.actions.say(line);
+      await until(store, (x) => (x.chat?.messages.filter((m) => m.from === 'them').length ?? 0) > 0, 25000).catch(() => {});
+    }
+    await new Promise((r) => setTimeout(r, 4000));
+    if (plan.step === 'chat') return;
   }
-  await new Promise((r) => setTimeout(r, 4000));
-  if (plan.step === 'chat') return;
   store.actions.devEndChat();
   await until(store, (x) => x.chat?.phase === 'calling');
   if (plan.step === 'call') return;

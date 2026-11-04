@@ -263,13 +263,16 @@ export class Clip {
   /** Highest mask layer this prop may draw over. */
   maxLayer = L_DECO;
   minLayer = 0;
-  bind(out: Rgba, mask: Uint8Array, maxLayer: number, minLayer = 0): this {
+  /** Palette steps to darken each freshly drawn pixel by (the dimmed room), or null for light sources. */
+  dim: Uint8Array | null = null;
+  bind(out: Rgba, mask: Uint8Array, maxLayer: number, minLayer = 0, dim: Uint8Array | null = null): this {
     this.out = out;
     this.mask = mask;
     this.w = out.w;
     this.h = out.h;
     this.maxLayer = maxLayer;
     this.minLayer = minLayer;
+    this.dim = dim;
     return this;
   }
   ok(x: number, y: number): boolean {
@@ -281,6 +284,14 @@ export class Clip {
     x |= 0;
     y |= 0;
     if (c === TRANSPARENT || !this.ok(x, y)) return;
+    if (this.dim) {
+      const s = this.dim[y * this.w + x];
+      if (s) c = darker(c, s);
+    }
+    this.raw(x, y, c);
+  }
+  /** Write a pixel as is (shading of what is already there must not be dimmed twice). */
+  private raw(x: number, y: number, c: Color): void {
     const i = (y * this.w + x) * 4, d = this.out.data;
     d[i] = (c >> 16) & 255;
     d[i + 1] = (c >> 8) & 255;
@@ -300,7 +311,7 @@ export class Clip {
     if (!this.ok(x, y)) return;
     const c = get(this.out, x, y);
     if (c === TRANSPARENT) return;
-    this.px(x, y, steps > 0 ? darker(c, steps) : lighter(c, -steps));
+    this.raw(x, y, steps > 0 ? darker(c, steps) : lighter(c, -steps));
   }
   sprite(rows: readonly string[], x: number, y: number, map: Record<string, Color>, flipX = false): void {
     for (let j = 0; j < rows.length; j++) {

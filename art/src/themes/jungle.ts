@@ -12,7 +12,7 @@ import {
   type Paint, type Opening, put, fill, shade, bayer, ramp, fbm, n1, forRing, forInside, outsideAll, visibleCenterX, capTopAt,
   L_DEEP, L_FLOOR, L_WALL, L_ARCH, L_DECO, L_FRAME, sprite, layerAt,
 } from './util.ts';
-import { buildPedestals, cylinder, plaque, inTop, PED_TOP } from './pedestal.ts';
+import { buildPedestals, cylinder, inTop, PED_TOP } from './pedestal.ts';
 import { buildUi } from './ui.ts';
 import { forFrame, frameFinish, perspectiveFloor, firefliesProp, shadowRight, spandrels } from './shared.ts';
 
@@ -316,7 +316,6 @@ function paintPedestal(b: Rgba): void {
     const y = 10 + (x % 3 === 0 ? 1 : 0);
     if (hash01(65, x) < 0.75) bpx(b, x, y, hash01(66, x) < 0.4 ? P.lime : P.green);
   }
-  plaque(b, P.plum, P.black, P.brownLight);
   // roots
   for (const [rx, dir] of [[3, -1], [44, 1]] as const) {
     bpx(b, rx, 18, P.brown);
@@ -473,12 +472,13 @@ export const jungle: ThemeDef = {
       yes: [P.lime, P.green, P.greenDark, P.tealDark],
       no: [P.pink, P.red, P.redDark, P.plum],
       bubbleThem: { fill: P.cream, shade: P.tan, line: P.plum },
-      bubbleMe: { fill: P.lime, shade: P.green, line: P.tealDark },
+      bubbleMe: { fill: P.yellow, shade: P.gold, line: P.tealDark }, // was lime: too dark for dark text (owner, 2026-11-04)
       plate: [P.tan, P.brownLight, P.brown, P.plum],
       plateFill: P.brownLight,
     }),
   fuse: { rope: [P.tan, P.skinMid], burnt: P.brown },
   glow: [P.yellow, P.lime, P.green],
+  dim: { deep: 2 }, // the brightest backdrop: two palette steps down so characters and bubbles pop
 };
 
 void n1; void fill;

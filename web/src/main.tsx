@@ -5,20 +5,22 @@ import '@fontsource/pixelify-sans/600.css';
 import './styles.css';
 import './kit.css';
 import './screens.css';
+import './hud.css';
 import { App } from './app.tsx';
 import { createClient } from './net/index.ts';
 import { createStore } from './state/store.ts';
 import { installKeyboardInset } from './world/viewport.ts';
 import { applyUiScale } from './ui/theme.ts';
-import { chooseScale } from '../../art/src/scene/types.ts';
+import { chooseScale } from '../../art/src/scene/layout.ts';
+import { hudHeight } from './ui/hudSize.ts';
 
 const store = createStore(createClient());
 if (/[?&]qa=|[?&]as=/.test(location.search)) document.documentElement.classList.add('qa');
 installKeyboardInset();
 const ui = () => {
-  const s = chooseScale(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1);
+  const s = chooseScale(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1, hudHeight());
   document.documentElement.style.setProperty('--px', s.cssPx + 'px');
-  applyUiScale(s.scale, window.devicePixelRatio || 1);
+  applyUiScale(s.cssPx, window.devicePixelRatio || 1);
 };
 ui();
 window.addEventListener('resize', ui);

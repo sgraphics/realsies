@@ -58,7 +58,7 @@ function withRects(img: Rgba, layout: AnyLayout): Rgba {
   };
   const l: any = layout;
   const C = PAL.hotRed, D = PAL.cyan, E = PAL.lime;
-  for (const k of ['banner', 'tabs', 'pillarText', 'actions', 'timer', 'messages', 'input', 'question', 'yes', 'no', 'content', 'title']) if (l[k]) box(l[k], k === 'messages' || k === 'content' ? D : C);
+  for (const k of ['info', 'chat', 'question', 'yes', 'no', 'locked', 'content']) if (l[k] && l[k].h > 0) box(l[k], k === 'chat' || k === 'content' ? D : C);
   for (const s of l.seats ?? []) box(s.label, E);
   if (l.partner) box(l.partner.label, E);
   return out;
@@ -129,7 +129,7 @@ export async function sheetsThemes(out: SheetOut): Promise<void> {
       const rows: Rgba[] = [];
       for (const pr of r.propList()) {
         if (!pr.at) continue;
-        const a = { x: Math.max(0, pr.at.x), y: Math.max(0, pr.at.y), w: Math.min(pr.at.w, 160), h: Math.min(pr.at.h, 70) };
+        const a = { x: Math.max(0, Math.round(pr.at.x)), y: Math.max(0, Math.round(pr.at.y)), w: Math.round(Math.min(pr.at.w, 160)), h: Math.round(Math.min(pr.at.h, 70)) };
         const fr: Rgba[] = [];
         for (let i = 0; i < 8; i++) {
           const f = r.render({ now: 1000 + i * (pr.name === 'bat' ? 450 : pr.name === 'drip' ? 330 : 140), seats: [] });
@@ -159,6 +159,8 @@ export async function sheetsThemes(out: SheetOut): Promise<void> {
   drawLogo(lb, 4, LOGO_H + 8, 600);
   drawLogo(lb, 4, LOGO_H * 2 + 12, 3400);
   out('logo', scaleUp(lb, 4));
+  // contrast: bubble text on its fill (WCAG 4.5:1) and the bubble against the dimmed room behind the chat (3:1)
+  contrastReport(themes, now);
   // timing
   const lay = layoutLobby(480, 270);
   const rr = new SceneRenderer('castle', lay);
@@ -191,4 +193,63 @@ function uiSheet(t: ThemeId): Rgba {
   nineSlice(b, ui.tab.active.img, ui.tab.active.slice, 128, 86, 24, 14);
   rect(b, 8, 104, 12, 6, parseInt(kit.colors.accent.slice(1), 16));
   return b;
+}
+
+// ---------------------------------------------------------------- contrast
+
+function relLum(c: number): number {
+  const ch = [(c >> 16) & 255, (c >> 8) & 255, c & 255].map((v) => {
+    const x = v / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+export function contrastRatio(a: number, b: number): number {
+  const la = relLum(a), lb = relLum(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+const hexNum = (h: string) => parseInt(h.slice(1), 16);
+
+/** Median luminance colour of the room inside a rect (the backdrop the bubbles sit on). */
+function backdropAt(img: Rgba, r: { x: number; y: number; w: number; h: number }): number {
+  const cs: number[] = [];
+  for (let y = r.y; y < r.y + r.h; y += 2)
+    for (let x = r.x; x < r.x + r.w; x += 2) {
+      const i = (y * img.w + x) * 4;
+      cs.push((img.data[i] << 16) | (img.data[i + 1] << 8) | img.data[i + 2]);
+    }
+  cs.sort((a, b) => relLum(a) - relLum(b));
+  return cs[Math.floor(cs.length * 0.75)]; // a bright-ish quartile: bubbles must clear most of the room
+}
+
+function contrastReport(themes: ThemeId[], now: number): void {
+  const fails: string[] = [];
+  for (const t of themes) {
+    const kit = getThemeKit(t);
+    const fillOf = (n: { img: Rgba }) => {
+      const i = ((n.img.h >> 1) * n.img.w + (n.img.w >> 1)) * 4;
+      return (n.img.data[i] << 16) | (n.img.data[i + 1] << 8) | n.img.data[i + 2];
+    };
+    const them = fillOf(kit.ui.bubbleThem), me = fillOf(kit.ui.bubbleMe);
+    const tThem = contrastRatio(them, hexNum(kit.colors.bubbleThemText));
+    const tMe = contrastRatio(me, hexNum(kit.colors.bubbleMeText));
+    const rows: string[] = [`text them ${tThem.toFixed(1)}:1`, `text me ${tMe.toFixed(1)}:1`];
+    if (tThem < 4.5) fails.push(`${t}: their bubble text ${tThem.toFixed(2)}:1`);
+    if (tMe < 4.5) fails.push(`${t}: my bubble text ${tMe.toFixed(2)}:1`);
+    for (const [w, h] of [[480, 270], [270, 480]] as const) {
+      const l = layoutChat(w, h);
+      const img = render(t, l, now);
+      const bd = backdropAt(img, l.chat);
+      const bThem = contrastRatio(them, bd), bMe = contrastRatio(me, bd);
+      rows.push(`${w}x${h} backdrop: them ${bThem.toFixed(1)}:1 me ${bMe.toFixed(1)}:1`);
+      if (bThem < 3) fails.push(`${t} ${w}x${h}: their bubble vs room ${bThem.toFixed(2)}:1`);
+      if (bMe < 3) fails.push(`${t} ${w}x${h}: my bubble vs room ${bMe.toFixed(2)}:1`);
+    }
+    console.log(`  contrast ${t}: ${rows.join(', ')}`);
+  }
+  if (fails.length) {
+    console.log('CONTRAST FAILURES:');
+    for (const f of fails) console.log('  ' + f);
+    process.exitCode = 1;
+  }
 }

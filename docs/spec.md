@@ -259,7 +259,7 @@ Theme per level and round: `themeFor(level, roundId)` in `shared/protocol.ts`.
 
 ### Screens
 
-1. **Who are you?** (test mode): six test users as idling characters with label, account, coins, rating. Tap to play as that user. A TESTNET ribbon everywhere.
+1. **Who are you?** (test mode): six test users as idling characters with label, account, coins, rating, and a one-time 18+ terms checkbox. Tap to play as that user.
 2. **Lobby**: logo, level banner with theme name, a pillar panel with coins, locked coins, rating, round clock and "x of 10 called", ten pedestals under an arch with idling characters and gamertags (layout per the mockup), level tabs 1 to 3, a Results button with a badge when results are ready.
 3. **Deposit to earn** step: before entering a room while the balance is zero, skippable; in test mode the button calls the faucet for 100 test coins.
 4. **Seat**: tap a character: the character larger, its gamertag, coin presets for the level with dollar labels from `usdPerCoin`, a custom amount, or Play free. Then searching.
@@ -268,7 +268,7 @@ Theme per level and round: `themeFor(level, roundId)` in `shared/protocol.ts`.
 7. **Results**: called x of n, coins won, Turing bonus, rating change, the free player's "would have won about +N coins, deposit to earn", the locked bonus, and per chat: partner skin, truth (HUMAN or BOT and model), your call, right or wrong, coins. Each bot chat has a Verify button.
 8. **Verify drawer**: model, enclave signers, attestation nonce and report-data check, commitment string and hash with the commit tx link, every completion with request hash, response hash, signature and recovered signer computed in the browser (`@noble/hashes` sha256 and keccak, `@noble/curves` secp256k1), the system prompt hash check, and links to the open and settle transactions.
 9. **Past rounds** list.
-10. **Dev toolbar** in test mode: end chat now, end round now, round id, contract link.
+10. **Dev menu** in test mode, inside the HUD menu: end chat now, end round now, round id, contract link. Nothing overlays the chat input.
 
 ### Client
 

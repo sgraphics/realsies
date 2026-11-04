@@ -1,5 +1,7 @@
 // The REALSIES pixel logo: chunky gold letters with a highlight, a red 3D extrusion, a plum outline and
-// a drop shadow, a spinning-coin glyph at the left (as in the owner's mockup). Letters bob 1 px in a wave.
+// a drop shadow, a spinning-coin glyph at the left (as in the owner's mockup). The top is flat and
+// the bottom edge arches up toward the middle, so the outer letters are the tallest (owner's
+// reference, 2026-11-04). Letters bob 1 px in a wave.
 
 import { type Rgba, createBuffer, get, px } from '../core/buffer.ts';
 import { PAL, type Color, TRANSPARENT } from '../core/palette.ts';
@@ -91,11 +93,17 @@ const GLYPHS: Record<string, string[]> = {
 const WORD = 'REALSIES';
 const GAP = 2; // between letter fills (outlines touch)
 const COIN = 16;
-const GH = 14; // glyph fill height
+const GH = 14; // glyph fill height of the shortest (middle) letters
+/** Extra rows at the outer ends: the bottom edge arches up toward the middle (outer letters tallest). */
+const CURVE = 5;
+const FH = GH + CURVE; // tallest fill height
+/** Row of each glyph that is repeated to make it taller (a row of plain vertical strokes). */
+const STRETCH: Record<string, number> = { R: 12, E: 9, A: 11, L: 8, S: 8, I: 7 };
 
-// fill gradient top -> bottom
+// fill gradient top -> bottom (bands stay horizontal across the whole word)
 const FILL_ROWS: Color[] = [
   PAL.yellow, PAL.yellow, PAL.yellow, PAL.yellow, PAL.yellow, PAL.gold, PAL.gold, PAL.gold, PAL.gold, PAL.gold, PAL.orange, PAL.orange, PAL.orange, PAL.orange,
+  PAL.orange, PAL.orange, PAL.orange, PAL.orange, PAL.orange,
 ];
 
 function wordWidth(): number {
@@ -103,23 +111,50 @@ function wordWidth(): number {
   for (const ch of WORD) w += GLYPHS[ch][0].length + GAP;
   return w - GAP;
 }
+const WW = wordWidth();
+
+/** Extra height at word column x: 0 in the middle, CURVE at both ends (a smooth arch). */
+function extraAt(x: number): number {
+  const u = (x + 0.5 - WW / 2) / (WW / 2);
+  return Math.round(CURVE * Math.min(1, u * u));
+}
 
 /** Logo size in game pixels at scale 1 (includes outline, extrusion, shadow and 1 px of bob room). */
-export const LOGO_W = 2 + COIN + 4 + wordWidth() + 4;
-export const LOGO_H = 1 + GH + 2 + 2 + 2 + 1;
+export const LOGO_W = 2 + COIN + 4 + WW + 4;
+export const LOGO_H = 1 + FH + 2 + 2 + 2 + 1;
 
 let base: Rgba | null = null;
 const letterOffsets: { x: number; w: number }[] = [];
 
-/** Build the letter mask layer by layer: shadow, extrusion, outline, fill, highlight. */
-function letterSprite(ch: string): Rgba {
+/**
+ * The glyph for the letter starting at word column `wx`, stretched per column: rows up to the
+ * stretch row stay put, the stretch row repeats `extraAt` times, the rest moves down. The flat
+ * top stays flat and the bottom follows the arch.
+ */
+function stretched(ch: string, wx: number): (x: number, y: number) => boolean {
   const g = GLYPHS[ch];
   const gw = g[0].length;
-  const out = createBuffer(gw + 5, GH + 6);
-  const isFill = (x: number, y: number) => y >= 0 && y < GH && x >= 0 && x < gw && g[y][x] === '#';
+  const s = STRETCH[ch] ?? 7;
+  return (x: number, y: number) => {
+    if (x < 0 || x >= gw || y < 0) return false;
+    const d = extraAt(wx + x);
+    let sy: number;
+    if (y <= s) sy = y;
+    else if (y <= s + d) sy = s;
+    else sy = y - d;
+    return sy < GH && g[sy][x] === '#';
+  };
+}
+
+/** Build the letter mask layer by layer: shadow, extrusion, outline, fill, highlight. */
+function letterSprite(ch: string, wx: number): Rgba {
+  const gw = GLYPHS[ch][0].length;
+  const out = createBuffer(gw + 5, FH + 6);
+  const isFill = stretched(ch, wx);
+  const hAt = (x: number) => GH + extraAt(wx + x); // fill height of column x
   const ox = 1, oy = 1;
   // 1) drop shadow + extrusion: fill shifted down 1..2, then outline of everything
-  for (let y = 0; y < GH; y++)
+  for (let y = 0; y < FH; y++)
     for (let x = 0; x < gw; x++) {
       if (!isFill(x, y)) continue;
       px(out, ox + x + 1, oy + y + 3, PAL.plum); // shadow
@@ -138,26 +173,26 @@ function letterSprite(ch: string): Rgba {
       if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) add.push([x, y]);
     }
   // fill outline also around the top glyph itself
-  for (let y = -1; y <= GH; y++)
+  for (let y = -1; y <= FH; y++)
     for (let x = -1; x <= gw; x++) {
       if (isFill(x, y)) continue;
       if (isFill(x - 1, y) || isFill(x + 1, y) || isFill(x, y - 1) || isFill(x, y + 1)) add.push([ox + x, oy + y]);
     }
   for (const [x, y] of add) px(out, x, y, PAL.plum);
   // 3) the face
-  for (let y = 0; y < GH; y++)
+  for (let y = 0; y < FH; y++)
     for (let x = 0; x < gw; x++) {
       if (!isFill(x, y)) continue;
-      let c = FILL_ROWS[y];
+      let c = FILL_ROWS[Math.min(FILL_ROWS.length - 1, y)];
       // bevel: top-left edge highlight, bottom-right inner edge shade
       const top = !isFill(x, y - 1), left = !isFill(x - 1, y), right = !isFill(x + 1, y), bottom = !isFill(x, y + 1);
-      if ((top || left) && y < 9) c = PAL.white;
+      const lower = y > hAt(x) * 0.6;
+      if ((top || left) && !lower) c = PAL.white;
       else if (top || left) c = PAL.yellow;
-      else if ((right || bottom) && y > 8) c = PAL.rust;
+      else if ((right || bottom) && lower) c = PAL.rust;
       else if (right || bottom) c = PAL.orange;
       px(out, ox + x, oy + y, c);
     }
-  // sparkle on the first letter rows
   return out;
 }
 
@@ -215,11 +250,13 @@ function ensure(): void {
   if (base) return;
   base = createBuffer(1, 1);
   let x = 2 + COIN + 4;
+  let wx = 0;
   for (const ch of WORD) {
-    const s = letterSprite(ch);
+    const s = letterSprite(ch, wx);
     letters.push(s);
     letterOffsets.push({ x, w: GLYPHS[ch][0].length });
     x += GLYPHS[ch][0].length + GAP;
+    wx += GLYPHS[ch][0].length + GAP;
   }
   for (let f = 0; f < 6; f++) coinFrames.push(coinSprite(f));
 }
@@ -244,7 +281,7 @@ export function drawLogo(dst: Rgba, x: number, y: number, now: number, scale = 1
   const cyc = frozen ? 0 : now % 4200;
   const f = cyc < 3000 ? 0 : Math.min(5, Math.floor((cyc - 3000) / 200) + 1) % 6;
   const coinBob = frozen ? 0 : Math.round(Math.sin(now / 520)) > 0 ? -1 : 0;
-  blitA(dst, coinFrames[f], x, y + (2 + coinBob) * k, k);
+  blitA(dst, coinFrames[f], x, y + (2 + Math.round(CURVE / 2) + coinBob) * k, k);
   for (let i = 0; i < letters.length; i++) {
     // a travelling wave: one or two letters lifted at a time
     const ph = frozen ? 0 : Math.sin(now / 260 - i * 0.75);

@@ -1,5 +1,5 @@
 // "Deposit to earn": shown before entering a room while the balance is zero (skippable), and as
-// the coins panel from the pillar. Test mode: the faucet sends 100 test coins.
+// the coins panel from the HUD. Test mode: the faucet sends 100 test coins.
 
 import { useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
@@ -89,7 +89,7 @@ export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void }
           )}
           <div class="px-row between">
             <Button kind={balance > 0 ? 'primary' : 'default'} onClick={p.onDone}>{balance > 0 ? 'Back to the room' : 'Play free'}</Button>
-            {p.gate && balance === 0 && <span class="px-dim" style={{ fontSize: '13px' }}>You can deposit any time from the pillar.</span>}
+            {p.gate && balance === 0 && <span class="px-dim" style={{ fontSize: '13px' }}>You can deposit any time: tap your coins at the top.</span>}
           </div>
         </div>
       </div>

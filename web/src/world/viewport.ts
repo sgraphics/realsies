@@ -1,12 +1,14 @@
-// Viewport tracking: integer world scale, orientation, on-screen keyboard inset.
+// Viewport tracking: integer world scale under the HUD, composition, on-screen keyboard inset.
 
 import { useEffect, useState } from 'preact/hooks';
-import { chooseScale, type ScaleInfo } from '../../../art/src/scene/types.ts';
+import type { ScaleInfo } from '../../../art/src/scene/types.ts';
+import { chooseScale } from '../../../art/src/scene/layout.ts';
+import { useHudHeight } from '../ui/hudSize.ts';
 
-function measure(): ScaleInfo {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  return chooseScale(w, h, window.devicePixelRatio || 1);
+export type ScaleKind = 'lobby' | 'hall';
+
+function measure(hud: number, kind: ScaleKind): ScaleInfo {
+  return chooseScale(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1, hud, kind);
 }
 
 function inputFocused(): boolean {
@@ -14,27 +16,35 @@ function inputFocused(): boolean {
   return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
 }
 
-/** Scale info that ignores height-only shrinks while typing (phone keyboards), so the world does not jump. */
-export function useScale(): ScaleInfo {
-  const [s, setS] = useState(measure);
+const same = (a: ScaleInfo, b: ScaleInfo) => a.scale === b.scale && a.w === b.w && a.h === b.h && a.cssPx === b.cssPx && a.orientation === b.orientation && a.top === b.top;
+
+/**
+ * Scale info for the box under the HUD. Ignores height-only shrinks while typing (phone
+ * keyboards), so the world does not jump when the keyboard opens.
+ */
+export function useScale(kind: ScaleKind = 'lobby'): ScaleInfo {
+  const hud = useHudHeight();
+  const [s, setS] = useState(() => measure(hud, kind));
   useEffect(() => {
-    let raf = 0;
+    const n = measure(hud, kind);
+    setS((o) => (same(o, n) ? o : n));
+  }, [hud, kind]);
+  useEffect(() => {
     let lastW = window.innerWidth;
     const on = () => {
       const w = window.innerWidth;
       if (w === lastW && inputFocused()) return; // keyboard opened or closed: keep the world as is
       lastW = w;
-      const n = measure();
-      setS((o) => (o.scale === n.scale && o.w === n.w && o.h === n.h && o.cssPx === n.cssPx ? o : n));
+      const n = measure(hud, kind);
+      setS((o) => (same(o, n) ? o : n));
     };
     window.addEventListener('resize', on);
     window.addEventListener('orientationchange', on);
     return () => {
       window.removeEventListener('resize', on);
       window.removeEventListener('orientationchange', on);
-      cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [hud, kind]);
   return s;
 }
 
@@ -42,13 +52,15 @@ export function useScale(): ScaleInfo {
 export function installKeyboardInset(): () => void {
   const vv = window.visualViewport;
   const root = document.documentElement;
+  const forced = new URLSearchParams(location.search).get('kb'); // QA: pretend a phone keyboard of this height is open
   const update = () => {
     const vh = vv ? vv.height : window.innerHeight;
     const top = vv ? vv.offsetTop : 0;
-    const kb = Math.max(0, Math.round(window.innerHeight - vh - top));
+    const kb = forced ? Number(forced) || 0 : Math.max(0, Math.round(window.innerHeight - vh - top));
     root.style.setProperty('--kb', kb + 'px');
-    root.style.setProperty('--vvh', Math.round(vh) + 'px');
-    if (kb > 0) window.scrollTo(0, 0);
+    root.style.setProperty('--vvh', Math.round(vh - (forced ? kb : 0)) + 'px');
+    root.classList.toggle('kb-open', kb > 0);
+    if (kb > 0 && !forced) window.scrollTo(0, 0);
   };
   update();
   vv?.addEventListener('resize', update);

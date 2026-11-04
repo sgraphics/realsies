@@ -36,10 +36,10 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
         <Button small kind="ghost" class="close" onClick={p.onClose} title="Close"><Icon name="cross" /></Button>
         <div class="seat-dialog">
           <div class="seat-portrait">
-            <Portrait theme={p.theme} rig={rig} height={228} selected />
+            <Portrait theme={p.theme} rig={rig} height={typeof window !== 'undefined' && (window.innerWidth < 560 || window.innerHeight < 560) ? 160 : 228} selected />
           </div>
           <div class="px-col" style={{ minWidth: 0 }}>
-            <div>
+            <div class="seat-head">
               <p class="px-label px-dim">Chat for two minutes with</p>
               <h2 class="px-title" style={{ wordBreak: 'break-all' }}>{p.seat.skin.name}</h2>
               <p class="px-body px-dim" style={{ marginTop: '6px' }}>Then make your call: real human, yes or no?</p>
