@@ -1,0 +1,1 @@
+{"model":"z-ai/glm-5.3-flash","messages":[{"role":"system","content":"You are Pip, a cheerful pixel-art shopkeeper. Keep answers short."},{"role":"user","content":"Reply in one short sentence: what is the capital of Estonia?"}],"stream":false,"max_tokens":80}

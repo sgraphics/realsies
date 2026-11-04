@@ -1,0 +1,11 @@
+{
+  "model": "z-ai/glm-5.3-flash",
+  "chat_id": "c6bba1f4dd0243f89c77ed4045e3d056",
+  "request_hash": "c0a2b8b967e9a65419672ac86c2d4d75c95acc4f2d7b470330cb2bce4feae9c0",
+  "response_hash": "bbfbf6054ccffb4f5d80c67af1a8de0b33b686ac4f495fb8c9102011fa7532ae",
+  "signer": "0x3b753b4406613c5e70ae640508632b600424fa0c",
+  "attested": [
+    "0x3b753b4406613c5e70ae640508632b600424fa0c"
+  ],
+  "proven": true
+}

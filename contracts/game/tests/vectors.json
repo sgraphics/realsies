@@ -1,0 +1,47 @@
+{
+  "round_id": 1,
+  "secret": "abababababababababababababababababababababababababababababababab",
+  "secret_hash": "271a413bd339c5709fdceaec41f14f11e9fbfb5042d72d331c65f32b284cd09a",
+  "bot": {
+    "character_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+    "model": "z-ai/glm-5.3-flash",
+    "prompt": "You are a test persona. Keep it short.",
+    "prompt_hash": "7d94af6fb2583d4878cec96d15ba657ec2d645d7fd6939d5c87f8863b9487012",
+    "signers": [
+      "0x2c7536e3605d9c16a7a3d7b1898e529396a65c23"
+    ],
+    "payout": "bots.testnet",
+    "salt": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "preimage": "realsies:v1|bot|1|b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0|z-ai/glm-5.3-flash|7d94af6fb2583d4878cec96d15ba657ec2d645d7fd6939d5c87f8863b9487012|0x2c7536e3605d9c16a7a3d7b1898e529396a65c23|bots.testnet|5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "commitment": "80bcfe82fa447bb6b88d41aecd4c9406c9457f08d5c4bb041a37802d41efc868",
+    "proofs": {
+      "alice.testnet": {
+        "viewer": "alice.testnet",
+        "text": "z-ai/glm-5.3-flash:cffe092655679d70ed5246791c88d7d0465d088f588faf26d88501ce1413c28f:a9c2fbe71d577f89251849c1d0888ba3c68a79a64189a3f405ac9255a2bc0756",
+        "signature": "0xc7e291d273272b9827407a29bf5e25be16f35743f40fb4a9bde108cec7572fec68073e8c7338059fa119b79216b86ed550e3fbfcd407d2afacb09ac3af02dc391c",
+        "request": "{\"model\":\"z-ai/glm-5.3-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a test persona. Keep it short.\"},{\"role\":\"system\",\"content\":\"Your gamertag in this chat is RedFox435; the game generated it, you did not choose it. Game record: 0db3dce047ef93d6.\"},{\"role\":\"user\",\"content\":\"hey are you real\"}],\"stream\":false,\"max_tokens\":120}"
+      },
+      "bob.testnet": {
+        "viewer": "bob.testnet",
+        "text": "z-ai/glm-5.3-flash:aa96066630b5ba587571ab2ba2a1eb2685d687d7b92b595d9376452ef6aa0730:a9c2fbe71d577f89251849c1d0888ba3c68a79a64189a3f405ac9255a2bc0756",
+        "signature": "0x54b7f5c42c7c8d6fef85ac6b2a14fa7e3a6aedb4fca24b0464752d595a2e9c4e54aa0e3a3eb2fc7022f403795842bdd04fdac3098913bfb98a99bf4fbebea3b21b",
+        "request": "{\"model\":\"z-ai/glm-5.3-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a test persona. Keep it short.\"},{\"role\":\"system\",\"content\":\"Your gamertag in this chat is RedFox435; the game generated it, you did not choose it. Game record: f0e27ad5c95207be.\"},{\"role\":\"user\",\"content\":\"sup\"}],\"stream\":false,\"max_tokens\":120}"
+      }
+    }
+  },
+  "human": {
+    "character_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+    "account": "dave.testnet",
+    "payout": "dave.testnet",
+    "salt": "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
+    "preimage": "realsies:v1|human|1|a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0|dave.testnet|dave.testnet|6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
+    "commitment": "057c6966ecbc6279bb548318b77380b6b1ff6784144c09e1e0c1e8b256ff885c"
+  },
+  "handles": {
+    "alice_bot": "0db3dce047ef93d69bb932b2d0bd4e5b0477a2c35a7093547a942cdfa9d1792e",
+    "bob_bot": "f0e27ad5c95207be1187097d7c7e08c6c8403379e384d3fcdd6652289fe24fcc",
+    "carol_bot": "185adf8859a2c9d283da644972fdac7ff9e6d495c4ad1ce48d18d84c9fb5f9cc",
+    "carol_human": "bcf716a7bb3ceb1f25b608d4f4f26a5fa2a88f34db426bb96e54075abe3045f0",
+    "erin_human": "b4d4a2f5f12007b6553d79e0d9627031374998b54570633b64d410e7604e7ec1"
+  }
+}

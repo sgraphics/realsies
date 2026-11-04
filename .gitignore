@@ -1,0 +1,15 @@
+# local tooling and experiment outputs, never part of the repo
+.tooling/
+experiments/near-ai/runs/
+node_modules/
+target/
+dist/
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+relay/.secrets/
+relay/data/
+art/out/
+.vite/
