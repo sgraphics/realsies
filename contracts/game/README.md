@@ -45,6 +45,7 @@ All amounts are base units as decimal strings. `round_id` is a JSON number. Hex 
 | `reveal_round` | operator | `{"round_id":1,"secret":"<64 hex>"}` | 0 |
 | `open_characters` | operator | `{"round_id":1,"openings":[Opening, ...]}` | 0, up to 300 Tgas |
 | `settle_round` | operator, or anyone after the open window | `{"round_id":1}` | 0, 100 to 300 Tgas |
+| `prune_round` | operator, settled rounds only | `{"round_id":1,"limit":200}` | 0, up to 300 Tgas; returns how many plays and characters remain, call until 0 |
 
 `Opening` for a bot:
 
@@ -102,6 +103,10 @@ Timing rules: plays need `now < ends_at_ms`; calls need `now <= ends_at_ms + 60 
 ```
 
 `outcome` is null until settlement, then `right`, `wrong` or `refund`; `credited` is what the play paid back (refund, or locked plus reward).
+
+## Storage
+
+Every round stores its character commitments and plays, about 10 KB for a round with 30 bot characters. Nothing else frees it, so the relay calls `prune_round` after it has computed a round's results; the round record stays (status `settled`, empty lists) and the history stays in the transaction logs. On 2026-11-04 the testnet account ran out of storage balance after about 19 ten-minute rounds (`LackBalanceForState` on reveal and start); it was topped up, `prune_round` was added and deployed with state kept, and rounds 1 to 20 were pruned, bringing storage back to the code plus about 29 KB.
 
 ## Events
 

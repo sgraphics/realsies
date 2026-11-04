@@ -732,6 +732,34 @@ impl Game {
         emit("round_settled", json!({ "round_id": round_id, "characters": characters, "refunded_plays": refunded }));
     }
 
+    /// Frees the storage of a settled round: deletes its characters and plays. Their history stays in
+    /// the transaction logs. Deletes up to `limit` entries per call (default 200) and returns how many
+    /// remain; call again until it returns 0.
+    pub fn prune_round(&mut self, round_id: u64, limit: Option<u32>) -> u32 {
+        self.assert_operator();
+        let limit = limit.unwrap_or(200).clamp(1, 500) as usize;
+        let (plays, chars, remaining) = {
+            let round = self.rounds.get_mut(&round_id).unwrap_or_else(|| env::panic_str("no such round"));
+            require!(round.status == RoundStatus::Settled, "round is not settled");
+            let np = round.plays.len().min(limit);
+            let plays: Vec<String> = round.plays.drain(..np).collect();
+            let nc = round.characters.len().min(limit - np);
+            let chars: Vec<String> = round.characters.drain(..nc).collect();
+            (plays, chars, (round.plays.len() + round.characters.len()) as u32)
+        };
+        for h in &plays {
+            self.plays.remove(&pkey(round_id, h));
+        }
+        for c in &chars {
+            self.characters.remove(&ckey(round_id, c));
+        }
+        emit(
+            "round_pruned",
+            json!({ "round_id": round_id, "plays": plays.len(), "characters": chars.len(), "remaining": remaining }),
+        );
+        remaining
+    }
+
     // ----- views -----
 
     pub fn get_config(&self) -> ConfigView {

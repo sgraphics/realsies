@@ -381,3 +381,41 @@ fn transfer_moves_internal_balance() {
     assert_eq!(bal(&g, "ana.testnet"), 3 * COIN);
     assert_eq!(bal(&g, "promo.testnet"), 7 * COIN);
 }
+
+#[test]
+fn prune_frees_a_settled_round() {
+    let v = v();
+    let mut g = new_game();
+    round_with_characters(&mut g, &v);
+    let h = |k: &str| s(&v, &["handles", k]);
+    ctx("carol.testnet", T0 + 10_000, 20);
+    g.play(1, h("carol_human"), 10);
+    g.call(1, h("carol_human"), true);
+    ctx("ops.testnet", T0 + 140_000, 40);
+    g.end_round_now(1);
+    ctx("ops.testnet", T0 + 141_000, 41);
+    g.reveal_round(1, s(&v, &["secret"]));
+    g.open_characters(1, vec![human_opening(&v, vec!["carol.testnet"])]);
+    g.settle_round(1);
+    let before = bal(&g, "carol.testnet");
+    // one play and two characters: prune one entry at a time
+    assert_eq!(g.prune_round(1, Some(1)), 2);
+    assert_eq!(g.prune_round(1, Some(1)), 1);
+    assert_eq!(g.prune_round(1, None), 0);
+    assert!(g.get_play(1, h("carol_human")).is_none());
+    assert!(g.get_character(1, s(&v, &["human", "character_id"])).is_none());
+    let r = g.get_round(1).unwrap();
+    assert_eq!(r.status, RoundStatus::Settled);
+    assert_eq!(r.plays, 0);
+    assert_eq!(bal(&g, "carol.testnet"), before, "balances are untouched");
+}
+
+#[test]
+#[should_panic(expected = "round is not settled")]
+fn cannot_prune_an_open_round() {
+    let v = v();
+    let mut g = new_game();
+    round_with_characters(&mut g, &v);
+    ctx("ops.testnet", T0 + 20_000, 30);
+    g.prune_round(1, None);
+}
