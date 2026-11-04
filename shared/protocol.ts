@@ -1,4 +1,4 @@
-// Realsies relay <-> web protocol, v1 (2026-11-04).
+// Realsies relay <-> web protocol, v1.1 (2026-11-05: chat countdown, persona cards; both additive).
 // Authoritative. Owned by the lead; workstreams import it and do not edit it.
 // Spec: docs/spec.md
 
@@ -70,6 +70,7 @@ export interface PublicConfig {
   roundMinutes: number;
   feeBps: number; // 500 = 5% to the bot fund
   freeChatsPerDay: number; // 0 = unlimited
+  countdownSeconds?: number; // full-screen 3-2-1 before every chat; default 3
   explorerTx: string; // template containing {hash}
   explorerAccount: string; // template containing {account}
 }
@@ -135,6 +136,18 @@ export interface ActiveChat extends ChatInfo {
 
 // ---------- results ----------
 
+/** Who a demo bot was playing, revealed after settlement. Demo bots only; remote brains may omit it. */
+export interface PersonaCard {
+  age: number;
+  gender: string; // independent of the avatar's look
+  mbti: string; // e.g. "ENFP"
+  temperament: string; // e.g. "shy introvert", "loud extrovert"
+  home: string; // e.g. "Leeds, UK"
+  job: string; // e.g. "barista"
+  style: string; // one line, e.g. "all lowercase, no punctuation, lots of lol, 😭 and 💀"
+  emoji: 'none' | 'rare' | 'often';
+}
+
 export interface ChatResult {
   chatId: string;
   level: Level;
@@ -152,6 +165,7 @@ export interface ChatResult {
   ratingDelta: number;
   roomSplit: { paidCalls: number; paidHumanShare: number | null }; // coin-weighted share of paid calls that said human
   verifiable: boolean; // bot chat with stored signatures
+  persona?: PersonaCard; // bots, after settlement
 }
 
 export interface RoundResults {
@@ -236,6 +250,7 @@ export interface VerifyBundle {
   completions: VerifyCompletion[];
   transcript: VerifyMessage[];
   roundSecret: string; // revealed; lets anyone recompute handles
+  persona?: PersonaCard;
   viewer: string;
   handle: string;
   chain: { revealTx?: string; openTx?: string; settleTx?: string; playTx?: string; callTx?: string };
@@ -263,6 +278,8 @@ export type ServerMsg =
   | { t: 'placing'; chatId: string }
   | { t: 'placed'; chatId: string; tx: string }
   | { t: 'play_failed'; chatId: string; reason: string } // this side continues free
+  // startedAt may lie in the future: show a full-screen countdown until then; the relay rejects `say` before
+  // startedAt (error code chat_not_started), bots start their clocks at startedAt, endsAt = startedAt + chatSeconds.
   | { t: 'chat_started'; chatId: string; startedAt: number; endsAt: number }
   | { t: 'message'; chatId: string; msg: ChatMessage }
   | { t: 'typing'; chatId: string; on: boolean }
