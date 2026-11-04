@@ -146,6 +146,8 @@ export interface PersonaCard {
   job: string; // e.g. "barista"
   style: string; // one line, e.g. "all lowercase, no punctuation, lots of lol, 😭 and 💀"
   emoji: 'none' | 'rare' | 'often';
+  name?: string; // the persona's own first name in its backstory, e.g. "Lucía"
+  mood?: string; // today's mood, e.g. "hyper"
 }
 
 export interface ChatResult {
