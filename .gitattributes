@@ -1,0 +1,6 @@
+# Signed evidence and test vectors must stay byte-exact: their hashes are signed by the NEAR AI enclave.
+experiments/near-ai/evidence/** -text
+contracts/game/tests/vectors.json -text
+*.wasm binary
+# Scripts run on Linux servers
+*.sh text eol=lf

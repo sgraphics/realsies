@@ -1,0 +1,19 @@
+{
+  "name": "@realsies/art",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Realsies pixel-art engine: character rig, themes, props, UI sprites. Pure TS core renders into RGBA buffers.",
+  "type": "module",
+  "scripts": {
+    "sheets": "tsx scripts/sheets.ts",
+    "demo": "vite --port 5174 --strictPort",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && vite build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

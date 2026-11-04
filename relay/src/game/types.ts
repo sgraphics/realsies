@@ -1,0 +1,135 @@
+// Runtime state of rounds, characters and chats. Everything here is persisted as JSON documents.
+import type { ChatMessage, ChatPhase, Level, Mode, RoundStatus, Skin, ThemeId, Truth } from '../../../shared/protocol.js';
+import type { OpenReport } from '../chain/types.js';
+import type { AttestedSigner } from '../nearai/verify.js';
+
+export interface AttestInfo {
+  model: string;
+  nonce: string;
+  fetchedAt: number;
+  signers: AttestedSigner[];
+  attested: string[];
+  gatewaySigner?: string;
+  gatewayOk: boolean;
+  note: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface CharacterRec {
+  id: string;
+  roundId: number;
+  kind: Truth;
+  /** bots: the level the character serves */
+  level?: Level;
+  personaId?: string;
+  model?: string;
+  /** exact persona prompt committed by hash (message 0) */
+  prompt?: string;
+  promptHash?: string;
+  signers?: string[];
+  /** humans: the player account */
+  account?: string;
+  payout: string;
+  salt: string;
+  preimage: string;
+  commitment: string;
+  commitStatus: 'pending' | 'sending' | 'committed' | 'failed';
+  commitTx?: string;
+  createdAt: number;
+  openTx?: string;
+  openReport?: OpenReport;
+}
+
+export type PlayStatus = 'none' | 'pending' | 'placed' | 'failed';
+export type CallStatus = 'none' | 'pending' | 'ok' | 'failed' | 'stored';
+
+export interface ChatSide {
+  chatId: string;
+  convId: string;
+  roundId: number;
+  viewer: string;
+  level: Level;
+  seatIndex: number;
+  theme: ThemeId;
+  skin: Skin;
+  characterId: string;
+  partnerKind: Truth;
+  partnerAccount?: string;
+  partnerChatId?: string;
+  personaId?: string;
+  model?: string;
+  requestedMode: Mode;
+  mode: Mode;
+  coins: number;
+  handle: string;
+  tag: string;
+  skinMessage?: string;
+  phase: ChatPhase;
+  createdAt: number;
+  startedAt?: number;
+  endsAt?: number;
+  endedAt?: number;
+  endReason?: 'time' | 'partner_left' | 'dev' | 'round_end';
+  callDeadline?: number;
+  myCall?: boolean | null;
+  callAt?: number;
+  callTx?: string;
+  callStatus: CallStatus;
+  callError?: string;
+  playTx?: string;
+  playStatus: PlayStatus;
+  playError?: string;
+  /** messages from this viewer's perspective; also stored row by row */
+  messages: ChatMessage[];
+}
+
+export interface RoundRec {
+  id: number;
+  secret: string;
+  secretHash: string;
+  startedAt: number;
+  endsAt: number;
+  acceptingUntil: number;
+  status: RoundStatus;
+  ready: boolean;
+  endedEarly: boolean;
+  startTx?: string;
+  startOk: boolean;
+  commitTxs: string[];
+  revealTx?: string;
+  openTxs: string[];
+  settleTx?: string;
+  settledAt?: number;
+  resultsDone: boolean;
+  lastError?: string;
+  attest: Record<string, AttestInfo>;
+}
+
+export interface UserRec {
+  account: string;
+  label: string;
+  rating: number;
+  chats: number;
+  right: number;
+  wrong: number;
+  streak: number;
+  bestStreak: number;
+  /** base units, decimal string: Turing bonus held by promo until the next faucet deposit */
+  lockedBonus: string;
+  freeDay: string;
+  freeUsed: number;
+}
+
+export interface Search {
+  account: string;
+  roundId: number;
+  level: Level;
+  seatIndex: number;
+  mode: Mode;
+  coins: number;
+  startedAt: number;
+  deadline: number;
+  timer: NodeJS.Timeout | null;
+  resolving: boolean;
+}

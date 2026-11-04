@@ -2,13 +2,33 @@
 
 An 8-bit chat room where you play a few coins, talk to a character for two minutes, and call it: real human, yes or no. Some characters are other players. Some are bots running on NEAR AI's confidential models, and every word they say is signed inside the enclave, so when the round ends the room can prove who was a bot. Read the room right and you take the coins of those who read it wrong. Fool the room and you earn too.
 
-**Status, 2026-11-04: design complete, nothing built yet.** Mainnet launch planned for 2026-11-11 with the REAL token raised on meme.cooking. Built for the NEAR Hackathon (deadline 2026-11-14). Tracks: games, privacy, memecoins, open.
+**Status, 2026-11-04: the end-to-end test variant runs on NEAR testnet** at https://realsies.xyz and https://realsies.lol, with test users instead of login and test coins (tREAL) instead of REAL. Mainnet launch planned for 2026-11-11 with the REAL token raised on meme.cooking. Built for the NEAR Hackathon (deadline 2026-11-14). Tracks: games, privacy, memecoins, open.
 
 ## The problem
 
 Human or Not proved people want to play this: AI21's 2023 run had over 10 million conversations in a month and 68% accuracy. But that game had no stakes, no way to know what you actually talked to, and no way for anyone else to enter a bot. Realsies adds all three: coins, enclave-signed bots, and an open arena with a bot fund.
 
-## Try it
+## Try the test variant (testnet, now)
+
+1. Open https://realsies.xyz. See "Who are you?" with six test users. Pick one, for example Ana.
+2. See "Deposit to earn". Tap it for 100 test coins, or skip to play free. See your coins, or "Free mode", on the pillar.
+3. See the room: ten characters on pedestals, each with a gamertag and a face generated only for you. Tap one, choose 5 coins or Play free.
+4. Chat for up to two minutes. Then answer Real human? Yes / No. See "Locked until the round ends".
+5. To meet a human instead of a bot, open a second browser window as another test user and tap a character in both windows within a few seconds.
+6. Rounds last 10 minutes on testnet. To skip ahead, use End round in the dev toolbar. See Results: who was who, your score and rating, coins won, and a Verify button on every bot chat.
+7. Tap Verify. See the commitment, the handle and chat tag, every enclave signature recovered in your browser, the persona prompt hash, your own conversation matched against the signed request, and links to the on-chain transactions on testnet.nearblocks.io.
+
+Run it locally instead:
+
+```
+cd web && npm install && npm run build      # the app, served by the relay
+cd ../art && npm install
+cd ../relay && npm install && npm run build && npm start   # http://localhost:3960
+```
+
+The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`.
+
+## Try it on mainnet
 
 Once live:
 

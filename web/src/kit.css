@@ -1,0 +1,76 @@
+/* Theme kit skin: when a theme is applied (html.kit), panels, buttons, plates and bubbles use the
+   art engine's 9-slice sprites as border-images, scaled by the integer UI pixel --upx. */
+
+html.kit .px-panel {
+  background: none;
+  border-style: solid;
+  border-width: calc(var(--slice-panel) * var(--upx));
+  border-image-source: var(--img-panel);
+  border-image-slice: var(--slice-panel) fill;
+  border-image-width: calc(var(--slice-panel) * var(--upx));
+  border-image-repeat: stretch;
+  box-shadow: none;
+  padding: calc(max(1, var(--pad-panel) - var(--slice-panel)) * var(--upx) + 6px);
+  image-rendering: pixelated;
+}
+html.kit .px-panel.tight { padding: calc(var(--upx) + 4px) calc(var(--upx) * 2 + 4px); }
+html.kit .px-panel.light { border-image-source: var(--img-plate); border-image-slice: var(--slice-plate) fill; border-width: calc(var(--slice-plate) * var(--upx)); border-image-width: calc(var(--slice-plate) * var(--upx)); color: var(--plate-ink); }
+
+html.kit .px-btn {
+  background: none;
+  box-shadow: none;
+  border-style: solid;
+  border-width: calc(var(--slice-btn) * var(--upx));
+  border-image-source: var(--img-btn);
+  border-image-slice: var(--slice-btn) fill;
+  border-image-width: calc(var(--slice-btn) * var(--upx));
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  padding: calc(var(--upx) * 1.5) calc(var(--upx) * 3);
+  color: var(--ink);
+  text-shadow: none;
+}
+html.kit .px-btn:active:not(:disabled), html.kit .px-btn.pressed { border-image-source: var(--img-btn-down); box-shadow: none; transform: translateY(var(--upx)); }
+html.kit .px-btn:disabled { border-image-source: var(--img-btn-off); opacity: 0.75; }
+html.kit .px-btn.primary { border-image-source: var(--img-btn-pri); color: var(--accent-ink); }
+html.kit .px-btn.primary:active:not(:disabled) { border-image-source: var(--img-btn-pri-down); }
+html.kit .px-btn.good { border-image-source: var(--img-btn-yes); color: #ffffff; text-shadow: 2px 2px 0 #265c42; }
+html.kit .px-btn.good:active:not(:disabled) { border-image-source: var(--img-btn-yes-down); }
+html.kit .px-btn.danger { border-image-source: var(--img-btn-no); color: #ffffff; text-shadow: 2px 2px 0 #3e2731; }
+html.kit .px-btn.danger:active:not(:disabled) { border-image-source: var(--img-btn-no-down); }
+html.kit .px-btn.ghost { border-color: transparent; border-image: none; padding: 4px 8px; color: var(--world-ink, var(--ink)); text-shadow: 2px 2px 0 var(--edge); }
+html.kit .px-btn.small { padding: calc(var(--upx) * 0.5) calc(var(--upx) * 2); }
+html.kit .px-btn.huge { padding: calc(var(--upx) * 3) calc(var(--upx) * 6); }
+
+html.kit .tabs .px-btn { border-image-source: var(--img-tab); border-image-slice: var(--slice-tab) fill; border-width: calc(var(--slice-tab) * var(--upx)); border-image-width: calc(var(--slice-tab) * var(--upx)); color: var(--plate-ink); }
+html.kit .tabs .px-btn.primary { border-image-source: var(--img-tab-on); color: var(--accent-ink); }
+html.kit .tabs .px-btn:disabled { border-image-source: var(--img-tab); }
+
+html.kit .bubble {
+  background: none;
+  box-shadow: none;
+  border-style: solid;
+  image-rendering: pixelated;
+  padding: calc(var(--upx) * 0.5 + 2px) calc(var(--upx) + 4px);
+}
+html.kit .bubble.them {
+  border-width: calc(var(--slice-bubble-them) * var(--upx));
+  border-image: var(--img-bubble-them) var(--slice-bubble-them) fill / calc(var(--slice-bubble-them) * var(--upx)) stretch;
+}
+html.kit .bubble.me {
+  border-width: calc(var(--slice-bubble-me) * var(--upx));
+  border-image: var(--img-bubble-me) var(--slice-bubble-me) fill / calc(var(--slice-bubble-me) * var(--upx)) stretch;
+}
+html.kit .bubble::after {
+  border: 0;
+  clip-path: none;
+  background: var(--img-tail-them) no-repeat 0 0 / 100% 100%;
+  width: calc(var(--tail-w) * var(--upx));
+  height: calc(var(--tail-h) * var(--upx));
+  bottom: calc((var(--tail-h) - 1) * var(--upx) * -1 - calc(var(--slice-bubble-them) * var(--upx)));
+  image-rendering: pixelated;
+}
+html.kit .bubble.them::after { left: calc(var(--upx) * 2); right: auto; }
+html.kit .bubble.me::after { right: calc(var(--upx) * 2); left: auto; background-image: var(--img-tail-me); bottom: calc((var(--tail-h) - 1) * var(--upx) * -1 - calc(var(--slice-bubble-me) * var(--upx))); }
+html.kit .bubble.them, html.kit .bubble.me { margin-left: 0; margin-right: 0; margin-bottom: calc(var(--tail-h) * var(--upx)); }
+html.kit .bubble.typing { margin-bottom: calc(var(--tail-h) * var(--upx)); }
