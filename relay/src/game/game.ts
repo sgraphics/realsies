@@ -1720,8 +1720,11 @@ export class Game implements BotHost {
     if (!this.isTestUser(account)) throw new GameError('unknown_user', `${account} is not a test user`, 404);
     const c = Number(coins);
     if (!Number.isFinite(c) || c <= 0 || c > 10_000) throw new GameError('bad_coins', 'coins must be between 0 and 10000');
-    const res = await this.chain.faucetDeposit(account, coinsToUnits(c, this.coinUnit));
+    const before = await this.balanceOf(account, 0).catch(() => null);
+    const deposit = coinsToUnits(c, this.coinUnit);
+    const res = await this.chain.faucetDeposit(account, deposit);
     if (!res.ok) throw new GameError('faucet_failed', res.error ?? 'deposit failed', 502);
+    let expected = before === null ? null : before + deposit;
     this.db.logTx({ at: Date.now(), roundId: null, kind: 'faucet', signer: this.chain.accounts.faucet, hash: res.hash, ok: true, error: null, ms: null });
     const u = this.users.get(account)!;
     const bonus = BigInt(u.lockedBonus || '0');
@@ -1730,13 +1733,26 @@ export class Game implements BotHost {
       if (t.ok) {
         u.lockedBonus = '0';
         this.saveUser(u);
+        if (expected !== null) expected += bonus;
         log.info(`locked Turing bonus of ${unitsToCoins(bonus, this.coinUnit)} coins paid to ${account} from promo: ${t.hash}`);
       } else log.warn(`locked bonus transfer to ${account} failed, kept for the next deposit: ${t.error}`);
     }
-    this.balances.delete(account);
+    await this.settleBalance(account, (b) => expected === null || b >= expected);
     const me = await this.me(account, 0);
     this.sendTo(account, { t: 'me', me });
     return { tx: res.hash, me };
+  }
+
+  /** RPC nodes can trail a block right after a write: poll until the balance reflects it (max ~8 s). */
+  private async settleBalance(account: string, ok: (b: bigint) => boolean): Promise<void> {
+    for (let i = 0; i < 12; i++) {
+      this.balances.delete(account);
+      const b = await this.balanceOf(account, 0).catch(() => null);
+      if (b !== null && ok(b)) return;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    this.balances.delete(account);
+    log.warn(`balance of ${account} did not reflect the last write within 8 s`);
   }
 
   async withdraw(account: string, coins: number): Promise<{ tx: string; me: Me }> {
@@ -1749,7 +1765,7 @@ export class Game implements BotHost {
     if (amount <= 0n || amount > bal) throw new GameError('insufficient_balance', 'not enough coins');
     const res = await this.chain.withdraw(account, amount);
     if (!res.ok) throw new GameError('withdraw_failed', res.error ?? 'withdraw failed', 502);
-    this.balances.delete(account);
+    await this.settleBalance(account, (b) => b <= bal - amount);
     const me = await this.me(account, 0);
     this.sendTo(account, { t: 'me', me });
     return { tx: res.hash, me };
