@@ -86,6 +86,8 @@ export function buildBundle(a: {
       completionIndex: m.from === 'them' ? m.ci : undefined,
     })),
     roundSecret: round.secret,
+    // demo bots: who the persona was (bundles are built at settlement and served only after it)
+    persona: character.card ? { ...character.card } : undefined,
     viewer: side.viewer,
     handle: side.handle,
     chain: {

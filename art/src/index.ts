@@ -8,6 +8,7 @@ export * from './core/font.ts';
 export * from './rig/rig.ts';
 export * from './rig/look.ts';
 export * from './ui/icons.ts';
+export * from './ui/countdown.ts';
 export * from './scene/types.ts';
 export * from './scene/index.ts';
 export * from './themes/index.ts';

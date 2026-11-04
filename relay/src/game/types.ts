@@ -2,6 +2,8 @@
 import type { ChatMessage, ChatPhase, Level, Mode, RoundStatus, Skin, ThemeId, Truth } from '../../../shared/protocol.js';
 import type { OpenReport } from '../chain/types.js';
 import type { AttestedSigner } from '../nearai/verify.js';
+import type { Persona } from '../personas.js';
+import type { RevealCard } from '../persona/model.js';
 
 export interface AttestInfo {
   model: string;
@@ -27,6 +29,10 @@ export interface CharacterRec {
   /** exact persona prompt committed by hash (message 0) */
   prompt?: string;
   promptHash?: string;
+  /** bots: the persona this character plays, as committed (prompt and hash live in the two fields above) */
+  persona?: Omit<Persona, 'prompt' | 'promptHash'>;
+  /** demo bots: who the persona was, published with results and bundles after settlement, never before */
+  card?: RevealCard;
   signers?: string[];
   /** humans: the player account */
   account?: string;
@@ -106,6 +112,8 @@ export interface RoundRec {
   prunedAt?: number;
   lastError?: string;
   attest: Record<string, AttestInfo>;
+  /** seed of this round's generated demo personas (src/persona/generate.ts); absent in rounds before them */
+  castSeed?: string;
 }
 
 export interface UserRec {

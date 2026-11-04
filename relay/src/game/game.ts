@@ -11,7 +11,8 @@ import type { Config } from '../config.js';
 import type { Db } from '../db.js';
 import type { ChainAdapter, ChainConfig, Opening } from '../chain/types.js';
 import type { NearAi } from '../nearai/client.js';
-import type { Persona } from '../personas.js';
+import { atRound, fromGenerated, type Persona } from '../personas.js';
+import { generateCast } from '../persona/generate.js';
 import { chatCostUsd } from '../models.js';
 import {
   avatarSeed, botPreimage, chatTag, commitmentOf, handleOf, humanPreimage, newCharacterId, newSalt, newSecret,
@@ -106,6 +107,8 @@ export class Game implements BotHost {
   /** round -> consecutive prune failures and when to try again */
   private pruneRetry = new Map<number, { n: number; at: number }>();
   stopped = false;
+  /** In-process tools only (tools/smoke-bots.ts): choose the bot character for a search instead of at random. */
+  botPicker?: (account: string, candidates: CharacterRec[]) => CharacterRec | undefined;
 
   constructor(
     readonly cfg: Config,
@@ -156,6 +159,7 @@ export class Game implements BotHost {
       roundMinutes: this.cfg.roundMinutes,
       feeBps: this.chainCfg.feeBps,
       freeChatsPerDay: this.cfg.freeChatsPerDay,
+      countdownSeconds: this.cfg.countdownSeconds,
       explorerTx: `https://${this.chain.network === 'testnet' ? 'testnet.' : ''}nearblocks.io/txns/{hash}`,
       explorerAccount: `https://${this.chain.network === 'testnet' ? 'testnet.' : ''}nearblocks.io/address/{account}`,
     };
@@ -409,8 +413,9 @@ export class Game implements BotHost {
         const secret = newSecret();
         const r: RoundRec = {
           id, secret, secretHash: secretHash(secret), startedAt: now, endsAt,
-          acceptingUntil: endsAt - (this.cfg.chatSeconds + this.cfg.callSeconds + 15) * 1000,
+          acceptingUntil: endsAt - (this.cfg.chatSeconds + this.cfg.callSeconds + this.cfg.countdownSeconds + 15) * 1000,
           status: 'open', ready: false, endedEarly: false, startOk: false, commitTxs: [], openTxs: [], resultsDone: false, attest: {},
+          castSeed: randomHex(16),
         };
         this.rounds.set(id, r);
         this.chars.set(id, new Map());
@@ -470,14 +475,15 @@ export class Game implements BotHost {
     }
     this.broadcast({ t: 'round', round: this.roundState(r) });
 
-    const models = [...new Set(this.personas.map((p) => p.model))];
+    const cm = this.chars.get(r.id)!;
+    const haveBots = [...cm.values()].some((c) => c.kind === 'bot');
+    const cast = haveBots ? [] : this.castOf(r);
+    const models = [...new Set([...cast.map((p) => p.model), ...[...cm.values()].filter((c) => c.kind === 'bot').map((c) => c.model!)])];
     const missing = models.filter((m) => !r.attest[m]?.ok);
     await Promise.all(missing.map((m) => this.attest(r, m)));
 
-    const cm = this.chars.get(r.id)!;
-    const haveBots = [...cm.values()].some((c) => c.kind === 'bot');
     if (!haveBots) {
-      for (const p of this.personas) {
+      for (const p of cast) {
         const info = r.attest[p.model];
         if (!info?.ok) {
           log.warn(`round ${r.id}: persona ${p.id} skipped, model ${p.model} not attested`);
@@ -521,14 +527,40 @@ export class Game implements BotHost {
     this.saveRound(r);
   }
 
+  /**
+   * This round's demo cast: the personas folder with each prompt composed for the round's start (local
+   * time, scene), plus GEN_PERSONAS fresh people from the round's castSeed (one level each). Remote-brain
+   * personas with their own prompt come through unchanged.
+   */
+  castOf(r: RoundRec): Persona[] {
+    const fixed = this.personas.map((p) => atRound(p, r.startedAt));
+    if (!r.castSeed || this.cfg.genPersonas <= 0) return fixed;
+    const names = fixed.flatMap((p) => (p.person ? [p.person.name, p.person.nickname ?? ''] : [])).filter(Boolean);
+    const gen = generateCast(r.castSeed, this.cfg.genPersonas, r.startedAt, names).map((g) => fromGenerated(g, g.level, r.startedAt));
+    return [...fixed, ...gen];
+  }
+
+  /** The persona a bot character plays: its committed snapshot, else (older rounds) the personas folder. */
+  personaOf(c: CharacterRec): Persona | undefined {
+    if (c.persona && c.prompt && c.promptHash) return { ...c.persona, prompt: c.prompt, promptHash: c.promptHash, card: c.card };
+    const p = this.personas.find((x) => x.id === c.personaId);
+    // a round committed before snapshots (or before a persona file changed): always the committed prompt,
+    // and no card, since the folder's attributes may not describe that prompt
+    return p && c.prompt && c.promptHash ? { ...p, prompt: c.prompt, promptHash: c.promptHash, card: c.card } : p;
+  }
+
   private addBotCharacter(r: RoundRec, p: Persona, level: Level, signers: string[]): CharacterRec {
     const id = newCharacterId();
     const salt = newSalt();
     const sorted = normalizeSigners(signers);
     const payout = p.payout ?? this.chain.accounts.bots;
     const preimage = botPreimage({ roundId: r.id, characterId: id, model: p.model, promptHash: p.promptHash, signers: sorted, payout, salt });
+    // the snapshot is what the bot runs on in this round, whatever happens to relay/personas meanwhile
+    const { prompt: _prompt, promptHash: _hash, card, ...snapshot } = p;
+    void _prompt;
+    void _hash;
     const c: CharacterRec = {
-      id, roundId: r.id, kind: 'bot', level, personaId: p.id, model: p.model, prompt: p.prompt, promptHash: p.promptHash,
+      id, roundId: r.id, kind: 'bot', level, personaId: p.id, model: p.model, prompt: p.prompt, promptHash: p.promptHash, persona: snapshot, card,
       signers: sorted, payout, salt, preimage, commitment: commitmentOf(preimage), commitStatus: 'pending', createdAt: Date.now(),
     };
     this.chars.get(r.id)!.set(id, c);
@@ -891,7 +923,7 @@ export class Game implements BotHost {
         if (s.partnerKind !== 'bot') continue;
         const c = characters.find((x) => x.id === s.characterId);
         if (!c) continue;
-        const persona = this.personas.find((p) => p.id === c.personaId);
+        const persona = this.personaOf(c);
         const bundle = buildBundle({
           round: r, side: s, character: c, personaPrompt: c.prompt ?? persona?.prompt ?? '',
           completions: this.db.loadCompletions(s.chatId), messages: s.messages as StoredMsg[],
@@ -1246,7 +1278,7 @@ export class Game implements BotHost {
       this.pushSeat(account, r.id, s.level, s.seatIndex);
       return;
     }
-    this.startBotChat(r, s, pick(bots));
+    this.startBotChat(r, s, this.botPicker?.(account, bots) ?? pick(bots));
   }
 
   // =====================================================================================
@@ -1420,20 +1452,23 @@ export class Game implements BotHost {
     const ss = conv.sides.map((id) => this.sides.get(id)!);
     if (ss.some((s) => s.playStatus === 'pending' || s.phase !== 'placing')) return;
     conv.started = true;
+    // both sides see the same full-screen countdown; nobody, bot or human, can write before startedAt,
+    // so the timing never tells who is expected to speak first. Human and bot chats are identical here.
     const now = Date.now();
-    const endsAt = now + this.cfg.chatSeconds * 1000;
+    const startedAt = now + Math.round(this.cfg.countdownSeconds * 1000);
+    const endsAt = startedAt + this.cfg.chatSeconds * 1000;
     for (const s of ss) {
       s.phase = 'chatting';
-      s.startedAt = now;
+      s.startedAt = startedAt;
       s.endsAt = endsAt;
       this.saveSide(s);
-      this.sendTo(s.viewer, { t: 'chat_started', chatId: s.chatId, startedAt: now, endsAt });
+      this.sendTo(s.viewer, { t: 'chat_started', chatId: s.chatId, startedAt, endsAt });
     }
     conv.endTimer = setTimeout(() => this.endConv(conv, 'time', this.cfg.callSeconds * 1000), endsAt - now);
     if (conv.kind === 'bot') {
       const side = ss[0];
       const c = this.chars.get(side.roundId)?.get(side.characterId);
-      const persona = this.personas.find((p) => p.id === c?.personaId);
+      const persona = c ? this.personaOf(c) : undefined;
       const r = this.rounds.get(side.roundId);
       if (!c || !persona || !r) {
         log.error(`bot chat ${side.chatId}: persona missing`);
@@ -1496,6 +1531,7 @@ export class Game implements BotHost {
   say(account: string, chatId: string, text: unknown): void {
     const side = this.sideOf(account, chatId);
     if (side.phase !== 'chatting') throw new GameError('chat_not_active', 'the chat is not running');
+    if (side.startedAt !== undefined && Date.now() < side.startedAt) throw new GameError('chat_not_started', 'the chat starts when the countdown ends');
     const t = typeof text === 'string' ? text.replace(/\r\n?/g, '\n').trim() : '';
     if (!t) throw new GameError('empty_message', 'message is empty');
     if (t.length > MAX_SAY) throw new GameError('message_too_long', `max ${MAX_SAY} characters`);
@@ -1515,6 +1551,8 @@ export class Game implements BotHost {
   typing(account: string, chatId: string, on: boolean): void {
     const side = this.sideOf(account, chatId);
     if (side.phase !== 'chatting') return;
+    // typing during the countdown would tell the partner who is about to speak first: dropped
+    if (side.startedAt !== undefined && Date.now() < side.startedAt) return;
     if (side.partnerKind === 'bot') {
       this.bots.get(side.chatId)?.onPlayerTyping(on);
       return;

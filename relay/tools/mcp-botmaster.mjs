@@ -45,7 +45,7 @@ const TOOLS = [
             model: { type: 'string', enum: MODELS },
             prompt: { type: 'string', description: 'the exact system prompt; it is committed by sha256 every round' },
             typing: { type: 'object', properties: { cps: { type: 'number', minimum: 2, maximum: 9 } } },
-            traits: { type: 'object', properties: { summary: { type: 'string' }, chatty: { type: 'number' }, fast: { type: 'number' }, curious: { type: 'number' } } },
+            traits: { type: 'object', properties: { summary: { type: 'string' }, chatty: { type: 'number' }, fast: { type: 'number' }, curious: { type: 'number' }, guarded: { type: 'number' }, drift: { type: 'number' } } },
             interests: { type: 'array', items: { type: 'string', enum: TOPICS } },
             payout: { type: 'string', description: 'NEAR account credited with the character share' },
           },
@@ -76,7 +76,7 @@ function validate(a) {
   if (typeof p.prompt !== 'string' || p.prompt.length < 200 || p.prompt.length > 6000) errs.push('persona.prompt: 200 to 6000 characters');
   else if (!p.prompt.includes(STEER_PARAGRAPH)) warn.push('persona.prompt should end with the steering paragraph in docs/bot-api.md section 5');
   if (p.typing?.cps !== undefined && !(p.typing.cps >= 2 && p.typing.cps <= 9)) errs.push('persona.typing.cps: 2 to 9');
-  for (const k of ['chatty', 'fast', 'curious']) if (p.traits?.[k] !== undefined && !(p.traits[k] >= 0 && p.traits[k] <= 1)) errs.push(`persona.traits.${k}: 0 to 1`);
+  for (const k of ['chatty', 'fast', 'curious', 'guarded', 'drift']) if (p.traits?.[k] !== undefined && !(p.traits[k] >= 0 && p.traits[k] <= 1)) errs.push(`persona.traits.${k}: 0 to 1`);
   if (p.interests !== undefined && (!Array.isArray(p.interests) || !p.interests.length || p.interests.some((t) => !TOPICS.includes(t)))) errs.push(`persona.interests: from ${TOPICS.join(', ')}`);
   if (p.payout !== undefined && (typeof p.payout !== 'string' || !ACCOUNT.test(p.payout) || p.payout.length > 64)) errs.push('persona.payout: a NEAR account id');
   if (JSON.stringify(a ?? {}).match(/"token"\s*:/)) errs.push('do not send the token itself, only tokenSha256');

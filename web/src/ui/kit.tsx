@@ -27,7 +27,7 @@ export function Button(p: {
   );
 }
 
-export type IconName = 'coin' | 'clock' | 'star' | 'check' | 'cross' | 'shield' | 'lock' | 'bolt' | 'chat' | 'user' | 'bot' | 'link' | 'flame' | 'trophy';
+export type IconName = 'coin' | 'clock' | 'star' | 'check' | 'cross' | 'shield' | 'lock' | 'bolt' | 'chat' | 'user' | 'bot' | 'link' | 'flame' | 'trophy' | 'mask';
 
 /** Pixel icon from the art engine, as a cached data URL background. */
 export function Icon(p: { name: IconName; size?: number; class?: string; title?: string }) {

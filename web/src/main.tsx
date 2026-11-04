@@ -6,6 +6,7 @@ import './styles.css';
 import './kit.css';
 import './screens.css';
 import './hud.css';
+import './countdown.css';
 import { App } from './app.tsx';
 import { createClient } from './net/index.ts';
 import { createStore } from './state/store.ts';

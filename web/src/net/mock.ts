@@ -12,7 +12,7 @@ import {
 import { gamertag, WORDS } from '../../../shared/names.ts';
 import { sha256Hex } from '../verify/crypto.ts';
 import { bubblesOf, commitmentPreimage } from '../verify/checks.ts';
-import { PERSONAS, HUMAN_NUDGE, HUMAN_OPENERS, humanReply, personaById, personaOpener, personaReply } from './mock/personas.ts';
+import { PERSONAS, HUMAN_NUDGE, HUMAN_OPENERS, humanReply, personaById, personaCard, personaOpener, personaReply } from './mock/personas.ts';
 import { type Rand, c4, fakeTx, makeRand, randHex } from './mock/util.ts';
 import { type PlayIn, applyRating, isRight, ratingDelta, settleCharacter, wouldHave } from './mock/settle.ts';
 import { MOCK_GATEWAY, MOCK_SIGNER, type Turn, buildRequest, makeCompletion, skinMessage } from './mock/enclave.ts';
@@ -24,6 +24,8 @@ type Timer = ReturnType<typeof setTimeout>;
 export interface MockOptions {
   chatSeconds?: number;
   callSeconds?: number;
+  /** Full-screen countdown before every chat (config.countdownSeconds; default 3, 0 = none). */
+  countdownSeconds?: number;
   roundMinutes?: number;
   /** Search delay range in ms (default 2500-6000, times timeScale). */
   searchMs?: [number, number];
@@ -229,6 +231,7 @@ export class MockGameClient implements GameClient {
       roundMinutes: opts.roundMinutes ?? 10,
       feeBps: 500,
       freeChatsPerDay: 0,
+      countdownSeconds: opts.countdownSeconds ?? 3,
       explorerTx: 'https://testnet.nearblocks.io/txns/{hash}',
       explorerAccount: 'https://testnet.nearblocks.io/address/{account}',
     };
@@ -856,24 +859,29 @@ export class MockGameClient implements GameClient {
     this.save();
   }
 
+  /**
+   * Like the relay since protocol v1.1: startedAt lies countdownSeconds ahead (the full-screen 3, 2, 1),
+   * `say` is refused until then, and bots and fake humans start their clocks at startedAt.
+   */
   private startChat(c: ChatRec): void {
     const t = this.now();
+    const cd = Math.max(0, (this.config.countdownSeconds ?? 0) * 1000);
     c.phase = 'chatting';
-    c.startedAt = t;
-    c.endsAt = t + this.config.chatSeconds * 1000;
+    c.startedAt = t + cd;
+    c.endsAt = c.startedAt + this.config.chatSeconds * 1000;
     this.emit({ t: 'chat_started', chatId: c.chatId, startedAt: c.startedAt, endsAt: c.endsAt }, c.viewer);
     this.chatLater(c.chatId, c.endsAt - t, () => this.endChat(c.chatId, 'time'));
     const b = this.brainFor(c);
     if (c.kind === 'bot') {
-      this.chatLater(c.chatId, this.r.range(this.d(4000), this.d(12000)), () => {
+      this.chatLater(c.chatId, cd + this.r.range(this.d(4000), this.d(12000)), () => {
         if (c.phase === 'chatting' && !b.busy && !c.messages.some((m) => m.from === 'me')) this.botRespond(c, true);
       });
     } else {
       if (this.r.chance(0.55))
-        this.chatLater(c.chatId, this.r.range(this.d(3000), this.d(9000)), () => {
+        this.chatLater(c.chatId, cd + this.r.range(this.d(3000), this.d(9000)), () => {
           if (c.phase === 'chatting' && !b.busy && !c.messages.length) this.humanSay(c, [this.r.pick(HUMAN_OPENERS)]);
         });
-      this.chatLater(c.chatId, this.r.range(this.d(20000), this.d(30000)), () => {
+      this.chatLater(c.chatId, cd + this.r.range(this.d(20000), this.d(30000)), () => {
         if (c.phase === 'chatting' && !b.busy && !c.messages.some((m) => m.from === 'me')) this.humanSay(c, [this.r.pick(HUMAN_NUDGE)]);
       });
     }
@@ -896,6 +904,7 @@ export class MockGameClient implements GameClient {
     if (!text) return;
     if (text.length > 280) return this.err('too_long', 'Messages are at most 280 characters.', viewer);
     const t = this.now();
+    if (t < (c.startedAt ?? 0)) return this.err('chat_not_started', 'The chat starts in a moment.', viewer);
     const last = this.lastSay.get(viewer) ?? 0;
     if (t - last < this.d(600)) return this.err('rate_limited', 'Slow down a little.', viewer);
     this.lastSay.set(viewer, t);
@@ -1184,13 +1193,15 @@ export class MockGameClient implements GameClient {
         if (c.partnerCall === true) rMe += locked;
         else wMe += locked;
       }
+      const persona = truth === 'bot' ? personaById(c.personaId!) : undefined;
       results.push({
         chatId: c.chatId, level: c.level, seatIndex: c.seatIndex, partner: c.partner, truth,
-        model: truth === 'bot' ? personaById(c.personaId!)?.model : undefined,
+        model: persona?.model,
         partnerAccount: truth === 'human' ? c.humanAccount : undefined,
         mode: paid ? 'paid' : 'free', coins: c.played, myCall, right: isR, coinsDelta: delta, wouldHaveCoins: wh, ratingDelta: rd,
         roomSplit: { paidCalls: plays.filter((p) => p.call !== null).length, paidHumanShare: s.humanShare === null ? null : Math.round(s.humanShare * 1000) / 1000 },
         verifiable: truth === 'bot' && c.completions.length > 0,
+        ...(persona ? { persona: personaCard(persona) } : {}),
       });
       if (truth === 'bot' && c.completions.length) this.st.bundles[c.chatId] = this.bundleOf(round, c);
     }
@@ -1237,10 +1248,42 @@ export class MockGameClient implements GameClient {
       completions: c.completions,
       transcript: c.transcript,
       roundSecret: round.secret,
+      persona: personaCard(p),
       viewer: c.viewer,
       handle: c.handle,
       chain: { revealTx: round.revealTx, openTx: round.openTxs[0], settleTx: round.settleTx, playTx: c.playTx, callTx: c.callTx },
     };
+  }
+
+  /**
+   * A settled bot chat for the seeded round with a short scripted conversation, every reply signed by
+   * the mock enclave like a live one, so its Verify bundle passes and its persona card shows.
+   */
+  private seededBotChat(r: RoundRec, viewer: string, seat: number, personaId: string, script: [string, string][]): ChatRec {
+    const p = personaById(personaId)!;
+    const characterId = sha256Hex(`mockchar|${r.roundId}|1|${p.id}`).slice(0, 32);
+    const c: ChatRec = {
+      chatId: `seed-bot-${r.roundId}-${sha256Hex(viewer).slice(0, 10)}`, roundId: r.roundId, level: 1, seatIndex: seat, theme: themeFor(1, r.roundId),
+      partner: this.skinFor(r.roundId, viewer, 1, seat), viewer, mode: 'paid', coins: 10, played: 10, locked: 9.5, kind: 'bot', personaId: p.id,
+      characterId, salt: sha256Hex(`mocksalt|${characterId}`), handle: sha256Hex(`realsies:v1|handle|${r.roundId}|${characterId}|${viewer}|${r.secret}`),
+      phase: 'called', messages: [], completions: [], transcript: [], history: [], pendingUser: [], myCall: false,
+      playTx: fakeTx(this.r), callTx: fakeTx(this.r), startedAt: r.startedAt + 95_000,
+    };
+    const skin = skinMessage(c.partner.name, c.handle.slice(0, 16));
+    let at = c.startedAt!;
+    script.forEach(([mine, reply], i) => {
+      at += 6000;
+      c.transcript.push({ from: 'player', text: mine, at });
+      c.history.push({ role: 'user', content: mine });
+      at += 2500;
+      const comp = makeCompletion(i, randHex(this.r, 32), p.model, buildRequest(p.model, p.basePrompt, skin, c.history), reply, at);
+      comp.displayed = bubblesOf(reply);
+      c.completions.push(comp);
+      for (const text of comp.displayed) c.transcript.push({ from: 'bot', text, at: (at += 1800), completionIndex: i });
+      c.history.push({ role: 'assistant', content: reply });
+    });
+    c.endsAt = at + 4000;
+    return c;
   }
 
   /** Canned results for the newest seeded round: the real evidence chat plus a paid human chat. */
@@ -1254,11 +1297,27 @@ export class MockGameClient implements GameClient {
     const huW = 14.25, huR = 19;
     const huCredited = 9.5 + (0.7 * huW * 9.5) / huR;
     const huP = huR / (huR + huW);
+    // a persona bot met for 10 coins: three of the room said human (28.5 locked), one more said bot
+    const pbW = 28.5, pbR = 19;
+    const pbCredited = 9.5 + (0.7 * pbW * 9.5) / pbR;
+    const pbP = pbR / (pbR + pbW);
+    const pb = this.seededBotChat(r, viewer, 4, 'lucia', [
+      ['hey! where are you from?', 'holaa\nbuenos aires! you?'],
+      ['berlin. what do you do there?', 'art student, sculpture\nmy teacher hates my clay dog jajaja'],
+      ['ok be honest, are you a bot?', 'me?? a bot?? my sculpture teacher would agree honestly'],
+    ]);
+    this.st.bundles[pb.chatId] = this.bundleOf(r, pb);
     const chats: ChatResult[] = [
       {
         chatId: EVIDENCE_CHAT_ID, level: 1, seatIndex: 2, partner: skin(2), truth: 'bot', model: EVIDENCE_MODEL, mode: 'free', coins: 0,
         myCall: false, right: true, coinsDelta: 0, wouldHaveCoins: evWould, ratingDelta: ratingDelta(true, evP, false),
         roomSplit: { paidCalls: 5, paidHumanShare: Math.round((evW / (evW + evR)) * 1000) / 1000 }, verifiable: true,
+      },
+      {
+        chatId: pb.chatId, level: 1, seatIndex: pb.seatIndex, partner: pb.partner, truth: 'bot', model: personaById(pb.personaId!)!.model, mode: 'paid', coins: 10,
+        myCall: false, right: true, coinsDelta: c4(pbCredited - 10), ratingDelta: ratingDelta(true, pbP, true),
+        roomSplit: { paidCalls: 5, paidHumanShare: Math.round((pbW / (pbW + pbR)) * 1000) / 1000 }, verifiable: true,
+        persona: personaCard(personaById(pb.personaId!)!),
       },
       {
         chatId: 'seed-human-' + r.roundId, level: 1, seatIndex: 6, partner: skin(6), truth: 'human', partnerAccount: other, mode: 'paid', coins: 10,
@@ -1268,7 +1327,7 @@ export class MockGameClient implements GameClient {
     ];
     const gained = chats.reduce((s, c) => s + c.ratingDelta, 0);
     return {
-      roundId: r.roundId, status: 'settled', settledAt: r.settledAt, chats, calledRight: 2, calledTotal: 2, coinsDelta: chats[1].coinsDelta,
+      roundId: r.roundId, status: 'settled', settledAt: r.settledAt, chats, calledRight: 3, calledTotal: 3, coinsDelta: c4(chats[1].coinsDelta + chats[2].coinsDelta),
       turingBonusCoins: 0, lockedBonusCoins: 0, wouldHaveCoins: evWould, ratingBefore: u.rating - gained, ratingAfter: u.rating,
       chain: { revealTx: r.revealTx, openTxs: [...r.openTxs], settleTx: r.settleTx },
     };

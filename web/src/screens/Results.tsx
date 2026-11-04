@@ -1,5 +1,6 @@
 // Round results: score, coins, Turing bonus, rating, the free player's "would have won", the locked
-// bonus, and every chat revealed with a Verify button on bot chats.
+// bonus, and every chat revealed with a Verify button on bot chats and, when the relay sends one,
+// the persona card of who the bot was playing.
 
 import { useEffect, useState } from 'preact/hooks';
 import type { ChatResult, Level, RoundResults } from '../../../shared/protocol.ts';
@@ -8,6 +9,7 @@ import { useStore } from '../state/hooks.ts';
 import { coins2, fmtCoins, fmtPct, fmtSigned, shortHash, txUrl } from '../state/format.ts';
 import { Button, Coins, Icon, Panel } from '../ui/kit.tsx';
 import { CharacterCanvas } from '../ui/CharacterCanvas.tsx';
+import { PersonaReveal } from '../ui/PersonaCard.tsx';
 
 export interface ResultsProps {
   store: Store;
@@ -35,6 +37,7 @@ function ChatRow({ c, onVerify, presetLow }: { c: ChatResult; onVerify(id: strin
           {c.model && <span class="px-dim px-mono px-small">{c.model}</span>}
           {c.partnerAccount && <span class="px-dim px-mono px-small">{c.partnerAccount}</span>}
         </div>
+        {c.truth === 'bot' && <PersonaReveal p={c.persona} />}
         <div class="px-row px-wrap">
           <span>
             You called <b>{callWord(c.myCall)}</b>

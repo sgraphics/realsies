@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import type { ChatInfo, Me, PublicConfig, RoundResults, ServerMsg, TestUser, VerifyBundle } from '../../shared/protocol.js';
+import type { ChatInfo, Me, PersonaCard, PublicConfig, RoundResults, ServerMsg, TestUser, VerifyBundle } from '../../shared/protocol.js';
 import { http, WsClient } from './client.js';
 
 export interface ChainViews {
@@ -82,6 +82,18 @@ class Check {
   }
 }
 
+/** A demo bot's persona card (shared/protocol.ts PersonaCard) with every field filled. */
+export function cardProblem(p: PersonaCard | undefined): string | null {
+  if (!p) return 'missing';
+  if (!Number.isInteger(p.age) || p.age < 16 || p.age > 90) return `age ${p.age}`;
+  if (!/^[EI][SN][TF][JP]$/.test(p.mbti)) return `mbti ${p.mbti}`;
+  for (const k of ['gender', 'temperament', 'home', 'job', 'style'] as const) if (typeof p[k] !== 'string' || !p[k].trim()) return `${k} empty`;
+  if (!['none', 'rare', 'often'].includes(p.emoji)) return `emoji ${p.emoji}`;
+  return null;
+}
+
+const cardLine = (p: PersonaCard) => `${p.age}, ${p.gender}, ${p.mbti}, ${p.temperament}, ${p.home}, ${p.job}; ${p.style}`;
+
 /** Verify a bundle with independent code. Returns the number of completions checked. */
 export function verifyBundleIndependently(b: VerifyBundle, chainCommitment: string | null, check: Check): number {
   check.eq(sha(b.roundSecret), b.attestation.nonce, 'bundle: sha256(round secret) is the attestation nonce');
@@ -147,6 +159,9 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
   const T = o.timeouts;
   const cfg = await http<PublicConfig>(o.base, 'GET', '/api/config');
   check.ok(cfg.testMode, 'relay is in test mode');
+  // every chat opens with a full-screen countdown; nobody can say anything before startedAt
+  const countdownMs = Math.round((cfg.countdownSeconds ?? 0) * 1000);
+  check.ok(cfg.countdownSeconds !== undefined, `config announces the chat countdown (${cfg.countdownSeconds} s)`);
   const users = await http<TestUser[]>(o.base, 'GET', '/api/test-users');
   for (const u of o.users) check.ok(users.some((x) => x.accountId === u), `${u} is a test user`);
   const coin = BigInt(cfg.coinUnit);
@@ -215,9 +230,18 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     await ca.waitT('placing', 5000, (m) => m.chatId === ma.chatId);
     const placedA = await ca.waitT('placed', T.placed, (m) => m.chatId === ma.chatId);
     txs.playA = placedA.tx;
-    await ca.waitT('chat_started', T.placed, (m) => m.chatId === ma.chatId);
-    await cb.waitT('chat_started', T.placed, (m) => m.chatId === mb.chatId);
-    check.ok(true, 'human-human chat started on both sides');
+    const sa = await ca.waitT('chat_started', T.placed, (m) => m.chatId === ma.chatId);
+    const sb = await cb.waitT('chat_started', T.placed, (m) => m.chatId === mb.chatId);
+    check.eq([sa.startedAt, sa.endsAt], [sb.startedAt, sb.endsAt], 'human-human chat: both sides start and end at the same moments');
+    check.eq(sa.endsAt - sa.startedAt, cfg.chatSeconds * 1000, 'the chat lasts CHAT_SECONDS from startedAt');
+    if (countdownMs >= 1000) {
+      ca.send({ t: 'say', chatId: ma.chatId, text: 'am i too early?' });
+      const early = await ca.waitT('error', 5000, (m) => m.code === 'chat_not_started');
+      check.eq(early.code, 'chat_not_started', 'a say during the countdown is refused');
+    }
+    await ca.untilStarted(sa, countdownMs);
+    await cb.untilStarted(sb, countdownMs);
+    check.ok(true, 'human-human chat started on both sides after the countdown');
     ca.send({ t: 'typing', chatId: ma.chatId, on: true });
     await cb.waitT('typing', 5000, (m) => m.chatId === mb.chatId && m.on);
     check.ok(true, 'typing relayed to the partner');
@@ -249,7 +273,7 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     const mc = (await cc.waitT('matched', T.match)).chat as ChatInfo;
     const placedC = await cc.waitT('placed', T.placed, (m) => m.chatId === mc.chatId);
     txs.playC = placedC.tx;
-    await cc.waitT('chat_started', T.placed, (m) => m.chatId === mc.chatId);
+    await cc.waitChatStart(mc.chatId, T.placed, countdownMs);
     const botMessages: string[] = [];
     cc.send({ t: 'say', chatId: mc.chatId, text: 'hey! where are you from?' });
     const r1 = await cc.waitT('message', T.botReply, (m) => m.chatId === mc.chatId && m.msg.from === 'them');
@@ -272,7 +296,7 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     log('step 6: free bot chat');
     cc.send({ t: 'pick_seat', level: 1, seatIndex: 2, mode: 'free' });
     const mf = (await cc.waitT('matched', T.match)).chat as ChatInfo;
-    await cc.waitT('chat_started', T.placed, (m) => m.chatId === mf.chatId);
+    await cc.waitChatStart(mf.chatId, T.placed, countdownMs);
     const opener = await cc.waitT('message', T.botReply, (m) => m.chatId === mf.chatId && m.msg.from === 'them');
     log(`  bot opener: ${opener.msg.text}`);
     botMessages.push(opener.msg.text);
@@ -284,6 +308,11 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     await cc.waitT('chat_ended', 5000, (m) => m.chatId === mf.chatId);
     cc.send({ t: 'call', chatId: mf.chatId, human: true }); // wrong
     await cc.waitT('call_recorded', 5000, (m) => m.chatId === mf.chatId);
+
+    // ---------- nothing about who the bots are before settlement ----------
+    const pre = await http<RoundResults>(o.base, 'GET', `/api/rounds/${R}/results/${encodeURIComponent(C)}`);
+    check.ok(pre.chats.length === 0 && !JSON.stringify(pre).includes('mbti'), 'before settlement the results carry no chats and no persona card');
+    check.ok(clients.every((c) => !c.msgs.some((m) => JSON.stringify(m).includes('"mbti"'))), 'no persona card ever crossed the socket during the round');
 
     // ---------- settle ----------
     log('step 7: dev end-round and settlement');
@@ -333,6 +362,9 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     check.eq(playC.credited, playC.locked, 'chain: C refunded its locked coins (nobody wrong)');
     check.near(paidC.coinsDelta, toCoins(playC.credited! - playC.amount), 'C coinsDelta equals chain credited minus played');
     check.eq([freeC.truth, freeC.myCall, freeC.right, freeC.wouldHaveCoins], ['bot', true, false, -5], 'C free bot chat: called human, wrong, would have lost 5');
+    check.eq(cardProblem(paidC.persona), null, `C paid bot chat reveals who the bot was: ${paidC.persona ? cardLine(paidC.persona) : '-'}`);
+    check.eq(cardProblem(freeC.persona), null, `C free bot chat reveals who the bot was: ${freeC.persona ? cardLine(freeC.persona) : '-'}`);
+    check.ok(cA.persona === undefined && cB.persona === undefined, 'human-human chats carry no persona card');
 
     for (const u of o.users) {
       const me = await http<Me>(o.base, 'GET', `/api/me/${u}`);
@@ -352,6 +384,8 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     const onChainChar = await o.views.getCharacter(R, bundle.characterId);
     check.ok(onChainChar?.opened && onChainChar.kind === 'bot', 'chain: the bot character is opened as a bot');
     const n = verifyBundleIndependently(bundle, onChainChar?.commitment ?? null, check);
+    check.eq(bundle.persona, paidC.persona, 'bundle: the persona card equals the one in the results');
+    check.ok(!!bundle.persona && bundle.personaPrompt.includes(`${bundle.persona.age}-year-old`) && bundle.personaPrompt.includes(bundle.persona.home), 'bundle: the card describes the committed persona prompt');
     check.ok(n >= 2, `bundle has ${n} signed completions`);
     let forbidden = false;
     try {

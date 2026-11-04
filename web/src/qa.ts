@@ -3,7 +3,10 @@
 //   &level=2                       open that level
 //   &round=10                      start the mock at this round (themes rotate per round: 7 = jungle,
 //                                  desert, cave; 10 = space, castle, jungle)
-//   &qa=seat|deposit|search|chat|call|locked|results|verify|rounds|terms   drive to a screen
+//   &qa=seat|deposit|search|countdown|chat|call|locked|results|results-persona|verify|verify-persona|rounds|terms
+//                                  drive to a screen (results-persona scrolls to the persona card,
+//                                  verify-persona opens the bot chat that carries one)
+//   &cd=3|2|1|go                   countdown: hold that beat (Countdown.tsx reads it)
 //   &mode=paid&coins=10&seat=3     how to pick the seat
 //   &long=1                        chat: a long scripted conversation
 //   &kb=300                        pretend a phone keyboard of this many CSS px is open
@@ -15,6 +18,8 @@
 import type { Level } from '../../shared/protocol.ts';
 import type { Store, AppState } from './state/store.ts';
 import { acceptTerms } from './state/consent.ts';
+import { isCounting } from './state/countdown.ts';
+import { EVIDENCE_CHAT_ID } from './net/mock/evidence.ts';
 
 export interface QaPlan {
   step: string;
@@ -100,22 +105,43 @@ export async function runQa(store: Store, search: string, open: (what: string, a
       open('terms');
       return;
     case 'results':
-    case 'verify': {
+    case 'results-persona':
+    case 'verify':
+    case 'verify-persona': {
       const rounds = await store.actions.listRounds();
       const settled = rounds.find((r) => r.status === 'settled');
-      if (settled) open('results', settled.roundId);
-      if (plan.step === 'verify' && settled) {
-        const r = await store.actions.getResults(settled.roundId);
-        const bot = r.chats.find((c) => c.verifiable);
+      if (!settled) return;
+      open('results', settled.roundId);
+      const r = await store.actions.getResults(settled.roundId);
+      if (plan.step === 'verify') {
+        // the real 2026-11-04 enclave evidence (no persona card: it predates them)
+        const bot = r.chats.find((c) => c.chatId === EVIDENCE_CHAT_ID) ?? r.chats.find((c) => c.verifiable);
         if (bot) open('verify', bot.chatId);
+      }
+      if (plan.step === 'verify-persona') {
+        const bot = r.chats.find((c) => c.verifiable && c.persona);
+        if (bot) open('verify', bot.chatId);
+      }
+      if (plan.step === 'results-persona') {
+        // bring the first persona card into view (the results panel scrolls on small screens)
+        for (let i = 0; i < 60; i++) {
+          const el = document.querySelector('.px-results .persona');
+          if (el) {
+            el.closest('.px-result-row')?.scrollIntoView({ block: 'center' });
+            break;
+          }
+          await new Promise((res) => setTimeout(res, 50));
+        }
       }
       return;
     }
   }
-  if (!['chat', 'call', 'locked', 'search'].includes(plan.step)) return;
+  if (!['chat', 'call', 'locked', 'search', 'countdown'].includes(plan.step)) return;
   store.actions.pickSeat(plan.level, seat.index, plan.mode, plan.mode === 'paid' ? plan.coins : undefined);
   if (plan.step === 'search') return;
-  await until(store, (x) => x.chat?.phase === 'chatting');
+  // the countdown screen holds a beat (&cd=); everything else waits for the chat to open
+  if (plan.step === 'countdown') return;
+  await until(store, (x) => x.chat?.phase === 'chatting' && !isCounting(x.chat));
   if (q.get('long') === '1') {
     const mock = store.client as unknown as { qaScript?: (l: typeof LONG_CHAT) => void };
     mock.qaScript?.(LONG_CHAT);

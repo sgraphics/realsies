@@ -30,6 +30,14 @@ add lobby-castle   "mock=1&as=ana&level=2&round=10" 8000
 add lobby-longnames "mock=1&as=cleo&level=1&longnames=1" 8000
 add seat           "mock=1&as=ana&qa=seat&level=1" 8000
 add search         "mock=1&as=ana&qa=search&level=2&searchms=60000" 7000
+add countdown-3    "mock=1&as=ana&qa=countdown&cd=3&level=1&searchms=300" 7000
+add countdown-2    "mock=1&as=ana&qa=countdown&cd=2&level=1&searchms=300" 7000
+add countdown-1    "mock=1&as=ana&qa=countdown&cd=1&level=1&searchms=300" 7000
+add countdown-chat "mock=1&as=ana&qa=countdown&cd=go&level=1&searchms=300" 7000
+add countdown-castle "mock=1&as=ana&qa=countdown&cd=2&level=2&round=10&searchms=300" 7000 "390x844:3 1280x720:1"
+add countdown-desert "mock=1&as=ana&qa=countdown&cd=2&level=2&searchms=300" 7000 "390x844:3 1280x720:1"
+add countdown-cave   "mock=1&as=ana&qa=countdown&cd=2&level=3&searchms=300" 7000 "390x844:3 1280x720:1"
+add countdown-space  "mock=1&as=ana&qa=countdown&cd=go&level=1&round=10&searchms=300" 7000 "390x844:3 1280x720:1"
 add chat           "mock=1&as=ana&qa=chat&long=1&level=1&mode=paid&coins=10" 16000
 add chat-keyboard  "mock=1&as=ana&qa=chat&long=1&level=1&kb={kb}" 16000 "$PHONES"
 add chat-castle    "mock=1&as=ana&qa=chat&long=1&level=2&round=10" 16000 "390x844:3 1280x720:1"
@@ -39,7 +47,9 @@ add chat-space     "mock=1&as=ana&qa=chat&long=1&level=1&round=10" 16000 "390x84
 add call           "mock=1&as=ana&qa=call&long=1&level=2&mode=paid&coins=25" 18000
 add locked         "mock=1&as=ana&qa=locked&long=1&level=3" 20000
 add results        "mock=1&as=ana&qa=results" 10000
+add results-persona "mock=1&as=ana&qa=results-persona" 10000
 add verify         "mock=1&as=ana&qa=verify" 14000
+add verify-persona "mock=1&as=ana&qa=verify-persona" 14000
 add rounds         "mock=1&as=ana&qa=rounds" 9000
 add menu           "mock=1&as=ana&menu=1" 8000
 add terms          "mock=1&qa=terms" 5000

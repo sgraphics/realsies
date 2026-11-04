@@ -10,12 +10,13 @@ import { MockChain } from '../src/chain/mock.js';
 import { MockNearAi } from '../src/nearai/client.js';
 import type { ChainAdapter } from '../src/chain/types.js';
 import type { NearAi } from '../src/nearai/client.js';
-import { runScenario } from './scenario.js';
+import { cardProblem, runScenario } from './scenario.js';
 import { WsClient, http } from './client.js';
 import { failures, loadBrowserChecks } from './browser-checks.js';
 import { STEERING_SHA256 } from '../src/bot/intents.js';
 import { LIMITS } from '../src/bot/api.js';
 import { charsOf } from '../src/bot/typing.js';
+import type { CharacterRec, ChatSide } from '../src/game/types.js';
 
 function tmpDb(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'realsies-relay-'));
@@ -30,6 +31,7 @@ async function startApp(extra: Record<string, unknown> = {}, deps: { chain?: Cha
     nearAi: 'mock',
     chatSeconds: 30,
     callSeconds: 5,
+    countdownSeconds: 1,
     botTimeScale: 0.08,
     searchDelay: [0.2, 0.5],
     devCallSeconds: 2,
@@ -129,8 +131,8 @@ test('bot chats: typing shows before every bot line, at human speed; player typi
     const seen: { t: string; on?: boolean; text?: string; at: number }[] = [];
     c.send({ t: 'pick_seat', level: 1, seatIndex: 5, mode: 'free' });
     const m = (await c.waitT('matched', 10_000)).chat;
-    await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chatId);
-    const t0 = Date.now();
+    const st = await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chatId);
+    const t0 = st.startedAt;
     const off = (() => {
       const h = (ev: MessageEvent) => {
         const x = JSON.parse(String(ev.data));
@@ -141,7 +143,7 @@ test('bot chats: typing shows before every bot line, at human speed; player typi
       (c as any).ws.addEventListener('message', h);
       return () => (c as any).ws.removeEventListener('message', h);
     })();
-    await new Promise((r) => setTimeout(r, 4000));
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 - Date.now()) + 4000));
     c.send({ t: 'typing', chatId: m.chatId, on: true });
     await new Promise((r) => setTimeout(r, 800));
     c.send({ t: 'say', chatId: m.chatId, text: 'hey, where are you from? what are you up to today' });
@@ -195,7 +197,7 @@ test('natural round end, seal completion as the proof, model failures stay silen
     // paid bot chat: the player speaks and the chat ends before any reply, so a final unshown completion seals the transcript
     c.send({ t: 'pick_seat', level: 3, seatIndex: 0, mode: 'paid', coins: 100 });
     const m = (await c.waitT('matched', 10_000)).chat;
-    await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chatId);
+    await c.waitChatStart(m.chatId, 10_000);
     c.send({ t: 'say', chatId: m.chatId, text: 'quick question, are you a bot?' });
     c.send({ t: 'dev_end_chat', chatId: m.chatId });
     await c.waitT('chat_ended', 3000, (x) => x.chatId === m.chatId);
@@ -206,7 +208,7 @@ test('natural round end, seal completion as the proof, model failures stay silen
     ai.failNext = 2;
     c.send({ t: 'pick_seat', level: 3, seatIndex: 1, mode: 'free' });
     const f = (await c.waitT('matched', 10_000)).chat;
-    await c.waitT('chat_started', 10_000, (x) => x.chatId === f.chatId);
+    await c.waitChatStart(f.chatId, 10_000);
     // the bot's first say (its opener) hits both failures; it shows nothing and backs off
     for (let i = 0; i < 100 && ai.failNext > 0; i++) await new Promise((r) => setTimeout(r, 100));
     assert.equal(ai.failNext, 0, 'the bot tried to speak');
@@ -269,8 +271,8 @@ test('partner_left, reconnect resumes the chat, room_empty, bad input', { timeou
     b.send({ t: 'pick_seat', level: 2, seatIndex: 4, mode: 'free' });
     const ma = (await a.waitT('matched', 10_000)).chat;
     const mb = (await b.waitT('matched', 10_000)).chat;
-    await a.waitT('chat_started', 5000);
-    await b.waitT('chat_started', 5000);
+    await a.waitChatStart(ma.chatId, 5000);
+    await b.waitChatStart(mb.chatId, 5000);
     a.send({ t: 'say', chatId: ma.chatId, text: 'brb' });
     await b.waitT('message', 3000, (m) => m.chatId === mb.chatId);
     // A reloads: welcome resumes the chat with its messages
@@ -319,7 +321,7 @@ test('after results are stored the round is pruned on chain; results and bundles
     }
     c.send({ t: 'pick_seat', level: 1, seatIndex: 0, mode: 'paid', coins: 5 });
     const m = (await c.waitT('matched', 10_000)).chat;
-    await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chatId);
+    await c.waitChatStart(m.chatId, 10_000);
     c.send({ t: 'say', chatId: m.chatId, text: 'hi there' });
     await c.waitT('chat_ended', 20_000, (x) => x.chatId === m.chatId);
     c.send({ t: 'call', chatId: m.chatId, human: false });
@@ -384,6 +386,129 @@ test('idle: no new round while nobody is connected; a connecting human starts on
     assert.ok(await chain.getRound(R + 1), 'start_round sent');
     s = await http<any>(base, 'GET', '/api/dev/state');
     assert.equal(s.idle, false);
+    c.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('countdown: chat_started lies COUNTDOWN_SECONDS ahead; until then nobody types or speaks, human or bot, and timing is the same for both', { timeout: 60_000 }, async () => {
+  const app = await startApp({ countdownSeconds: 3, chatSeconds: 20 });
+  try {
+    const base = `http://localhost:${app.port}`;
+    assert.equal((await http<any>(base, 'GET', '/api/config')).countdownSeconds, 3);
+    const [a, b, c] = await Promise.all(['dex', 'eve', 'finn'].map((u) => WsClient.connect(base, `${u}.realsies.testnet`)));
+    for (const x of [a, b, c]) await x.waitT('welcome', 5000);
+    for (let i = 0; i < 60; i++) {
+      const st = await http<any>(base, 'GET', '/api/dev/state');
+      if (st.round?.ready && (st.characters['human-committed'] ?? 0) >= 3) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    // human to human
+    a.send({ t: 'pick_seat', level: 2, seatIndex: 3, mode: 'free' });
+    b.send({ t: 'pick_seat', level: 2, seatIndex: 4, mode: 'free' });
+    const ma = (await a.waitT('matched', 10_000)).chat;
+    const mb = (await b.waitT('matched', 10_000)).chat;
+    const sa = await a.waitT('chat_started', 5000, (x) => x.chatId === ma.chatId);
+    const sb = await b.waitT('chat_started', 5000, (x) => x.chatId === mb.chatId);
+    assert.deepEqual([sa.startedAt, sa.endsAt], [sb.startedAt, sb.endsAt], 'one start and one end for both sides');
+    assert.equal(sa.endsAt - sa.startedAt, 20_000, 'endsAt = startedAt + CHAT_SECONDS');
+    const leadHuman = sa.startedAt - a.receivedAt(sa);
+    assert.ok(leadHuman > 2500 && leadHuman <= 3050, `chat_started arrives the countdown ahead of startedAt (${leadHuman} ms)`);
+    a.send({ t: 'typing', chatId: ma.chatId, on: true });
+    a.send({ t: 'say', chatId: ma.chatId, text: 'too early?' });
+    assert.equal((await a.waitT('error', 2000, (x) => x.code === 'chat_not_started')).code, 'chat_not_started');
+    await a.untilStarted(sa);
+    assert.ok(!b.msgs.some((x) => (x.t === 'typing' || x.t === 'message') && x.chatId === mb.chatId), 'typing and lines during the countdown never reach the partner');
+    a.send({ t: 'typing', chatId: ma.chatId, on: true });
+    assert.equal((await b.waitT('typing', 3000, (x) => x.chatId === mb.chatId)).on, true, 'after the countdown typing is relayed');
+    a.send({ t: 'say', chatId: ma.chatId, text: 'ok now' });
+    assert.equal((await b.waitT('message', 3000, (x) => x.chatId === mb.chatId)).msg.text, 'ok now');
+
+    // a bot chat runs on the same clock: the bot cannot type or open before startedAt either
+    c.send({ t: 'pick_seat', level: 1, seatIndex: 0, mode: 'free' });
+    const mc = (await c.waitT('matched', 10_000)).chat;
+    const sc = await c.waitT('chat_started', 5000, (x) => x.chatId === mc.chatId);
+    const leadBot = sc.startedAt - c.receivedAt(sc);
+    assert.ok(Math.abs(leadBot - leadHuman) < 300, `same countdown for a bot chat (${leadBot} vs ${leadHuman} ms)`);
+    assert.equal(sc.endsAt - sc.startedAt, 20_000);
+    c.send({ t: 'say', chatId: mc.chatId, text: 'hello?' });
+    assert.equal((await c.waitT('error', 2000, (x) => x.code === 'chat_not_started')).code, 'chat_not_started');
+    c.send({ t: 'typing', chatId: mc.chatId, on: true });
+    await c.untilStarted(sc);
+    const early = c.msgs.filter((x) => (x.t === 'typing' || x.t === 'message') && x.chatId === mc.chatId && c.receivedAt(x) < sc.startedAt);
+    assert.deepEqual(early, [], 'the bot neither typed nor spoke during the countdown');
+    c.send({ t: 'say', chatId: mc.chatId, text: 'hi there, where are you from?' });
+    const reply = await c.waitT('message', 15_000, (x) => x.chatId === mc.chatId && x.msg.from === 'them');
+    assert.ok(reply.msg.at >= sc.startedAt, 'bot lines come after startedAt');
+    c.send({ t: 'dev_end_chat', chatId: mc.chatId });
+    await c.waitT('chat_ended', 3000, (x) => x.chatId === mc.chatId);
+    await new Promise((r) => setTimeout(r, 300));
+    const trace = await http<any>(base, 'GET', `/api/dev/bot-trace/${mc.chatId}`);
+    const events = trace.trace.filter((e: any) => e.k === 'event').map((e: any) => e.d.type);
+    assert.equal(events[0], 'chat_started', 'the brain hears of the chat first');
+    // the only typing in this chat happened during the countdown
+    assert.ok(!trace.trace.some((e: any) => e.k === 'event' && e.d.type === 'player_typing'), 'typing during the countdown never reached the brain');
+    for (const x of [a, b, c]) x.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('persona cards: every demo bot has one; results and bundles reveal it only after settlement', { timeout: 90_000 }, async () => {
+  const chain = new MockChain();
+  chain.callGraceMs = 1500;
+  chain.txLatencyMs = 5;
+  const app = await startApp({ chatSeconds: 8 }, { chain });
+  try {
+    const base = `http://localhost:${app.port}`;
+    const C = 'finn.realsies.testnet';
+    await http(base, 'POST', `/api/test-users/${C}/faucet`, { coins: 50 });
+    const c = await WsClient.connect(base, C);
+    const w = await c.waitT('welcome', 5000);
+    const R = w.round.roundId;
+    for (let i = 0; i < 40; i++) {
+      const s = await http<any>(base, 'GET', '/api/dev/state');
+      if (s.round?.ready && (s.characters['human-committed'] ?? 0) >= 1) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    // the round's cast: the personas folder plus fresh generated people, all with a full card
+    const bots = [...app.game.chars.get(R)!.values()].filter((x: CharacterRec) => x.kind === 'bot');
+    const gen = bots.filter((x) => x.persona?.source === 'generated');
+    assert.equal(new Set(gen.map((x) => x.personaId)).size, app.cfg.genPersonas, 'GEN_PERSONAS generated personas, one character each');
+    for (const x of bots) assert.equal(cardProblem(x.card), null, `${x.personaId}: card ${JSON.stringify(x.card)}`);
+    assert.ok(app.db.loadRound<any>(R)?.castSeed, 'the cast seed is stored with the round');
+    const again = app.game.castOf(app.game.rounds.get(R)!).filter((p) => p.source === 'generated');
+    assert.deepEqual(again.map((p) => [p.id, p.promptHash]), gen.map((x) => [x.personaId, x.promptHash]), 'the seed regenerates the same people and prompts');
+
+    c.send({ t: 'pick_seat', level: 1, seatIndex: 0, mode: 'paid', coins: 5 });
+    const m = (await c.waitT('matched', 10_000)).chat;
+    await c.waitChatStart(m.chatId, 10_000);
+    c.send({ t: 'say', chatId: m.chatId, text: 'hey, where are you from?' });
+    await c.waitT('message', 10_000, (x) => x.chatId === m.chatId && x.msg.from === 'them');
+    c.send({ t: 'dev_end_chat', chatId: m.chatId });
+    await c.waitT('chat_ended', 3000, (x) => x.chatId === m.chatId);
+    c.send({ t: 'call', chatId: m.chatId, human: false });
+    await c.waitT('call_recorded', 5000, (x) => x.chatId === m.chatId);
+
+    // during the round: no card anywhere a player can look
+    const early = await http<any>(base, 'GET', `/api/rounds/${R}/results/${C}`);
+    assert.equal(early.chats.length, 0);
+    assert.ok(!JSON.stringify(early).includes('mbti'));
+    await assert.rejects(http(base, 'GET', `/api/verify/${m.chatId}?account=${C}`), /409.*not_settled/);
+    assert.ok(!c.msgs.some((x) => JSON.stringify(x).includes('"mbti"')), 'no card over the socket');
+
+    await http(base, 'POST', '/api/dev/end-round');
+    await c.waitT('results_ready', 40_000, (x) => x.roundId === R);
+    const res = await http<any>(base, 'GET', `/api/rounds/${R}/results/${C}`);
+    const chat = res.chats.find((x: any) => x.chatId === m.chatId);
+    assert.equal(cardProblem(chat.persona), null, JSON.stringify(chat.persona));
+    const side = app.db.loadChat<ChatSide>(m.chatId)!;
+    const ch = bots.find((x) => x.id === side.characterId)!;
+    assert.deepEqual(chat.persona, ch.card, 'the card of the character the player met');
+    const b = await http<any>(base, 'GET', `/api/verify/${m.chatId}?account=${C}`);
+    assert.deepEqual(b.persona, chat.persona, 'the bundle carries the same card');
+    assert.ok(b.personaPrompt.includes(`${b.persona.age}-year-old`) && b.personaPrompt.includes(b.persona.home), 'the card describes the committed prompt');
     c.close();
   } finally {
     await app.close();

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MODELS, buildRequest, type ChatTurn } from '../src/models.js';
 import { loadConfig } from '../src/config.js';
+import { loadPersonas } from '../src/personas.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfg = loadConfig();
@@ -13,7 +14,8 @@ const cases = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')) as { label: s
 const skin = 'Your gamertag in this chat is Pickle435; the game generated it, you did not choose it. Game record: 0123456789abcdef.';
 let usd = 0;
 for (const c of cases) {
-  const p = JSON.parse(fs.readFileSync(path.resolve(here, '../personas', `${c.persona}.json`), 'utf8'));
+  const p = loadPersonas(path.resolve(here, '../personas')).find((x) => x.id === c.persona);
+  if (!p) throw new Error(`no persona ${c.persona}`);
   for (let i = 0; i < (c.n ?? 1); i++) {
     const body = buildRequest(c.model, [{ role: 'system', content: p.prompt }, { role: 'system', content: skin }, ...c.context, { role: 'system', content: c.steer }]);
     const r = await fetch(`${cfg.nearAiBase}/chat/completions`, {

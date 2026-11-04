@@ -11,7 +11,7 @@ const CH: Record<string, Color> = {
   P: PAL.pink, M: PAL.magenta, V: PAL.purple, p: PAL.plum,
 };
 
-export type IconName = 'coin' | 'clock' | 'star' | 'check' | 'cross' | 'shield' | 'lock' | 'bolt' | 'chat' | 'user' | 'bot' | 'link' | 'flame' | 'trophy';
+export type IconName = 'coin' | 'clock' | 'star' | 'check' | 'cross' | 'shield' | 'lock' | 'bolt' | 'chat' | 'user' | 'bot' | 'link' | 'flame' | 'trophy' | 'mask';
 
 const ICONS: Record<IconName, string[]> = {
   coin: [
@@ -171,6 +171,18 @@ const ICONS: Record<IconName, string[]> = {
     '..nnnnn..',
     '.nyyyyyn.',
     '.nnnnnnn.',
+  ],
+  // a theatre mask: who a bot was playing (persona cards)
+  mask: [
+    '..nnnnn..',
+    '.nYYYYYn.',
+    'nYWYYYYyn',
+    'nYKKYKKyn',
+    'nYYYYYYyn',
+    'nYKYYYKyn',
+    '.nyKKKyn.',
+    '..nyyyn..',
+    '...nnn...',
   ],
 };
 

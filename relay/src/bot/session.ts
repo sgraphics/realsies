@@ -1,6 +1,9 @@
 // One bot side of a chat: runs a brain (default or remote) over the chat's event stream and executes
 // its actions under the relay's limits (src/bot/api.ts LIMITS, docs/bot-api.md).
 //
+// The chat, and the brain's clock, start at the side's startedAt, after the countdown both players see:
+// start() arms the session when the chat is announced and the brain hears chat_started only then.
+//
 // A `say` starts the typing indicator at once and sends one NEAR AI request: message 0 the committed
 // persona prompt, message 1 the skin message with the chat tag, the signed history so far, the
 // player's lines not yet in any request, and one fixed steering message for the intent. The reply
@@ -212,6 +215,10 @@ export class BotSession {
   private toggleTimes: number[] = [];
   private lastRateNotice = -Infinity;
   private sayIds = 0;
+  /** start() called: the chat is announced, the countdown may still run */
+  private armed = false;
+  private startTimer: unknown = null;
+  /** the countdown is over and the brain runs */
   private started = false;
   private stopped = false;
   private paid = false;
@@ -233,9 +240,9 @@ export class BotSession {
     this.nextIdx = prior.length ? prior[prior.length - 1].idx + 1 : 0;
   }
 
-  /** brain ms since the chat started */
+  /** brain ms since the chat started (0 during the countdown) */
   private bnow(): number {
-    return (this.clock.now() - this.t0Real) / this.scale;
+    return Math.max(0, (this.clock.now() - this.t0Real) / this.scale);
   }
 
   private realMs(brainMs: number): number {
@@ -252,18 +259,39 @@ export class BotSession {
 
   // ---------- lifecycle ----------
 
+  /**
+   * Arm the session when the chat is announced. The chat (and the brain's clock) starts at the side's
+   * startedAt, after the countdown both players see, so the bot never moves before a human could:
+   * nobody can tell from the timing who is expected to speak first.
+   */
   start(): void {
-    if (this.started) return;
-    this.started = true;
+    if (this.armed || this.stopped) return;
+    this.armed = true;
     this.t0Real = this.side.startedAt ?? this.clock.now();
     const endsAt = this.side.endsAt ?? this.t0Real + 120_000;
     this.chatMs = Math.max(1000, (endsAt - this.t0Real) / this.scale);
+    const wait = this.t0Real - this.clock.now();
+    if (wait > 0) this.startTimer = this.clock.setTimeout(() => this.begin(), wait);
+    else this.begin();
+  }
+
+  /** The countdown is over: the brain gets chat_started (at 0) and ticks from here. */
+  private begin(): void {
+    if (this.started || this.stopped) return;
+    if (this.startTimer) this.clock.clearTimeout(this.startTimer);
+    this.startTimer = null;
+    this.started = true;
     this.attach(this.choice.brain, this.choice.kind);
     this.emit({
       type: 'chat_started', at: 0, chatId: this.side.chatId, persona: personaCard(this.persona), level: this.side.level,
       gamertag: this.side.skin.name, chatMs: Math.round(this.chatMs),
     });
     this.scheduleTick();
+  }
+
+  /** A player line accepted at startedAt can race the start timer by a millisecond: begin first. */
+  private beginIfDue(): void {
+    if (!this.started && this.armed && !this.stopped && this.clock.now() >= this.t0Real - 50) this.begin();
   }
 
   private attach(brain: Brain, kind: 'default' | 'remote'): Subject<BrainEvent> {
@@ -347,12 +375,14 @@ export class BotSession {
   }
 
   onPlayerMessage(m: { id: string; text: string }): void {
+    this.beginIfDue();
     if (this.stopped || !this.started) return;
     this.pendingPlayer.push({ id: m.id, text: m.text });
     this.emit({ type: 'player_message', at: Math.round(this.bnow()), id: m.id, text: m.text });
   }
 
   onPlayerTyping(on: boolean): void {
+    this.beginIfDue();
     if (this.stopped || !this.started) return;
     this.emit({ type: 'player_typing', at: Math.round(this.bnow()), on });
   }
@@ -684,8 +714,8 @@ export class BotSession {
     if (this.started) this.emit({ type: 'chat_ended', at: Math.round(this.bnow()), reason: this.side.endReason ?? 'ended' });
     this.stopped = true;
     this.paid = paid;
-    for (const t of [this.tickTimer, this.fakeTimer, this.silenceTimer]) if (t) this.clock.clearTimeout(t);
-    this.tickTimer = this.fakeTimer = this.silenceTimer = null;
+    for (const t of [this.tickTimer, this.fakeTimer, this.silenceTimer, this.startTimer]) if (t) this.clock.clearTimeout(t);
+    this.tickTimer = this.fakeTimer = this.silenceTimer = this.startTimer = null;
     if (this.run) this.wake(this.run);
     this.sub?.unsubscribe();
     this.sub = null;

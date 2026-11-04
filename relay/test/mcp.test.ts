@@ -8,6 +8,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { loadPersonas } from '../src/personas.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,7 +37,8 @@ test('MCP: docs tool and request_persona', { timeout: 30_000 }, async () => {
     assert.match(all, /realsies-brain\/1/);
     const remote = (await call('tools/call', { name: 'bot_api_docs', arguments: { section: 'remote brains' } })).result.content[0].text;
     assert.match(remote, /^## 11\. Remote brains/);
-    const prompt = JSON.parse(fs.readFileSync(path.resolve(here, '../personas/mia-leeds.json'), 'utf8')).prompt;
+    // a remote-brain persona brings its own prompt; a composed demo prompt makes a realistic sample
+    const prompt = loadPersonas(path.resolve(here, '../personas')).find((p) => p.id === 'mia-leeds')!.prompt;
     const persona = { id: 'zed-oslo', levels: [1], model: 'z-ai/glm-5.3-flash', prompt, typing: { cps: 5 }, interests: ['music'] };
     const bad = await call('tools/call', { name: 'request_persona', arguments: { botmaster: 'acme', contact: 'ops@acme.example', token: 'secret', persona: { ...persona, model: 'gpt-9' } } });
     assert.equal(bad.result.isError, true);

@@ -11,6 +11,7 @@ import { LEVELS, THEME_NAMES, themeFor } from '../../../shared/protocol.ts';
 import type { Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
 import { fmtClock, fmtCoins } from '../state/format.ts';
+import { isCounting } from '../state/countdown.ts';
 import { useEscape, useNow } from './hooks.ts';
 import { Icon, type IconName } from './kit.tsx';
 import { Logo } from './Logo.tsx';
@@ -178,9 +179,9 @@ export function Hud(p: HudProps) {
   } else if (kind === 'chat') {
     const chat = s.chat;
     const search = s.search;
-    const chatting = chat?.phase === 'chatting';
+    const chatting = chat?.phase === 'chatting' && !isCounting(chat);
     const total = (cfg?.chatSeconds ?? 120) * 1000;
-    const left = chatting && chat?.endsAt ? Math.max(0, chat.endsAt - now) : total;
+    const left = chatting && chat?.endsAt ? Math.min(total, Math.max(0, chat.endsAt + (chat.clockShift ?? 0) - now)) : total;
     const paid = chat ? chat.mode === 'paid' && chat.coins > 0 : search?.mode === 'paid';
     const playing = chat ? chat.coins : search?.coins ?? 0;
     cells = (

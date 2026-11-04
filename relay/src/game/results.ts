@@ -143,6 +143,8 @@ export function computeResults(inp: ResultsInput): ResultsOutput {
         ratingDelta: delta,
         roomSplit: { paidCalls: st?.paidCalls ?? 0, paidHumanShare: st?.paidHumanShare ?? null },
         verifiable: s.partnerKind === 'bot' && inp.verifiable.has(s.chatId),
+        // who the demo bot was: computed only here, at settlement, so it never shows during the round
+        persona: s.partnerKind === 'bot' && ch?.card ? { ...ch.card } : undefined,
       });
     }
 

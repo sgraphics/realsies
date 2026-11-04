@@ -37,6 +37,10 @@ export interface Config {
   roundMinutes: number;
   chatSeconds: number;
   callSeconds: number;
+  /** full-screen 3-2-1 before every chat: chat_started carries startedAt = now + this; say is refused until then */
+  countdownSeconds: number;
+  /** demo personas generated fresh each round from the round's seed, on top of relay/personas (one level each) */
+  genPersonas: number;
   freeChatsPerDay: number;
   nearAiKey?: string;
   nearAiBase: string;
@@ -93,6 +97,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     roundMinutes: num('ROUND_MINUTES', 10),
     chatSeconds: num('CHAT_SECONDS', 120),
     callSeconds: num('CALL_SECONDS', 20),
+    countdownSeconds: num('COUNTDOWN_SECONDS', 3),
+    genPersonas: num('GEN_PERSONAS', 9),
     freeChatsPerDay: num('FREE_CHATS_PER_DAY', 0),
     nearAiKey: env.NEAR_AI_API_KEY || undefined,
     nearAiBase: (env.NEAR_AI_BASE || 'https://cloud-api.near.ai/v1').replace(/\/+$/, ''),
@@ -118,5 +124,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   };
   if (!['auto', 'near', 'mock'].includes(cfg.chain)) throw new Error(`CHAIN must be auto, near or mock`);
   if (!['auto', 'real', 'mock'].includes(cfg.nearAi)) throw new Error(`NEAR_AI must be auto, real or mock`);
+  if (!(cfg.countdownSeconds >= 0 && cfg.countdownSeconds <= 30)) throw new Error('COUNTDOWN_SECONDS must be from 0 to 30');
+  if (!(Number.isInteger(cfg.genPersonas) && cfg.genPersonas >= 0 && cfg.genPersonas <= 60)) throw new Error('GEN_PERSONAS must be a whole number from 0 to 60');
   return cfg;
 }

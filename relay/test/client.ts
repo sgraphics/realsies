@@ -22,6 +22,8 @@ type Pred = (m: ServerMsg) => boolean;
 
 export class WsClient {
   msgs: ServerMsg[] = [];
+  /** local receipt time of each message in msgs */
+  times: number[] = [];
   private used = new Set<number>();
   private waiters: { pred: Pred; resolve: (m: ServerMsg) => void; idx: number }[] = [];
   private closed = false;
@@ -29,6 +31,7 @@ export class WsClient {
   private constructor(readonly account: string, private ws: WebSocket) {
     ws.addEventListener('message', (ev) => {
       const m = JSON.parse(String(ev.data)) as ServerMsg;
+      this.times.push(Date.now());
       const i = this.msgs.push(m) - 1;
       for (const w of [...this.waiters]) {
         if (!this.used.has(i) && w.pred(m)) {
@@ -89,6 +92,30 @@ export class WsClient {
 
   waitT<K extends ServerMsg['t']>(t: K, timeoutMs: number, extra?: (m: Extract<ServerMsg, { t: K }>) => boolean): Promise<Extract<ServerMsg, { t: K }>> {
     return this.wait((m) => m.t === t && (!extra || extra(m as any)), timeoutMs, t) as any;
+  }
+
+  /** When a message arrived (local clock). */
+  receivedAt(m: ServerMsg): number {
+    const i = this.msgs.indexOf(m);
+    return i >= 0 ? this.times[i] : Date.now();
+  }
+
+  /**
+   * chat_started for this chat, then wait out the countdown: the relay refuses `say` before startedAt.
+   * With countdownMs (from /api/config) it waits that long after the message arrived, which is right even
+   * when the relay's clock and ours differ; without it, until startedAt on our clock.
+   */
+  async waitChatStart(chatId: string, timeoutMs: number, countdownMs?: number): Promise<Extract<ServerMsg, { t: 'chat_started' }>> {
+    const m = await this.waitT('chat_started', timeoutMs, (x) => x.chatId === chatId);
+    await this.untilStarted(m, countdownMs);
+    return m;
+  }
+
+  /** Sleep until the chat of this chat_started message has started (see waitChatStart). */
+  async untilStarted(m: Extract<ServerMsg, { t: 'chat_started' }>, countdownMs?: number): Promise<void> {
+    const until = countdownMs === undefined ? m.startedAt : this.receivedAt(m) + countdownMs;
+    const left = until - Date.now();
+    if (left > 0) await new Promise((r) => setTimeout(r, left + 30));
   }
 
   errors(): Extract<ServerMsg, { t: 'error' }>[] {

@@ -90,7 +90,7 @@ async function setup(): Promise<{ app: App; base: string }> {
   const app = await createApp({
     port: 0, dbPath: path.join(dir, 'relay.db'), chain: 'mock', nearAi: 'mock', chatSeconds: 40, callSeconds: 5, botTimeScale: 0.25,
     searchDelay: [0.2, 0.4], devCallSeconds: 2, partnerLeftSeconds: 1, logLevel: 'error', devTraces: true, webDist: path.join(dir, 'no-web'),
-    personasDir: personas, botmastersDir: botmasters,
+    personasDir: personas, botmastersDir: botmasters, genPersonas: 0, countdownSeconds: 1,
   });
   const base = `http://localhost:${app.port}`;
   for (let i = 0; i < 40; i++) {
@@ -111,7 +111,7 @@ async function botChat(base: string, account: string, level: 1 | 2): Promise<{ c
   }
   c.send({ t: 'pick_seat', level, seatIndex: 0, mode: 'free' });
   const m = await c.waitT('matched', 10_000);
-  await c.waitT('chat_started', 10_000, (x) => x.chatId === m.chat.chatId);
+  await c.waitChatStart(m.chat.chatId, 10_000);
   return { c, chatId: m.chat.chatId };
 }
 

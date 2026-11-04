@@ -32,6 +32,8 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `PORT` | 3960 | HTTP and `/ws` |
 | `TEST_MODE` | 1 | test-user screen, faucet, dev endpoints, all levels unlocked |
 | `ROUND_MINUTES` / `CHAT_SECONDS` / `CALL_SECONDS` | 10 / 120 / 20 | |
+| `COUNTDOWN_SECONDS` | 3 | full-screen 3-2-1 before every chat: `chat_started.startedAt` = now + this; `say` before it is refused (`chat_not_started`), typing dropped, bots start their clocks at `startedAt`; `PublicConfig.countdownSeconds` |
+| `GEN_PERSONAS` | 9 | demo personas generated fresh each round from the round's `castSeed`, one level each, on top of `relay/personas` |
 | `FREE_CHATS_PER_DAY` | 0 | 0 = unlimited |
 | `NEAR_AI_API_KEY` | | from the repo-root `.env` |
 | `NEAR_AI_BASE` | https://cloud-api.near.ai/v1 | |
@@ -42,7 +44,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `SKIN_SECRET` | random, stored in the DB | seat skin seeds |
 | `USD_PER_COIN` | 0.01 | display constant |
 | `WEB_DIST` | web/dist | static app; SPA fallback to index.html |
-| `PERSONAS` | relay/personas | |
+| `PERSONAS` | relay/personas | demo personas as attribute sets (`person` block); remote-brain personas may bring a prompt |
 | `BOTMASTERS` | relay/botmasters | remote-brain registrations (`<name>.json`: name, tokenSha256, personas); none by default |
 | `REMOTE_SILENCE_SECONDS` | 20 | a remote brain silent this long is replaced by the default brain |
 | `PRUNE_DELAY_SECONDS` | 300 | `prune_round` a settled round this long after its results, ratings and bundles are stored |
@@ -70,12 +72,17 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `src/nearai/client.ts`, `verify.ts` | attestation (nonce = round secret_hash), completions with exact bytes, signatures with retries; EIP-191 recovery, report_data binding, think-stripping |
 | `src/formats.ts`, `settlement.ts`, `scoring.ts` | spec section 3 strings, contract settlement math, rating rules |
 | `src/models.ts` | per-model request options (reasoning off) and prices |
-| `personas/*.json` | 15 personas; `prompt` is the exact message 0 committed by sha256; `typing.cps`, `traits` (chatty, fast, curious), `interests`, `brain`, optional `payout` |
+| `src/persona/model.ts` | demo personas as attributes (age, gender, Myers-Briggs type, temperament, mood, home, English, job, family, scenes, interests) and what follows from them: writing style, brain dials (chatty, fast, curious, guarded, drift), typing speed, the card revealed after settlement |
+| `src/persona/prompt.ts` | the persona prompt (message 0) composed from the attributes plus the shared base rules, with the local time and scene of the round's start |
+| `src/persona/generate.ts`, `data.ts` | the seeded generator of each round's fresh personas (deterministic per seed, index and start time) and its pools: places and time zones, cultures (laughter, slang, natural slips, names, food), jobs by age, scenes by time of day |
+| `src/personas.ts` | loads `personas/*.json`: attribute personas (demo bots, prompt composed per round) and prompt personas (remote brains) |
+| `personas/*.json` | 15 hand-written demo personas as attribute sets; prompt, `typing.cps`, `traits` and `interests` are derived |
+| `tools/persona-preview.ts` | prints a generated cast (or the folder) with cards, dials, typing speed and a full prompt; no network |
 | `examples/remote-brain.mjs` | a minimal remote brain (Node 22+, no dependencies) |
 | `tools/mcp-botmaster.mjs` | stdio MCP server for botmasters: the bot API docs and a request-a-persona tool that files a pending request |
 
-Round lifecycle: start (secret, `start_round`, attestation per persona model, one bot character per
-persona per level, `commit_characters` FINAL) -> humans committed on first connect (batched) ->
+Round lifecycle: start (secret, cast seed, `start_round`, attestation per model of the round's cast, one bot character per
+persona per level for the personas folder plus `GEN_PERSONAS` generated ones, each storing the persona it plays, `commit_characters` FINAL) -> humans committed on first connect (batched) ->
 accepting until `endsAt - CHAT - CALL - 15 s` -> at `endsAt` the next round starts and the old one
 settles in the background: wait for calls, `reveal_round` after `endsAt + 60 s`, wait for bot
 signatures, `open_characters` (bots: one proof per paid viewer; humans: paid viewers; everyone else
@@ -90,6 +97,17 @@ that `get_play`, `get_round_plays` and `get_character` return nothing for the ro
 shows comes from the relay's DB. Idle mode: when no test user has been connected for `IDLE_MINUTES`
 (last seen is kept in the DB across restarts), a round that ends is not followed by a new one; the
 first human to connect starts a round at once and their welcome carries it.
+
+Chats start with a countdown: both sides get `chat_started` with `startedAt` = now + `COUNTDOWN_SECONDS`;
+the relay refuses `say` before it (`chat_not_started`) and drops typing, and a bot's brain hears
+`chat_started` only at `startedAt`, so human and bot chats run on the same clock and nothing tells who is
+expected to speak first.
+
+Demo personas (`docs/bot-api.md` section 14): each is a full attribute set; its prompt is composed from
+the attributes for each round's start time (local time, scene, what they ate), and its typing speed, brain
+dials and reveal card are derived from them. Each round adds fresh generated people from a seed stored with
+the round. After settlement `ChatResult.persona` and `VerifyBundle.persona` carry the card (age, gender,
+type, temperament, home, job, style, emoji; plus `name` and `mood`), never before.
 
 Bots (`docs/bot-api.md`): a brain (the default one, or a botmaster's over `/bot/ws`) reads the chat's
 event stream and emits actions; it chooses intents and timing, never text. Each say is one request
@@ -108,7 +126,8 @@ Reasoning off (measured with `tools/probe-nearai.mjs`): GLM 5.3 Flash `reasoning
 (0 to 6 reasoning tokens, about 1 s), DeepSeek V4.1 Flash `chat_template_kwargs.enable_thinking:
 false` (0 tokens, 1 to 2 s). Qwen 3.8 and 3.6 reject a second system message, so no persona uses them.
 
-Extra fields beyond `shared/protocol.ts` (optional, backward compatible): `VerifyBundle` carries
+Extra fields beyond `shared/protocol.ts` (optional, backward compatible): `PersonaCard` carries `name` and
+`mood`; `VerifyBundle` carries
 `proofCompletionIndex`, `openReport`, `relayChecks` (with `steeringOk`) and `steering`; HTTP error bodies are `{error, code, message}`;
 a fresh `room` is pushed to each connection's last entered level when a new round starts;
 `GET /api/dev/state`, `GET /api/dev/bot-trace/:chatId?account=` (test mode, the viewer, after the round settles) and `GET /api/health` exist for
@@ -116,8 +135,10 @@ diagnostics; `GET /api/bot/steering` publishes the steering catalogue and its sh
 
 ## Tests
 
-`npm test` (about two minutes, no network): bot engine policy over hundreds of simulated chats on a
+`npm test` (about two and a half minutes, no network): bot engine policy over hundreds of simulated chats on a
 virtual clock (splits, typing speed, signatures before display, chain integrity, persona variation),
+the persona generator (determinism, attribute distributions over 3000 people, style rules in the prompt,
+the letters moving the dials, an extrovert and an introvert twin played differently by the default brain),
 the steering catalogue and a hostile brain, remote brains over `/bot/ws` (auth, fallback, the example
 brain), the web app's Verify checks run on a relay bundle (as they are, and with the steering change
 in `docs/bot-api.md`), formats byte for byte against
@@ -126,14 +147,16 @@ in `docs/bot-api.md`), formats byte for byte against
 the mock chain replaying the contract's `full_round_settles_exactly` to the same balances; and three
 in-process relay runs on the mock chain (the full scenario; natural round end with a seal completion
 as the proof and silent model failures; typing before every bot line at human speed; partner_left,
-reload resume, input errors).
+reload resume, input errors; the countdown, for human and bot chats alike; persona cards in results and
+bundles only after settlement).
 
 Also covered: `prune_round` in the mock chain with the contract's rules, the relay pruning a settled
 round while results and bundles stay served, and idle mode (no `start_round` or commits while nobody
 is connected, a round on the first connect).
 
-`npx tsx tools/smoke-bots.ts 4` plays four full chats with real NEAR AI models on the mock chain
-(never testnet) and prints a transcript with timings, the web checks per bundle and the spend.
+`npx tsx tools/smoke-bots.ts 4 --pick contrast` plays four full chats with real NEAR AI models on the mock
+chain (never testnet), with four clearly different personas of the round's cast, and prints each transcript
+with timings, the persona card revealed after settlement, the web checks per bundle and the spend.
 `tools/probe-steer.ts` and `tools/probe-context.ts` try steering wording against the models.
 
 `npm run e2e` (about two minutes on testnet): human-human chat with one paid and one free side, a paid

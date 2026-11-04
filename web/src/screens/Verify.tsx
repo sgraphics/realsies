@@ -1,4 +1,5 @@
-// Verify drawer: every check recomputed in this browser from the bundle's raw bytes.
+// Verify drawer: every check recomputed in this browser from the bundle's raw bytes, and at the top
+// the persona card of who the bot was playing when the bundle carries one.
 
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { VerifyBundle } from '../../../shared/protocol.ts';
@@ -9,6 +10,7 @@ import { loadTranscript } from '../net/transcript.ts';
 import { type CheckGroup, type CheckStatus, analyzeCompletion, runChecks, summarize } from '../verify/checks.ts';
 import { sha256Hex } from '../verify/crypto.ts';
 import { Button, Icon, Panel } from '../ui/kit.tsx';
+import { PersonaReveal } from '../ui/PersonaCard.tsx';
 
 export interface VerifyProps {
   store: Store;
@@ -100,6 +102,16 @@ export function VerifyDrawer(p: VerifyProps) {
             Close
           </Button>
         </div>
+        {bundle?.persona && (
+          <section class="px-verify-section px-verify-persona">
+            <h3>Who you talked to</h3>
+            <div class="px-row px-wrap">
+              <span class="px-tag bot">BOT</span>
+              <span class="px-mono">{bundle.model}</span>
+            </div>
+            <PersonaReveal p={bundle.persona} />
+          </section>
+        )}
         <p class="px-sub">
           Every bot reply was signed inside a NEAR AI enclave. Your browser now re-checks each signature, the hashes of the exact
           request and reply bytes, the commitment the game put on chain before you played, and your own copy of the chat. Nothing on

@@ -6,6 +6,7 @@ import type {
   RoundSummary, Seat, ServerMsg, TestUser, ThemeId, VerifyBundle,
 } from '../../../shared/protocol.ts';
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
+import { countdownFor, isCounting } from './countdown.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -23,6 +24,16 @@ export interface ChatView extends ActiveChat {
   playFailed?: string;
   /** A call was sent and not yet recorded. */
   callPending?: boolean;
+  /** Client-clock ms when the input opens after the full-screen countdown (chat_started ahead of now). */
+  countdownUntil?: number;
+  /** Countdown length in ms from when it began on this device. */
+  countdownMs?: number;
+  /** True until countdownUntil: the input stays shut (see isCounting for a timer-proof check). */
+  counting?: boolean;
+  /** Client minus relay ms for this chat's startedAt/endsAt; non-zero only when the countdown was clamped. */
+  clockShift?: number;
+  /** Text the relay refused before the start (chat_not_started), handed back to the input. */
+  draft?: { text: string; n: number };
 }
 
 export interface SearchView {
@@ -99,6 +110,8 @@ export function createStore(client: GameClient): Store {
   const subs = new Set<(s: AppState) => void>();
   let welcomeWaiters: { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }[] = [];
   let localSeq = 0;
+  let draftSeq = 0;
+  let countdownTimer: ReturnType<typeof setTimeout> | null = null;
 
   const set = (patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => {
     const p = typeof patch === 'function' ? patch(state) : patch;
@@ -128,12 +141,33 @@ export function createStore(client: GameClient): Store {
     }
   };
 
-  const fromActive = (a: ActiveChat): ChatView => ({ ...a, messages: [...a.messages], partnerTyping: false });
+  /** Open the input exactly when the countdown ends (the overlay keeps its own beat). */
+  const armCountdown = (chatId: string, ms: number) => {
+    if (countdownTimer) clearTimeout(countdownTimer);
+    countdownTimer = setTimeout(() => {
+      countdownTimer = null;
+      patchChat(chatId, (c) => (c.counting ? { counting: false } : {}));
+    }, Math.max(0, ms));
+  };
+  const countdownFields = (startedAt: number | undefined, late: 'clamp' | 'none', seconds = state.config?.countdownSeconds): Partial<ChatView> => {
+    if (startedAt === undefined) return {};
+    const now = Date.now();
+    const cd = countdownFor(startedAt, now, seconds, late);
+    if (!cd) return {};
+    return { counting: true, countdownUntil: cd.until, countdownMs: cd.ms, clockShift: cd.shift };
+  };
+
+  const fromActive = (a: ActiveChat, cfg?: PublicConfig): ChatView => {
+    // a reconnect during the countdown picks it up again; a running chat does not restart it
+    const cd = a.phase === 'chatting' && a.startedAt !== undefined && a.startedAt > Date.now() ? countdownFields(a.startedAt, 'none', cfg?.countdownSeconds ?? state.config?.countdownSeconds) : {};
+    if (cd.countdownUntil) armCountdown(a.chatId, cd.countdownUntil - Date.now());
+    return { ...a, messages: [...a.messages], partnerTyping: false, ...cd };
+  };
 
   const onMsg = (m: ServerMsg) => {
     switch (m.t) {
       case 'welcome': {
-        const chat = m.activeChat ? fromActive(m.activeChat) : state.chat && state.chat.phase !== 'called' && state.chat.phase !== 'missed' ? undefined : state.chat;
+        const chat = m.activeChat ? fromActive(m.activeChat, m.config) : state.chat && state.chat.phase !== 'called' && state.chat.phase !== 'missed' ? undefined : state.chat;
         if (m.activeChat) for (const msg of m.activeChat.messages) saveTranscriptMessage(m.activeChat.chatId, msg);
         set({ me: m.me, round: m.round, config: m.config, chat, welcomed: true, status: 'open' });
         const w = welcomeWaiters;
@@ -185,9 +219,15 @@ export function createStore(client: GameClient): Store {
       case 'play_failed':
         patchChat(m.chatId, () => ({ playFailed: m.reason, mode: 'free', coins: 0 }));
         return;
-      case 'chat_started':
-        patchChat(m.chatId, () => ({ phase: 'chatting', startedAt: m.startedAt, endsAt: m.endsAt }));
+      case 'chat_started': {
+        const c0 = state.chat;
+        if (!c0 || c0.chatId !== m.chatId) return;
+        // a repeated chat_started for a running chat must not start the countdown again
+        const cd = c0.phase === 'chatting' ? {} : countdownFields(m.startedAt, 'clamp');
+        patchChat(m.chatId, () => ({ phase: 'chatting', startedAt: m.startedAt, endsAt: m.endsAt, ...cd }));
+        if (cd.countdownUntil) armCountdown(m.chatId, cd.countdownUntil - Date.now());
         return;
+      }
       case 'message': {
         const c0 = state.chat;
         const opt = c0 && c0.chatId === m.chatId && m.msg.from === 'me' ? c0.messages.find((x) => x.id.startsWith('local-') && x.text === m.msg.text) : undefined;
@@ -226,6 +266,14 @@ export function createStore(client: GameClient): Store {
         const searchErrors = ['room_empty', 'round_closing', 'round_closed', 'busy', 'seat_taken', 'bad_coins', 'insufficient_coins', 'insufficient_balance', 'round_ended', 'level_locked', 'bad_seat', 'bad_level', 'bad_mode', 'free_limit', 'already_searching', 'no_round'];
         const sayErrors = ['rate_limited', 'too_long', 'message_too_long', 'not_chatting', 'chat_not_active', 'empty_message'];
         const c = state.chat;
+        if (c && m.code === 'chat_not_started') {
+          // the input opened a moment before the relay's start (clock skew): not an error for the
+          // player; the text goes back into the input to send again
+          const last = [...c.messages].reverse().find((x) => x.id.startsWith('local-'));
+          if (last) removeTranscriptMessage(c.chatId, last.id);
+          set({ chat: { ...c, messages: last ? c.messages.filter((x) => x.id !== last.id) : c.messages, draft: last ? { text: last.text, n: ++draftSeq } : c.draft } });
+          return;
+        }
         if (c && sayErrors.includes(m.code)) {
           // the relay dropped our last optimistic message
           const last = [...c.messages].reverse().find((x) => x.id.startsWith('local-'));
@@ -287,6 +335,8 @@ export function createStore(client: GameClient): Store {
         w.reject(new Error('Logged out.'));
       }
       welcomeWaiters = [];
+      if (countdownTimer) clearTimeout(countdownTimer);
+      countdownTimer = null;
       set({ accountId: undefined, me: undefined, round: undefined, rooms: {}, chat: undefined, search: undefined, status: 'idle', welcomed: false, resultsReady: [], lastError: undefined });
     },
     enterRoom(level) {
@@ -305,7 +355,8 @@ export function createStore(client: GameClient): Store {
     say(text) {
       const c = state.chat;
       const t = text.trim();
-      if (!c || c.phase !== 'chatting' || !t) return;
+      // nobody speaks before the countdown ends (the relay would refuse it with chat_not_started)
+      if (!c || c.phase !== 'chatting' || isCounting(c) || !t) return;
       const msg: ChatMessage = { id: `local-${++localSeq}`, from: 'me', text: t.slice(0, 280), at: Date.now() };
       // keep our own copy even if the relay does not echo our messages back
       saveTranscriptMessage(c.chatId, msg);
@@ -314,7 +365,7 @@ export function createStore(client: GameClient): Store {
     },
     setTyping(on) {
       const c = state.chat;
-      if (c && c.phase === 'chatting') client.send({ t: 'typing', chatId: c.chatId, on });
+      if (c && c.phase === 'chatting' && !isCounting(c)) client.send({ t: 'typing', chatId: c.chatId, on });
     },
     call(human) {
       const c = state.chat;

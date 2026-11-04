@@ -215,8 +215,8 @@ export async function simulateChat(o: {
 export function testPersona(over: Partial<Persona> = {}): Persona {
   return {
     id: 'sim-persona', levels: [1], model: 'z-ai/glm-5.3-flash', prompt: 'You are Sim, a test persona who texts like a person. '.repeat(2),
-    promptHash: '', cps: 5, traits: { chatty: 0.5, fast: 0.5, curious: 0.5 }, summary: '', interests: ['music', 'food', 'local'],
-    brain: { kind: 'default' }, ...over,
+    promptHash: '', cps: 5, traits: { chatty: 0.5, fast: 0.5, curious: 0.5, guarded: 0.5, drift: 0.5 }, summary: '', interests: ['music', 'food', 'local'],
+    brain: { kind: 'default' }, source: 'prompt', ...over,
   };
 }
 

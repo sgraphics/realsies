@@ -65,11 +65,18 @@ export interface TypingMeta {
 
 // ---------- persona card ----------
 
-/** 0..1 dials. chatty: terse 0 .. chatty 1. fast: slow 0 .. fast 1. curious: guarded 0 .. curious 1. */
+/**
+ * 0..1 dials. chatty: terse 0 .. chatty 1. fast: slow 0 .. fast 1. curious: incurious 0 .. testing the
+ * partner 1. guarded: open 0 .. guarded 1 (types and stops, deletes drafts, accuses, waits for the other
+ * to open). drift: tidy and on topic 0 .. messy and drifting 1 (asides, tangents, afterthoughts).
+ * Demo personas derive them from their attributes (src/persona/model.ts deriveTraits).
+ */
 export interface PersonaTraits {
   chatty: number;
   fast: number;
   curious: number;
+  guarded: number;
+  drift: number;
 }
 
 /** What a brain learns about the persona it plays (never the prompt text). */

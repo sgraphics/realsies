@@ -92,6 +92,8 @@ if (typeof g.addEventListener !== 'function') {
   g.removeEventListener = () => {};
 }
 g.devicePixelRatio = 1;
+g.innerWidth = 390;
+g.innerHeight = 844;
 (doc as Record<string, unknown>).documentElement = doc.createElement('html');
 (doc as Record<string, unknown>).querySelector = () => null;
 g.ImageData = class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} };
@@ -117,6 +119,8 @@ const { PastRounds } = await import('../src/screens/PastRounds.tsx');
 const { DevMenu } = await import('../src/screens/DevMenu.tsx');
 const { TermsScreen } = await import('../src/screens/Terms.tsx');
 const consent = await import('../src/state/consent.ts');
+const { Countdown, countdownHold } = await import('../src/screens/Countdown.tsx');
+const { isCounting } = await import('../src/state/countdown.ts');
 const { EVIDENCE_CHAT_ID } = await import('../src/net/mock/evidence.ts');
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -138,7 +142,7 @@ const errors: unknown[] = [];
 process.on('uncaughtException', (e) => errors.push(e));
 
 console.log('screens smoke');
-const client = new MockGameClient({ chatSeconds: 1.5, callSeconds: 1, roundMinutes: 2, timeScale: 0.02, searchMs: [20, 40], storageKey: null, noHuman: true, playFailChance: 0, loadEvidence: fsLoader });
+const client = new MockGameClient({ chatSeconds: 1.5, callSeconds: 1, countdownSeconds: 0.25, roundMinutes: 2, timeScale: 0.02, searchMs: [20, 40], storageKey: null, noHuman: true, playFailChance: 0, loadEvidence: fsLoader });
 const store = createStore(client);
 try {
   await store.actions.loadConfig();
@@ -146,7 +150,27 @@ try {
   const roundId = store.get().round!.roundId;
   // one bot chat to verify
   store.actions.pickSeat(1, 0, 'paid', 5);
-  for (let i = 0; i < 200 && store.get().chat?.phase !== 'chatting'; i++) await sleep(10);
+  for (let i = 0; i < 200 && store.get().chat?.phase !== 'chatting'; i++) await sleep(5);
+  // the countdown overlay while it runs, then each held beat (the QA screenshots use those)
+  const cdRoot = doc.createElement('div');
+  const live = store.get().chat!;
+  ok(isCounting(live) && live.countdownUntil! > Date.now(), 'chat_started ahead of now: counting');
+  const me = { seed: 'b'.repeat(64), label: 'Ana' };
+  render(h(Countdown, { theme: live.theme, until: live.countdownUntil!, me, partner: live.partner }), cdRoot as unknown as Element);
+  await sleep(10);
+  const ct = cdRoot.textContent;
+  ok(ct.includes('Chat starts in') && ct.includes('You') && ct.includes(live.partner.name) && ct.includes('Real human?'), 'Countdown renders the VS screen: ' + ct.slice(0, 80));
+  const held: string[] = [];
+  for (const hold of [3, 2, 1, 0]) {
+    render(h(Countdown, { key: 'h' + hold, theme: live.theme, until: live.countdownUntil!, me, partner: live.partner, hold }), cdRoot as unknown as Element);
+    await sleep(5);
+    const t = cdRoot.textContent;
+    held.push(t.includes('Say hi!') ? 'go' : t.includes('Chat starts in ' + hold) ? String(hold) : '?');
+  }
+  ok(held.join(' ') === '3 2 1 go', 'held beats: ' + held.join(' '));
+  ok(countdownHold('?mock=1&as=ana&qa=countdown&cd=go') === 0 && countdownHold('?mock=1&qa=countdown&cd=2') === 2 && countdownHold('?qa=countdown&cd=2') === null, 'QA hold parameter');
+  render(null, cdRoot as unknown as Element);
+  for (let i = 0; i < 200 && isCounting(store.get().chat); i++) await sleep(5);
   store.actions.say('hello, where are you from?');
   for (let i = 0; i < 300 && store.get().chat?.phase !== 'calling'; i++) await sleep(10);
   store.actions.call(false);
@@ -166,6 +190,12 @@ try {
   render(h(ResultsScreen, { store, roundId: roundId - 1, onVerify() {}, onClose() {}, onDeposit() {} }), root as unknown as Element);
   await sleep(150);
   ok(/would have been about \+/.test(root.textContent), 'seeded round shows the free "would have" line');
+  ok(/Was playing/.test(root.textContent) && /dramatic extrovert/.test(root.textContent) && /ESFP/.test(root.textContent) && /Lucía/.test(root.textContent) && /hyper/.test(root.textContent), 'seeded round reveals the persona card with name and mood: ' + (root.textContent.match(/Was playing.{0,90}/)?.[0] ?? 'none'));
+  const seeded = await store.actions.getResults(roundId - 1);
+  const personaChat = seeded.chats.find((c) => c.persona)!;
+  render(h(VerifyDrawer, { store, chatId: personaChat.chatId, onClose() {} }), root as unknown as Element);
+  await sleep(250);
+  ok(/Who you talked to/.test(root.textContent) && /Was playing/.test(root.textContent) && /All \d+ checks pass/.test(root.textContent), 'Verify reveals the persona card above the checks');
 
   render(h(VerifyDrawer, { store, chatId, onClose() {} }), root as unknown as Element);
   await sleep(250);
@@ -176,6 +206,7 @@ try {
   render(h(VerifyDrawer, { store, chatId: EVIDENCE_CHAT_ID, onClose() {} }), root as unknown as Element);
   await sleep(250);
   const t3 = root.textContent;
+  ok(!/Who you talked to/.test(t3) && !/Was playing/.test(t3), 'no card, nothing extra (the reference evidence)');
   ok(/0x3b753b4406613c5e70ae640508632b600424fa0c/.test(t3) && /All \d+ checks pass/.test(t3), 'Verify renders the real evidence bundle');
 
   render(h(PastRounds, { store, onOpenResults() {}, onClose() {} }), root as unknown as Element);
@@ -204,7 +235,7 @@ try {
 }
 ok(errors.length === 0, 'no uncaught errors' + (errors.length ? ': ' + String(errors[0]) : ''));
 const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
-for (const f of ['Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Who.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx']) {
+for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Who.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }

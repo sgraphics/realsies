@@ -26,6 +26,10 @@ const { settleCharacter, ratingDelta, wouldHave } = await import('../src/net/moc
 const { EVIDENCE_CHAT_ID } = await import('../src/net/mock/evidence.ts');
 const { PERSONAS, personaReply, intentOf } = await import('../src/net/mock/personas.ts');
 const { makeRand } = await import('../src/net/mock/util.ts');
+const { personaLine } = await import('../src/ui/PersonaCard.tsx');
+const { countdownFor, beatAt, msToNextBeat, isCounting } = await import('../src/state/countdown.ts');
+const { countdownLayout, spriteBox } = await import('../src/screens/countdownLayout.ts');
+const { CD_NUM, CD_GO, CD_VS } = await import('../../art/src/ui/countdown.ts');
 import type { AppState, Store } from '../src/state/store.ts';
 import type { ServerMsg, VerifyBundle } from '../../shared/protocol.ts';
 
@@ -105,9 +109,53 @@ console.log('personas');
   ok(reply.length > 0 && !/[*#]|^\s*-\s/m.test(reply), 'reply is plain chat text: ' + JSON.stringify(reply));
 }
 
+// ---------- 2b. countdown rules (protocol v1.1) ----------
+console.log('countdown rules');
+{
+  const t = 1_000_000;
+  const a = countdownFor(t + 2900, t, 3)!;
+  ok(a.until === t + 2900 && a.ms === 2900 && a.shift === 0, 'the countdown ends exactly at startedAt by the client clock');
+  const b = countdownFor(t - 400, t, 3)!;
+  ok(b.until === t + 3000 && b.shift === 3400, 'startedAt already past (clock ahead, late message): the configured countdown from now');
+  const c = countdownFor(t + 60_000, t, 3)!;
+  ok(c.until === t + 3000 && c.shift === -57_000, 'implausibly long (clock behind): clamped to the configured countdown');
+  ok(countdownFor(t + 3800, t, 3)!.until === t + 3800, 'up to a second over the configured length the relay start stands');
+  ok(countdownFor(t + 1000, t, undefined)!.until === t + 1000 && countdownFor(t - 10, t, undefined)!.ms === 3000, 'countdownSeconds defaults to 3');
+  ok(countdownFor(t - 10, t, 3, 'none') === null && countdownFor(t - 10, t, 0) === null, 'no countdown for a running chat or countdownSeconds 0');
+  ok(beatAt(t + 3000, t) === 3 && beatAt(t + 3000, t + 999) === 3 && beatAt(t + 3000, t + 1000) === 2 && beatAt(t + 3000, t + 2999) === 1 && beatAt(t + 3000, t + 3000) === 0 && beatAt(t + 3000, t + 3760) === null, 'beats 3, 2, 1, CHAT!, then gone');
+  ok(msToNextBeat(t + 3000, t + 500) === 500 && msToNextBeat(t + 3000, t + 3100) === 660, 'the overlay wakes at the next beat');
+  ok(isCounting({ counting: true, countdownUntil: t + 5 }, t) && !isCounting({ counting: true, countdownUntil: t }, t) && !isCounting({ counting: false, countdownUntil: t + 5 }, t), 'isCounting');
+}
+
+// ---------- 2c. countdown layout at the ten QA sizes ----------
+console.log('countdown layout');
+{
+  const sizes: [number, number, number][] = [[360, 640, 2], [390, 844, 3], [430, 932, 3], [844, 390, 3], [768, 1024, 2], [1024, 768, 2], [1280, 720, 1], [1440, 900, 1], [1920, 1080, 1], [2560, 1440, 1]];
+  type B = { x: number; y: number; w: number; h: number };
+  const inside = (b: B, w: number, h: number) => b.x >= -0.5 && b.y >= -0.5 && b.x + b.w <= w + 0.5 && b.y + b.h <= h + 0.5;
+  const overlap = (a: B, b: B) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const bad: string[] = [];
+  for (const [w, h, dpr] of sizes) {
+    const L = countdownLayout(w, h, dpr);
+    const num = spriteBox(L.num, CD_NUM.w, CD_NUM.h, dpr), go = spriteBox(L.go, CD_GO.w, CD_GO.h, dpr), vs = spriteBox(L.vs, CD_VS.w, CD_VS.h, dpr);
+    const banner = { x: 0, y: L.banner.y, w, h: L.banner.h };
+    const boxes: Record<string, B> = { me: L.me, them: L.them, mePlate: L.mePlate, themPlate: L.themPlate, num, go, vs };
+    for (const [k, b] of Object.entries(boxes)) if (!inside(b, w, h)) bad.push(`${w}x${h} ${k} off screen`);
+    for (const k of ['me', 'them', 'mePlate', 'themPlate']) if (overlap(num, boxes[k])) bad.push(`${w}x${h} numeral over ${k}`);
+    if (overlap(num, banner) || overlap(go, banner)) bad.push(`${w}x${h} numeral over the banner`);
+    if (overlap(vs, L.mePlate) || overlap(vs, L.themPlate) || overlap(vs, num)) bad.push(`${w}x${h} VS over a plate or the numeral`);
+    if (num.h < h * 0.2) bad.push(`${w}x${h} numeral only ${Math.round(num.h)} px`);
+    if ((L.door.w * L.u) / dpr < w || (L.door.h * L.u) / dpr < h) bad.push(`${w}x${h} doors do not cover the screen`);
+    if (!Number.isInteger(L.u) || !Number.isInteger(L.num.k) || !Number.isInteger(L.go.k) || !Number.isInteger(L.vs.k)) bad.push(`${w}x${h} fractional pixel scale`);
+  }
+  ok(bad.length === 0, 'countdown layout fits every QA size' + (bad.length ? ': ' + bad.join('; ') : ''));
+}
+
 // ---------- 3. full mock flow through the store ----------
 console.log('mock flow');
-const client = new MockGameClient({ chatSeconds: 2.5, callSeconds: 1.5, roundMinutes: 2, timeScale: 0.02, searchMs: [30, 80], storageKey: null, noHuman: true, playFailChance: 0, loadEvidence: fsLoader });
+const client = new MockGameClient({ chatSeconds: 2.5, callSeconds: 1.5, countdownSeconds: 0.12, roundMinutes: 2, timeScale: 0.02, searchMs: [30, 80], storageKey: null, noHuman: true, playFailChance: 0, loadEvidence: fsLoader });
+/** The chat is running and the countdown is over: the input is open. */
+const chatOpen = (s: AppState) => s.chat?.phase === 'chatting' && !isCounting(s.chat);
 const store = createStore(client);
 const seen: ServerMsg[] = [];
 client.on((m) => seen.push(m));
@@ -127,9 +175,21 @@ try {
   await store.actions.faucet(100);
   ok(near(store.get().me!.balanceCoins, before + 100), 'faucet +100');
 
-  // paid bot chat
+  ok(cfg.countdownSeconds === 0.12, 'config carries countdownSeconds');
+
+  // paid bot chat, through the countdown
   store.actions.pickSeat(1, 0, 'paid', 10);
-  await waitFor(store, (s) => s.chat?.phase === 'chatting', 'paid chat started');
+  const starting = await waitFor(store, (s) => s.chat?.phase === 'chatting', 'paid chat started');
+  const sc = seen.find((m) => m.t === 'chat_started') as Extract<ServerMsg, { t: 'chat_started' }>;
+  ok(!!sc && sc.startedAt > Date.now() && sc.endsAt - sc.startedAt === 2500, 'chat_started lies ahead by the countdown; endsAt = startedAt + chatSeconds');
+  ok(starting.chat!.counting === true && starting.chat!.countdownUntil === sc.startedAt && starting.chat!.clockShift === 0, 'the countdown runs to startedAt, the input stays shut');
+  store.actions.say('too early');
+  ok(store.get().chat!.messages.length === 0, 'nothing is sent during the countdown');
+  client.send({ t: 'say', chatId: sc.chatId, text: 'sneaky' });
+  for (let i = 0; i < 40 && !seen.some((m) => m.t === 'error' && m.code === 'chat_not_started'); i++) await new Promise((r) => setTimeout(r, 2));
+  ok(seen.some((m) => m.t === 'error' && m.code === 'chat_not_started') && !store.get().lastError, 'the relay refuses say before startedAt (chat_not_started), no error toast');
+  await waitFor(store, chatOpen, 'countdown over', 3000);
+  ok(Math.abs(Date.now() - sc.startedAt) < 60, `the input opens at startedAt (${Date.now() - sc.startedAt} ms)`);
   const paid = store.get().chat!;
   ok(seen.some((m) => m.t === 'matched') && seen.some((m) => m.t === 'placing') && seen.some((m) => m.t === 'placed') && seen.some((m) => m.t === 'chat_started'), 'matched, placing, placed, chat_started');
   ok(!!paid.playTx && near(store.get().me!.balanceCoins, before + 90) && near(store.get().me!.lockedCoins, 9.5), 'play placed: balance -10, locked 9.5');
@@ -152,7 +212,7 @@ try {
 
   // free bot chat, wrong call
   store.actions.pickSeat(1, 1, 'free');
-  await waitFor(store, (s) => s.chat?.phase === 'chatting', 'free chat started');
+  await waitFor(store, chatOpen, 'free chat started');
   const free = store.get().chat!;
   ok(free.mode === 'free' && free.coins === 0, 'free chat has no coins');
   store.actions.say('are you a bot?');
@@ -167,7 +227,7 @@ try {
   // forced fake human, paid
   localStorage.setItem('realsies:mock:human', '1');
   store.actions.pickSeat(1, 2, 'paid', 5);
-  await waitFor(store, (s) => s.chat?.phase === 'chatting', 'human chat started');
+  await waitFor(store, chatOpen, 'human chat started');
   localStorage.removeItem('realsies:mock:human');
   const human = store.get().chat!;
   store.actions.say('hey are you a bot lol');
@@ -178,7 +238,7 @@ try {
 
   // paid chat with a missed call
   store.actions.pickSeat(1, 3, 'paid', 5);
-  await waitFor(store, (s) => s.chat?.phase === 'chatting', 'missed chat started');
+  await waitFor(store, chatOpen, 'missed chat started');
   const missed = store.get().chat!;
   store.actions.devEndChat();
   await waitFor(store, (s) => s.chat?.phase === 'missed', 'call missed', 6000);
@@ -209,6 +269,8 @@ try {
   ok(rp.truth === 'bot' && rp.right === true && rp.mode === 'paid' && rp.coinsDelta >= -0.5 - 1e-9 && rp.verifiable && !!rp.model, `paid right bot call: ${rp.coinsDelta} coins, verifiable`);
   ok(rf.truth === 'bot' && rf.right === false && rf.mode === 'free' && rf.coinsDelta === 0 && rf.wouldHaveCoins === -5, 'free wrong call: would have lost 5');
   ok(rh.truth === 'human' && rh.right === true && rh.partnerAccount?.endsWith('.realsies.testnet') && !rh.verifiable, 'human partner revealed');
+  ok(!!rp.persona && rp.persona.age > 0 && /^[EI][NS][TF][JP]$/.test(rp.persona.mbti) && !!rp.persona.gender && !!rp.persona.temperament && !!rp.persona.home && !!rp.persona.job && !!rp.persona.style && ['none', 'rare', 'often'].includes(rp.persona.emoji), `bot results carry the persona card: ${rp.persona ? personaLine(rp.persona) : 'none'}`);
+  ok(!!rf.persona && !rh.persona, 'every bot chat has a card, the human chat none');
   ok(rm.right === null && rm.coinsDelta === -5 && rm.ratingDelta <= 0, 'missed paid call counts as wrong');
   const sumRating = res.chats.reduce((a, c) => a + c.ratingDelta, 0);
   ok(res.ratingBefore === ratingBefore && res.ratingAfter === Math.max(100, ratingBefore + sumRating) && store.get().me!.rating === res.ratingAfter, `rating ${res.ratingBefore} -> ${res.ratingAfter}`);
@@ -228,6 +290,7 @@ try {
   ok(sum.fail === 0 && sum.pass >= 12, `mock bundle: ${sum.pass} pass, ${sum.fail} fail, ${sum.na} n/a`);
   ok(groups.find((g) => g.id === 'local')!.status === 'pass', 'Your conversation matches the signed request');
   ok(b.skinMessage.includes('Game record: ' + b.handle.slice(0, 16) + '.'), 'skin message carries the game-record tag');
+  ok(!!b.persona && JSON.stringify(b.persona) === JSON.stringify(rp.persona) && b.personaPrompt.includes(`About you: ${b.persona.age}, ${b.persona.gender}, ${b.persona.mbti}, a ${b.persona.temperament}.`), 'the Verify bundle carries the same card, and the committed prompt says it');
   const tampered = localNow.map((l, i) => (i === localNow.findIndex((x) => x.from === 'them') ? { ...l, text: l.text + ' (edited)' } : l));
   ok(runChecks(b, { localTranscript: tampered }).find((g) => g.id === 'local')!.status === 'fail', 'a tampered local copy fails the match');
   const forged: VerifyBundle = { ...b, completions: b.completions.map((c, i) => (i === 0 ? { ...c, response: c.response.replace(/"content":"/, '"content":"X') } : c)) };
@@ -249,6 +312,11 @@ try {
   const seeded = rounds.find((r) => r.roundId === roundId - 1)!;
   const sr = await store.actions.getResults(seeded.roundId);
   ok(sr.chats.some((c) => c.chatId === EVIDENCE_CHAT_ID && c.verifiable), 'seeded round links the evidence chat');
+  const pc = sr.chats.find((c) => c.persona);
+  ok(!!pc && pc.truth === 'bot' && pc.verifiable && !sr.chats.find((c) => c.chatId === EVIDENCE_CHAT_ID)!.persona, 'seeded round: a persona bot chat; the reference evidence has no card');
+  const pcb = await store.actions.getVerify(pc!.chatId);
+  const pcs = summarize(runChecks(pcb, {}));
+  ok(pcs.fail === 0 && pcs.pass >= 12 && pcb.persona?.mbti === pc!.persona!.mbti, `seeded persona bundle verifies: ${pcs.pass} pass, ${pcs.fail} fail`);
   const lb = await store.actions.leaderboard();
   ok(lb.length >= 6 && lb[0].rating >= lb[lb.length - 1].rating, 'leaderboard sorted');
 
@@ -258,7 +326,7 @@ try {
   await waitFor(store, (s) => !!s.chat?.playFailed, 'play_failed');
   ok(store.get().chat!.mode === 'free' && store.get().chat!.coins === 0, 'play_failed continues free');
   localStorage.removeItem('realsies:mock:playfail');
-  await waitFor(store, (s) => s.chat?.phase === 'chatting', 'failed-play chat started');
+  await waitFor(store, chatOpen, 'failed-play chat started');
   store.actions.devEndChat();
   await waitFor(store, (s) => s.chat?.phase === 'calling', 'failed-play chat ended');
   store.actions.call(true);
@@ -365,7 +433,12 @@ console.log('store transcript copy');
   const s2 = createStore(stub);
   const info = { chatId: 'cx', roundId: 1, level: 1 as const, seatIndex: 0, theme: 'castle' as const, partner: { seed: 'a'.repeat(64), name: 'Pickle435' }, mode: 'free' as const, coins: 0 };
   handler!({ t: 'matched', chat: info });
-  handler!({ t: 'chat_started', chatId: 'cx', startedAt: 1, endsAt: 2 });
+  const t0 = Date.now();
+  handler!({ t: 'chat_started', chatId: 'cx', startedAt: t0 + 30, endsAt: t0 + 30 + 120_000 });
+  s2.actions.say('too soon');
+  ok(s2.get().chat!.counting === true && sent.length === 0 && !loadTranscript('cx')?.length, 'say is held back during the countdown');
+  await new Promise((r) => setTimeout(r, 45));
+  ok(!s2.get().chat!.counting, 'the countdown timer opens the chat');
   s2.actions.say('first');
   ok(loadTranscript('cx')?.length === 1, 'own message kept even without an echo');
   handler!({ t: 'message', chatId: 'cx', msg: { id: 'srv1', from: 'me', text: 'first', at: 5 } });
@@ -376,6 +449,18 @@ console.log('store transcript copy');
   ok(loadTranscript('cx')!.length === 1 && s2.get().chat!.messages.length === 1, 'a rejected message is dropped from screen and copy');
   handler!({ t: 'message', chatId: 'cx', msg: { id: 'srv2', from: 'them', text: 'hey', at: 6 } });
   ok(loadTranscript('cx')!.length === 2 && sent.length === 2, 'partner messages stored; say sent twice');
+  s2.actions.clearError();
+  s2.actions.say('third');
+  handler!({ t: 'error', code: 'chat_not_started', message: 'The chat starts in a moment.' });
+  const c3 = s2.get().chat!;
+  ok(c3.messages.length === 2 && loadTranscript('cx')!.length === 2 && c3.draft?.text === 'third' && !s2.get().lastError, 'chat_not_started: the text goes back to the input, no error toast');
+  // a chat_started in the past (skewed clock): the configured countdown from now, clock shifted to match
+  handler!({ t: 'matched', chat: { ...info, chatId: 'cy' } });
+  const t1b = Date.now();
+  handler!({ t: 'chat_started', chatId: 'cy', startedAt: t1b - 5000, endsAt: t1b - 5000 + 120_000 });
+  const cy = s2.get().chat!;
+  ok(cy.counting === true && Math.abs(cy.countdownUntil! - (t1b + 3000)) < 30 && Math.abs(cy.clockShift! - 8000) < 30, 'a start in the past: a 3 s countdown and the chat clock shifted by the skew');
+  s2.actions.logout();
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

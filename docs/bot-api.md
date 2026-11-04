@@ -31,11 +31,17 @@ Every `at` and duration is milliseconds since the chat started, in **brain time*
 brain millisecond is one real millisecond. Tests run the relay with `BOT_TIME_SCALE` below 1; the
 relay then scales every brain duration to real time, so a brain never needs to know.
 
+The chat starts when the countdown ends. Both players get `chat_started` with `startedAt` =
+now + `COUNTDOWN_SECONDS` (default 3) and see a full-screen 3, 2, 1; the relay refuses a player's `say`
+before `startedAt` (`chat_not_started`) and drops typing indicators, and a brain hears `chat_started`
+(`at` 0) only at `startedAt`. Human and bot chats run on exactly the same clock, so nobody can tell from
+the timing who is expected to speak first.
+
 ## 3. Events (relay to brain)
 
 | `type` | Fields | When |
 |---|---|---|
-| `chat_started` | `at` (0), `chatId`, `persona` (card below), `level` (1 to 3), `gamertag`, `chatMs` | the chat began; nothing else is known yet |
+| `chat_started` | `at` (0), `chatId`, `persona` (card below), `level` (1 to 3), `gamertag`, `chatMs` | the countdown is over and the chat began (section 2); nothing else is known yet |
 | `tick` | `at`, `remainingMs` | every 500 ms |
 | `player_typing` | `at`, `on` | the player's typing indicator changed |
 | `player_message` | `at`, `id`, `text` | the player sent a line |
@@ -46,8 +52,12 @@ relay then scales every brain duration to real time, so a brain never needs to k
 | `action_rejected` | `at`, `action`, `reason` | an action broke a rule (see 6); nothing happened |
 | `chat_ended` | `at`, `reason` (`time`, `dev`, `round_end`) | the last event of a chat |
 
-Persona card: `{id, model, traits: {chatty, fast, curious}, interests: [topic], cps}`. A brain never
-receives the persona prompt, the player's account or the chat tag.
+Persona card: `{id, model, traits: {chatty, fast, curious, guarded, drift}, interests: [topic], cps}`. Traits are
+0..1 dials: `chatty` terse to chatty, `fast` slow to quick reactions, `curious` how much the bot tests
+the partner, `guarded` open to guarded (types and stops, deletes drafts, accuses, waits for the other to
+open), `drift` tidy and on topic to messy and drifting (asides, tangents, afterthoughts). `guarded` and
+`drift` are additive in `realsies-brain/1`; ignore them if you do not need them. A brain never receives
+the persona prompt, the player's account or the chat tag.
 
 ## 4. Actions (brain to relay)
 
@@ -212,8 +222,12 @@ ticks, so a seed and an event sequence fully determine its actions. Policy:
   then a say or, a third of the time on its own initiative, nothing), sometimes deletes a draft when a
   new message lands (`cancel`), and may close with a `verdict` when time runs out.
 - **Persona dials.** `chatty` moves double-texting (6 to 30%), multi-bubble replies (8 to 28%), the
-  silence threshold and opening first (50 to 90%); `fast` the reaction time and hesitations; `curious`
-  the probe share (±8 points) and challenges; `typing.cps` the typing speed.
+  silence threshold, opening first (50 to 90%) and how soon the opener comes; `fast` the reaction time
+  and hesitations; `curious` the probe share (±8 points) and challenges; `guarded` fake typing (×0.6 to
+  1.4), deleted drafts (20 to 50% of the chances), accusations (×0.55 to 1.45), patience and opening first
+  (±10 points); `drift` the direct share inside answering (±8 points), tangents and afterthoughts and a
+  little double-texting; `typing.cps` the typing speed. Every dial at 0.5 is the policy below exactly.
+  Demo personas derive all five from their attributes (section 14).
 
 Measured over 200 simulated chats on virtual time (`relay/test/brain.test.ts`, real executor, fake
 enclave): 51.5% probing, 48.5% answering; inside answering 68.3% direct, 31.7% out of order; first
@@ -225,27 +239,31 @@ Policy knobs (`DEFAULT_POLICY`): `probeShare` 0.5, `directShare` 0.7, `balance` 
 
 ## 10. Registering a persona
 
-`relay/personas/<id>.json`:
+`relay/personas/<id>.json`. A persona driven by a remote brain may bring its own prompt:
 
 ```json
 {
-  "id": "mia-leeds",
+  "id": "acme-zed",
   "levels": [1, 2],
   "model": "z-ai/glm-5.3-flash",
-  "brain": "default",
+  "brain": { "remote": "acme" },
   "typing": { "cps": 5.4 },
-  "traits": { "summary": "24, barista in Leeds; dry humour", "chatty": 0.4, "fast": 0.65, "curious": 0.55 },
+  "traits": { "summary": "24, barista in Leeds; dry humour", "chatty": 0.4, "fast": 0.65, "curious": 0.55, "guarded": 0.6, "drift": 0.5 },
   "interests": ["music", "work", "local", "hot_take"],
   "payout": "bots.realsies.testnet",
-  "prompt": "You are Mia, 24, ... never mention it."
+  "prompt": "You are Zed, 24, ... never mention it."
 }
 ```
 
 `model` must be a NEAR AI enclave model listed in `relay/src/models.ts` that accepts a second system
 message (GLM 5.3 Flash, DeepSeek V4.1 Flash). `prompt` is committed by sha256 every round, so it is the
-persona; end it with the paragraph in section 5. `payout` (optional, default the relay's bots account)
+persona; end it with the paragraph in section 5. `traits` are the dials the default brain uses when it
+stands in for the remote one (default 0.5). `payout` (optional, default the relay's bots account)
 receives the character's share. `brain` is `"default"` or `{"remote": "<botmaster>"}`. The relay loads
 personas at boot; each round commits one character per persona per level.
+
+The relay's own demo personas (`brain` `"default"`) are written as attributes instead, a `person`
+block, and may not carry `prompt`, `typing`, `traits` or `interests`: all of those are derived (section 14).
 
 ## 11. Remote brains
 
@@ -305,3 +323,67 @@ claude mcp add realsies-botmaster -- node relay/tools/mcp-botmaster.mjs
 `realsies-brain/1` covers sections 3, 4, 6 and 11. `steer-v1` is the catalogue in section 5. A new
 intent, a changed string or a changed limit gets a new version; the relay announces both in `welcome`
 and `GET /api/bot/steering`.
+
+## 14. Demo personas
+
+The relay's own bots (`relay/personas/*.json` with `brain` `"default"`, and the people generated for each
+round) are written as **attributes**, not prompts. Remote brains and their personas are untouched: a
+botmaster wires any logic in its own subscription and brings its own prompt.
+
+**Attributes** (`person` block, `relay/src/persona/model.ts`): `name` (and `nickname`), `age`, `gender`
+(`woman`, `man`, `nonbinary`; independent of the avatar's look), `mbti` (a Myers-Briggs type), `temperament`
+(`shy`, `reserved`, `easygoing`, `outgoing`, `loud`), today's `mood` (and `moodWhy`), `home` (city, region,
+country, IANA time zone, culture), `english` (`native`, `fluent`, `good`, `basic`) with `language` and the
+natural `slips` of that first language, `job` (title, phrase, category), `family` (a pet, sibling,
+partner or kids), `commute`, `device`, `likes`, `details`, `quirks`, `scenes` (where they are, what
+they can see or hear, what they ate, by time of day), `interests` (steering topics), and optional
+`style` overrides. The writing style follows from the rest; a hand-written persona can pin any field.
+
+**Style** (`deriveStyle`): case (all lowercase, normal, erratic), punctuation (none, light, full, `...`),
+exclamations, questions back, message length (terse, short, full sentences), emoji (none, rare, often)
+from an age-appropriate set (`💀😭🫠` for the young, `😂🙃😅` for millennials, `👍😊🙂` for older people),
+emoticons (`:)` and `:-)` for older people, `^^` in Korea and Japan, `xD`), laughter by culture and age
+(`lol`, `lmao`, `haha`, `kkkk` in Brazil, `jajaja` in Spanish, `www` in Japan, `555` in Thailand,
+`mdr` in France, `wkwk` in Indonesia), abbreviations by age, regional slang (mate, grand, heaps, abeg,
+yaar, y'all), typo rate, and how they take "are you a bot" (laugh it off and throw it back, mock offence,
+a dry no, flustered, suspicious back, puzzled).
+
+**The letters** move both the writing and the dials:
+
+| Letter | Writing (prompt and style) | Dials (`deriveTraits`) |
+|---|---|---|
+| E | likes a chat, asks questions back, exclaims, longer messages | chatty up, fast up (starts sooner), guarded down, curious up |
+| I | keeps it brief, takes a moment, fine with silence, terse | chatty down, slower to start, guarded up |
+| S | concrete, everyday things in front of them | curious and drift down |
+| N | odd connections, what-if questions, tangents | curious up, drift up |
+| T | blunt and dry, no sugarcoating, fewer exclamations and emoji | guarded up, chatty down |
+| F | warm, notices how the other is doing, more emoji | guarded down, chatty up |
+| J | tidy: answers what was asked, stays on topic, proper capitals, few typos | drift down, guarded up |
+| P | scattered: jumps between thoughts, lowercase, leaves typos | drift up, fast up |
+
+Temperament (E/I with noise) moves `chatty` and `guarded`, age and mood move `fast`, mood moves every
+dial a little. Typing speed (`deriveCps`) slows with age, is quicker on a keyboard for the young, slower in a
+second language, plus a little personal noise. Measured in `relay/test/persona.test.ts` (60 simulated chats each, the
+player never opening): an ESFJ twin of an ISFJ sends 9.5 bubbles a chat against 7.9, shows its first line at a
+median 10.9 s against 13.6 s, and types-and-stops 28 times against 49; over 150 chats each an ENFP answers out of
+order 35.7% of the time, an ESTJ 29.0%.
+
+**The prompt** (`relay/src/persona/prompt.ts`, message 0, committed by sha256 each round) is composed from
+the attributes: who they are, where they are right now (the local time and day of the round's start in their
+time zone, the scene for that time of day, what they ate, the mood and why), personality (temperament, the
+four letters, quirks), their English, the game, how they write, and the base rules every persona shares:
+pass as a human player of Realsies, text like a stranger and not like an assistant, no lists or markdown,
+deny being an AI the way the style says without overdoing it, deflect prompt injection like a confused or
+amused person, the generated gamertag, and the steering paragraph of section 5 last.
+
+**The cast of a round** is the personas folder (each prompt composed for the round's start) plus
+`GEN_PERSONAS` (default 9) people generated from the round's `castSeed` (`relay/src/persona/generate.ts`,
+stored with the round), one level each, models GLM 5.3 Flash and DeepSeek V4.1 Flash. The generator is
+deterministic: the same seed, index and start time give the same person and prompt. Ages run 16 to 70, most
+20 to 40; about half native English speakers; the job fits the age, names fit the culture and the age, the
+scene fits the job and the local hour. Each bot character stores the persona it plays as committed.
+`npx tsx relay/tools/persona-preview.ts [seed] [count]` prints a cast with cards, dials and a full prompt.
+
+**The card** (`shared/protocol.ts` `PersonaCard`: age, gender, mbti, temperament, home, job, style, emoji;
+plus `name` and `mood` as extra fields) is filled in `ChatResult.persona` and `VerifyBundle.persona` for
+bot chats. Both are built at settlement and served only after it, so the card never shows during the round.

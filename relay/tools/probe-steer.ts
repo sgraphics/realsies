@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { STEERING } from '../src/bot/intents.js';
 import { MODELS, buildRequest, type ChatTurn } from '../src/models.js';
 import { loadConfig } from '../src/config.js';
+import { loadPersonas } from '../src/personas.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfg = loadConfig();
@@ -15,7 +16,9 @@ if (!KEY) throw new Error('NEAR_AI_API_KEY missing');
 const args = process.argv.slice(2);
 const opt = (f: string) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
 const personaId = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--'))) || 'mia-leeds';
-const persona = JSON.parse(fs.readFileSync(path.resolve(here, '../personas', `${personaId}.json`), 'utf8'));
+// demo personas compose their prompt from their attributes (for now as the round start)
+const persona = loadPersonas(path.resolve(here, '../personas')).find((p) => p.id === personaId);
+if (!persona) throw new Error(`no persona ${personaId}`);
 const models = (opt('--models') ?? 'glm').split(',').map((m) => (m === 'glm' ? 'z-ai/glm-5.3-flash' : m === 'deepseek' ? 'deepseek-ai/DeepSeek-V4.1-Flash-1017' : m));
 const only = opt('--only')?.split(',');
 const skin = 'Your gamertag in this chat is Pickle435; the game generated it, you did not choose it. Game record: 0123456789abcdef.';

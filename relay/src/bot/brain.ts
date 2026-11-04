@@ -7,7 +7,8 @@
 // the running shares toward those targets, so they hold whatever the player does. The bot reads
 // before it reacts, waits while the player is typing, speaks when the partner goes quiet, sometimes
 // double-texts, sometimes types and stops, and now and then deletes a draft when a new message lands.
-// Persona traits (chatty, fast, curious) move every dial.
+// Persona traits (chatty, fast, curious, guarded, drift) move every dial; demo personas derive them
+// from their attributes, the Myers-Briggs letters included (src/persona/model.ts deriveTraits).
 //
 // The brain is a pure reducer of events; it never touches timers (ticks drive it), so a seed and an
 // event sequence fully determine its actions. RxJS wraps it as a Brain.
@@ -71,6 +72,10 @@ export class DefaultBrainCore {
   private patienceMs = 7000;
   private silenceBase = 9000;
   private fast = 0.5;
+  private chatty = 0.5;
+  private guarded = 0.5;
+  private drift = 0.5;
+  private directTarget = 0.7;
   // time
   private now = 0;
   private remaining = 120_000;
@@ -114,14 +119,23 @@ export class DefaultBrainCore {
   private setPersona(p: PersonaCard): void {
     this.persona = p;
     const { chatty, fast, curious } = p.traits;
+    // dials added later default to the middle, where they change nothing
+    const guarded = typeof p.traits.guarded === 'number' ? p.traits.guarded : 0.5;
+    const drift = typeof p.traits.drift === 'number' ? p.traits.drift : 0.5;
     this.fast = fast;
+    this.chatty = chatty;
+    this.guarded = guarded;
+    this.drift = drift;
     this.probeTarget = Math.min(0.7, Math.max(0.3, this.policy.probeShare + (curious - 0.5) * 0.16));
-    this.doubleP = lerp(0.06, 0.3, chatty);
+    // tidy (J) personas answer directly more often, messy and drifting ones (P, N) go out of order more
+    this.directTarget = Math.min(0.85, Math.max(0.55, this.policy.directShare + (0.5 - drift) * 0.16));
+    this.doubleP = lerp(0.06, 0.3, chatty) * (1 + (drift - 0.5) * 0.5);
     this.multiP = lerp(0.08, 0.28, chatty);
-    this.fakeP = lerp(0.12, 0.06, chatty);
-    this.openFirstP = lerp(0.5, 0.9, chatty);
+    this.fakeP = lerp(0.12, 0.06, chatty) * (1 + (guarded - 0.5) * 0.8);
+    this.cancelP = 0.35 + (guarded - 0.5) * 0.3;
+    this.openFirstP = Math.min(0.92, Math.max(0.35, lerp(0.5, 0.9, chatty) - (guarded - 0.5) * 0.2));
     this.verdictP = 0.45 + 0.3 * curious;
-    this.patienceMs = this.u(5000, 9000);
+    this.patienceMs = this.u(5000, 9000) * (1 + (guarded - 0.5) * 0.3);
     this.silenceBase = lerp(13_000, 6500, chatty);
     this.nextSilence = this.drawSilence();
   }
@@ -138,7 +152,8 @@ export class DefaultBrainCore {
       case 'chat_started': {
         this.setPersona(e.persona);
         this.remaining = e.chatMs;
-        if (chance(this.rng, this.openFirstP)) this.plan = { at: this.u(2000, 6000) * lerp(1.3, 0.75, this.fast), trigger: 'opener' };
+        // introverts take a moment longer to start
+        if (chance(this.rng, this.openFirstP)) this.plan = { at: this.u(2000, 6000) * lerp(1.3, 0.75, this.fast) * (1 + (0.5 - this.chatty) * 0.4), trigger: 'opener' };
         return [];
       }
       case 'tick':
@@ -296,7 +311,7 @@ export class DefaultBrainCore {
     if (trigger === 'opener' || (this.playerCount === 0 && this.botShown === 0)) return { intent: 'opener', length: this.len('opener') };
     if (trigger === 'verdict') return { intent: 'verdict', length: 'one' };
     const pt = this.probeTarget;
-    const ds = this.policy.directShare;
+    const ds = this.directTarget;
     const T: Record<IntentKind, number> = { probe: pt, direct: (1 - pt) * ds, aside: (1 - pt) * (1 - ds) };
     const n = this.counts.probe + this.counts.direct + this.counts.aside;
     const canDirect = this.unanswered.length > 0;
@@ -329,7 +344,7 @@ export class DefaultBrainCore {
       weighted<Intent>(this.rng, [
         ['probe', this.rep('probe', 0.5)],
         ['challenge', this.playerCount > 0 ? this.rep('challenge', 0.15 + 0.15 * curious) : 0],
-        ['accuse', this.playerCount > 0 ? this.rep('accuse', this.playerCount >= 2 ? 0.3 : 0.15) : 0],
+        ['accuse', this.playerCount > 0 ? this.rep('accuse', (this.playerCount >= 2 ? 0.3 : 0.15) * (1 + (this.guarded - 0.5) * 0.9)) : 0],
       ]) ?? 'probe';
     return { intent, length: this.len(intent) };
   }
@@ -346,9 +361,9 @@ export class DefaultBrainCore {
     const intent =
       weighted<Intent>(this.rng, [
         ['late_answer', this.skipped.length ? 1.6 : 0],
-        ['afterthought', spoke ? this.rep('afterthought', 0.8) : 0],
+        ['afterthought', spoke ? this.rep('afterthought', 0.8 * (1 + (this.drift - 0.5) * 0.6)) : 0],
         ['clarify', spoke ? this.rep('clarify', 0.3) : 0],
-        ['tangent', 1.0],
+        ['tangent', 1.0 * (1 + (this.drift - 0.5) * 0.9)],
       ]) ?? 'tangent';
     if (intent !== 'tangent') return { intent, length: this.len(intent) };
     const pool = (this.persona?.interests.length ? this.persona.interests : [...TOPICS]).filter((t) => !this.recentTopics.includes(t));

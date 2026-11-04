@@ -1,6 +1,9 @@
 // Headless E2E against the real relay on NEAR testnet (spec section 4 "Tests").
 // Uses the relay at RELAY_URL (default http://localhost:3960); if none answers, spawns one
 // (CHAIN=near, real NEAR AI) and stops it at the end. Chain views are read directly from testnet.
+// Every chat opens with the relay's countdown (PublicConfig.countdownSeconds): the scenario checks that a
+// say during it is refused and waits it out (counted from receipt, so clock skew does not matter) before
+// anyone writes; after settlement it checks the bot chats' persona cards in results and the bundle.
 //
 //   npm run e2e                      # spawn or reuse a relay, run the scenario
 //   RELAY_URL=http://host:3960 npm run e2e
@@ -71,6 +74,7 @@ async function main(): Promise<void> {
   log(`PASSED: ${report.checks.length} checks in round ${report.roundId}`);
   for (const [k, h] of Object.entries(report.txs)) if (h) log(`  ${k.padEnd(14)} ${explorer(h)}`);
   log(`  bot said: ${report.botMessages.map((m) => JSON.stringify(m)).join(' | ')}`);
+  for (const r of Object.values(report.results)) for (const c of r.chats) if (c.persona) log(`  bot ${c.chatId} was ${c.persona.age}, ${c.persona.gender}, ${c.persona.mbti}, ${c.persona.temperament}, ${c.persona.home}, ${c.persona.job}; ${c.persona.style}`);
   const file = path.join(relayRoot, 'data', `e2e-report-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
   fs.writeFileSync(file, JSON.stringify(report, null, 2));
   log(`report: ${file}`);

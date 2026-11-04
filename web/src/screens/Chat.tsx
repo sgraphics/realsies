@@ -1,19 +1,29 @@
 // Chat: the HUD (chat timer, coins playing, round clock, menu with the test tools), the partner on a
 // pedestal (left; top-left on phones) with its gamertag beneath, a small box of chat facts sized to
 // its content, bubbles in the room, a burning fuse, a typing indicator, and a native input that
-// behaves with phone keyboards (the column shrinks by the keyboard inset).
+// behaves with phone keyboards (the column shrinks by the keyboard inset). Before every chat the
+// full-screen countdown (Countdown.tsx) runs over it; the input opens the moment it ends.
 
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
 import { txUrl } from '../state/format.ts';
+import { isCounting } from '../state/countdown.ts';
 import { World } from '../world/World.tsx';
 import { useNow, useRig } from '../ui/hooks.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 import { Hud } from '../ui/Hud.tsx';
 import { NameTag } from '../ui/NameTag.tsx';
 import { themeFor } from '../../../shared/protocol.ts';
+import { sha256Hex } from '../verify/crypto.ts';
+import { Countdown, countdownHold } from './Countdown.tsx';
+
+/** The player's own avatar seed: the test user's, else the relay's formula for any account. */
+export function avatarSeedOf(accountId: string | undefined, testUsers?: { accountId: string; seed: string }[]): string {
+  const t = testUsers?.find((u) => u.accountId === accountId);
+  return t?.seed ?? sha256Hex(`realsies:v1|avatar|${accountId ?? ''}`);
+}
 
 export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }) {
   const s = useStore(store);
@@ -80,10 +90,32 @@ export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }
   }, [msgs.length, chat?.partnerTyping, chat?.phase]);
   useEffect(() => () => { if (typingTimer.current) clearTimeout(typingTimer.current); }, []);
 
-  const chatting = chat?.phase === 'chatting';
+  // the store flips `counting` exactly at the end; isCounting also covers a throttled timer
+  const counting = isCounting(chat);
+  const chatting = chat?.phase === 'chatting' && !counting;
   const total = (cfg?.chatSeconds ?? 120) * 1000;
-  const left = chatting && chat?.endsAt ? Math.max(0, chat.endsAt - now) : total;
-  const fuse = chatting ? left / total : 1;
+  const left = chatting && chat?.endsAt ? Math.max(0, chat.endsAt + (chat.clockShift ?? 0) - now) : total;
+  const fuse = chatting ? Math.min(1, left / total) : 1;
+  const input = useRef<HTMLInputElement | null>(null);
+  const [hold] = useState(() => (typeof location !== 'undefined' ? countdownHold(location.search) : null));
+  const [hint, setHint] = useState(false);
+
+  // the countdown ended: the input opens; keyboards and mice can type at once (phones tap first)
+  const hadCountdown = !!chat?.countdownUntil;
+  useEffect(() => {
+    if (!chatting || !hadCountdown) return;
+    const fine = typeof matchMedia === 'function' && matchMedia('(pointer: fine)').matches;
+    if (fine) input.current?.focus({ preventScroll: true });
+  }, [chatting, hadCountdown]);
+  // the relay refused a message before its start: hand the text back and say why, gently
+  useEffect(() => {
+    const d = chat?.draft;
+    if (!d) return;
+    setText((t) => (t.trim() ? t : d.text));
+    setHint(true);
+    const t = setTimeout(() => setHint(false), 2600);
+    return () => clearTimeout(t);
+  }, [chat?.draft?.n]);
   const paid = chat ? chat.mode === 'paid' && chat.coins > 0 : search?.mode === 'paid';
   const playing = chat ? chat.coins : search?.coins ?? 0;
 
@@ -157,6 +189,7 @@ export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }
                 <div class="chat-messages" ref={listRef} aria-live="polite">
                   {status}
                   {chatting && msgs.length === 0 && <div class="chat-note">Say hi. You have two minutes.</div>}
+                  {hint && <div class="chat-note">The chat opens in a moment. Send it again.</div>}
                   {chat?.playFailed && <div class="chat-note">Coins not placed ({chat.playFailed}). This chat is free.</div>}
                   {msgs.map((m) => (
                     <div key={m.id} class={'bubble ' + (m.from === 'me' ? 'me' : 'them')}>{m.text}</div>
@@ -173,13 +206,14 @@ export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }
                   }}
                 >
                   <input
+                    ref={input}
                     class="px-input"
                     type="text"
                     enterKeyHint="send"
                     autoComplete="off"
                     autoCorrect="on"
                     maxLength={280}
-                    placeholder={chatting ? 'Type a message…' : 'Waiting…'}
+                    placeholder={chatting ? 'Type a message…' : counting ? 'Get ready…' : 'Waiting…'}
                     value={text}
                     disabled={!chatting}
                     onInput={(e) => onInput((e.target as HTMLInputElement).value)}
@@ -192,6 +226,16 @@ export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }
           );
         }}
       </World>
+      {chat?.countdownUntil !== undefined && chat.phase === 'chatting' && (
+        <Countdown
+          key={chat.chatId}
+          theme={theme}
+          until={chat.countdownUntil}
+          me={{ seed: avatarSeedOf(s.accountId, s.testUsers), label: s.me?.label ?? s.accountId?.split('.')[0] ?? 'You' }}
+          partner={chat.partner}
+          hold={hold}
+        />
+      )}
     </>
   );
 }
