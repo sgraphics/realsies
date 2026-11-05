@@ -53,6 +53,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `ADMIN_TOKEN` | | Bearer token of `/api/admin/*` (16+ characters); unset = admin endpoints answer `403 admin_disabled` |
 | `RELAY_ENCRYPTION_KEY` | | 32 bytes, 64 hex or base64 (`openssl rand -hex 32`): seals botmasters' own NEAR AI keys (AES-256-GCM); unset = own keys refused (`503 byok_disabled`) |
 | `AGENT_REQUEST_WEBHOOK` | | every access request is POSTed here as JSON (with Slack `text` and Discord `content`) |
+| `RESEND_API_KEY`, `AGENT_NOTIFY_EMAIL`, `AGENT_NOTIFY_FROM` | | operator emails through Resend for every access request and every persona to review (`src/agents/notify.ts`); off unless the key and the address are set |
 | `AGENT_REQUESTS_PER_HOUR` | 5 | access requests per IP per hour |
 | `NEAR_AI_BUDGET_USD` | 10 | the relay's own key: 80% of the estimated spend warns in the log, `/api/health` `ai.status` `low_credit` (spend in `GET /api/admin/health`) |
 | `NEAR_AI_RECHECK_SECONDS` | 180 | a key out of credits is retried with a one-token completion this often; any success recovers it |

@@ -25,6 +25,7 @@ import { adminView, approveRequest, createBotmaster, decidePersona, rejectReques
 import { publicChat, statsOf } from './stats.js';
 import type { ByokKeys } from './byok.js';
 import type { AccessRequestRec, AgentPersonaRec, AgentStore, PersonaStatus, RequestStatus } from './store.js';
+import { Notifier } from './notify.js';
 
 const log = logger('agents');
 
@@ -38,6 +39,8 @@ export interface AgentApiDeps {
   admin: AdminContext;
   /** the gateway's model list (GET /v1/models, public) */
   models: () => Promise<ModelListing[]>;
+  /** operator emails (src/agents/notify.ts); default: from cfg, off without RESEND_API_KEY */
+  notifier?: Notifier;
 }
 
 /** at most this many personas (pending and approved) per botmaster */
@@ -83,6 +86,7 @@ export function createAgentApi(d: AgentApiDeps) {
   const routes: { method: string; re: RegExp; fn: Handler }[] = [];
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
   const perIp = new RateLimit(Math.max(1, d.cfg.agentRequestsPerHour));
+  const notifier = d.notifier ?? new Notifier({ resendApiKey: d.cfg.resendApiKey, notifyEmail: d.cfg.notifyEmail, notifyFrom: d.cfg.notifyFrom });
   const GLOBAL_PER_DAY = 500;
   if (d.cfg.adminToken && d.cfg.adminToken.length < 16) log.warn('ADMIN_TOKEN is shorter than 16 characters: admin endpoints stay disabled');
 
@@ -173,6 +177,7 @@ export function createAgentApi(d: AgentApiDeps) {
     perIp.hit(ip);
     log.info(`agent access request ${rec.id}: ${r.kind}, ${r.company ?? r.name} (${r.email.split('@')[1]})`);
     if (d.cfg.agentRequestWebhook) void postWebhook(d.cfg.agentRequestWebhook, rec);
+    void notifier.accessRequest(rec);
     const receipt: AgentRequestReceipt = { id: rec.id, status: 'pending', createdAt: rec.createdAt };
     return receipt;
   });
@@ -341,6 +346,7 @@ export function createAgentApi(d: AgentApiDeps) {
       cps: sub.cps, traits: sub.traits, summary: sub.summary, interests: sub.interests, languages: sub.languages,
     };
     d.store.savePersona(rec);
+    void notifier.personaSubmitted(rec);
     log.info(`persona ${id} submitted by ${bm.name} (${sub.model}, levels ${sub.levels.join(',')}, ${sub.brain} brain): pending review`);
     return { ...summaryOf(rec, rec0.status === 'active'), warnings };
   });

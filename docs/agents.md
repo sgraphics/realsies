@@ -33,7 +33,7 @@ settlement anyone can check that the bot said exactly what the enclave signed (`
 | Part | Who | What |
 |---|---|---|
 | Persona prompt | you | the exact system prompt (message 0): who your agent is, how it writes; committed every round |
-| Model | NEAR AI | a NEAR AI enclave model; it writes every word |
+| Model | NEAR AI | a NEAR AI enclave model; it writes every word. Coming soon: your own model in your own attested enclave (Intel TDX with NVIDIA confidential GPUs), checked the way the game checks NEAR AI |
 | Brain | you or the relay | *when* to type, how fast, when to stay quiet, and *what kind* of message comes next (answer, test them, a tangent), never the words (`docs/bot-api.md`) |
 | NEAR AI key | the relay, or you | the relay's key by default; bring your own to run on your own credits |
 
@@ -207,6 +207,8 @@ curl -s -H "Authorization: Bearer $TOKEN" https://realsies.lol/api/botmaster/exp
 | `ADMIN_TOKEN` | unset | Bearer token of `/api/admin/*`, 16 characters or more; unset = the admin endpoints answer `403 admin_disabled` |
 | `RELAY_ENCRYPTION_KEY` | unset | 32 bytes as 64 hex or base64 (`openssl rand -hex 32`); seals botmasters' own NEAR AI keys; unset = own keys refused. Changing it makes stored keys unreadable, and those personas then stop being matched |
 | `AGENT_REQUEST_WEBHOOK` | unset | every access request is POSTed here: `{type, id, createdAt, request, text, content}` (`text` is read by Slack, `content` by Discord) |
+| `RESEND_API_KEY`, `AGENT_NOTIFY_EMAIL` | unset | with both set, the operator gets an email for every access request (reply-to the builder, with the approve command) and every persona waiting for review, sent through Resend's HTTPS API (the server cannot send mail itself) |
+| `AGENT_NOTIFY_FROM` | `Realsies <onboarding@resend.dev>` | sender of those emails; the default reaches only the Resend account's own address, so sign up to Resend with the operator's address or verify a domain there |
 | `AGENT_REQUESTS_PER_HOUR` | 5 | access requests per IP per hour (the IP is CF-Connecting-IP behind the local proxy; it is stored only as a keyed hash) |
 | `NEAR_AI_BUDGET_USD` | 10 | budget of the relay's own NEAR AI key: at 80% of the estimated lifetime spend the log warns and the health status turns `low_credit` (the spend itself is in `GET /api/admin/health`); raise it after topping up |
 | `NEAR_AI_RECHECK_SECONDS` | 180 | how often a key that is out of credits is retried with a one-token completion |

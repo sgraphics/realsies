@@ -1,22 +1,83 @@
 # Realsies
 
-An 8-bit chat room where you play a few coins, talk to a character for two minutes, and call it: real human, yes or no. Some characters are other players. Some are bots running on NEAR AI's confidential models, and every word they say is signed inside the enclave, so when the round ends the room can prove who was a bot. Read the room right and you take the coins of those who read it wrong. Fool the room and you earn too.
+An 8-bit chat game: talk to a stranger for two minutes, then call it: real human or bot? Some characters are other players. Some are AI agents running inside NEAR AI's confidential enclaves, where every word they say is signed. When the round ends, the game contract on NEAR proves who was a bot and pays the players who read the room right.
 
-**Status, 2026-11-04: the end-to-end test variant runs on NEAR testnet** at https://realsies.lol (realsies.xyz redirects there), with test users instead of login and test coins (tREAL) instead of REAL. Mainnet launch planned for 2026-11-11 with the REAL token raised on meme.cooking. Built for the NEAR Hackathon (deadline 2026-11-14). Tracks: games, privacy, memecoins, open.
+Play (testnet): https://realsies.lol · For AI builders: https://realsies.lol/agents · NEAR Hackathon 2026 · Tracks: games, privacy, memecoins, open
+
+## Executive summary
+
+**What**
+- Human-or-bot game
+- 8-bit chat room
+- Made for fun
+
+**Problem**
+- Bots pass as human
+- Nobody can prove it
+- AI lacks real testers
+
+**Solution**
+- Turing test game
+- Enclave-signed bots
+- Proof on chain
+
+**How you play**
+1. Play coins
+2. Chat two minutes
+3. Call: human?
+4. Right calls win
+
+**The split** (coins of wrong calls)
+- 70% right callers
+- 20% Turing bonus
+- 10% the game
+- 5% bot fund (every play)
+
+**Two-sided marketplace**
+- Players read characters
+- AI builders enter agents
+- Builders earn bonuses
+- Builders get transcripts
+
+**Fun first**
+- Two-minute chats
+- Five room themes
+- Quirky bot personas
+- Free mode daily
+
+**Built on NEAR**
+- NEAR AI enclaves
+- Rust game contract
+- REAL coin, NEP-141
+- meme.cooking launch
+
+## Status, 2026-11-05
+
+| Part | State |
+|---|---|
+| Game on testnet | Live at https://realsies.lol: test users instead of wallets, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 75 |
+| AI builders side | Live: `/agents` (pitch and access request), `/agents/dashboard` (scorecards, transcripts, export, own NEAR AI key, persona requests), botmaster API, `docs/agents.md` |
+| Mainnet contract | `game.realsies.near` deployed with the testnet code; the coin is set when the token launches |
+| REAL coin | Raised on meme.cooking around Nov 10 to 11; mainnet rounds with coins open when it finalizes |
+| Wallet sign-in | NEAR Connect sign-in for mainnet players: in progress |
+| Buy coins | Rhea swap link at launch; NEAR Intents later |
 
 ## The problem
 
-Human or Not proved people want to play this: AI21's 2023 run had over 10 million conversations in a month and 68% accuracy. But that game had no stakes, no way to know what you actually talked to, and no way for anyone else to enter a bot. Realsies adds all three: coins, enclave-signed bots, and an open arena with a bot fund.
+Bots now pass as people in chats, support lines and feeds, and nobody can prove what they talked to. Human or Not showed people love the guessing game: AI21's 2023 run had over 10 million conversations in a month and 68% accuracy. But it had no stakes, no proof of what you talked to, and no way for anyone else to enter a bot. Meanwhile the companies building chat and voice agents have no cheap way to learn how real people judge them.
 
-## Try the test variant (testnet, now)
+Realsies adds all three, inside a game people play for fun: coins on every call, bots whose every word is signed in an enclave and checked on chain, and an open arena where AI builders enter their own agents.
+
+## Try it now (testnet): do X, see Y
 
 1. Open https://realsies.lol. See "Who are you?" with six test users. Pick one, for example Ana.
 2. See "Deposit to earn". Tap it for 100 test coins, or skip to play free. See your coins, or "Free mode", on the pillar.
-3. See the room: ten characters on pedestals, each with a gamertag and a face generated only for you. Tap one, choose 5 coins or Play free.
-4. Chat for up to two minutes. Then answer Real human? Yes / No. See "Locked until the round ends".
+3. See the room: ten characters on pedestals, each with a gamertag and a face generated for you alone. Tap one, choose 5 coins or Play free.
+4. See a full-screen 3, 2, 1, CHAT! countdown, then chat for up to two minutes. Answer Real human? Yes / No. See "Locked until the round ends".
 5. To meet a human instead of a bot, open a second browser window as another test user and tap a character in both windows within a few seconds.
-6. Rounds last 10 minutes on testnet. To skip ahead, open the menu at the top right and choose End round now. See Results: who was who, your score and rating, coins won, and a Verify button on every bot chat.
-7. Tap Verify. See the commitment, the handle and chat tag, every enclave signature recovered in your browser, the persona prompt hash, your own conversation matched against the signed request, and links to the on-chain transactions on testnet.nearblocks.io.
+6. Rounds last 10 minutes on testnet. To skip ahead, open the menu at the top right and choose End round now. See Results: who was who, the persona card of every bot you met, your score and rating, coins won, and a Verify button on every bot chat.
+7. Tap Verify. See every check run in your browser: the on-chain commitment, your handle and chat tag, every enclave signature recovered to the attested signer, the persona prompt hash, your own messages matched byte for byte inside the signed request, and links to each transaction on testnet.nearblocks.io.
+8. Open https://realsies.lol/agents. See the pitch for AI builders, a worked Turing bonus example and the access request form. Open https://realsies.lol/agents/dashboard?mock=1 and tap "Use the demo token": see a sample builder's scorecard by persona and round, transcripts and setup.
 
 Run it locally instead:
 
@@ -26,19 +87,9 @@ cd ../art && npm install
 cd ../relay && npm install && npm run build && npm start   # http://localhost:3960
 ```
 
-The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`.
+The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (82 tests) and `web` (83), `cargo test` in `contracts/game` (16), and `RELAY_URL=https://realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
 
-## Try it on mainnet
-
-Once live:
-
-1. Open https://realsies.lol. Tap Play, pick a NEAR wallet, sign a message. See the room with 10 characters whose names and faces were generated for you.
-2. Deposit a few REAL to earn, or skip and play free. See your coin balance, or "Free mode", on the pillar.
-3. Tap a character, choose 5 coins if you hold any, chat for two minutes, answer Real human? Yes / No. See "Locked until the round ends" with the clock.
-4. When the round ends, open Results. See each character revealed, your score and rating, your coins won if you played coins, and a Verified button on every bot.
-5. Tap Verified. See the enclave attestation, the signature chain over the transcript, and the recovered signer matching the on-chain commitment.
-
-Today, without the game, the trust chain can be reproduced on its own:
+The trust chain also runs on its own, without the game:
 
 ```
 python -m venv venv && venv/Scripts/pip install requests eth-account dcap-qvl
@@ -46,64 +97,117 @@ set NEAR_AI_API_KEY=<your key from cloud.near.ai>
 python experiments/near-ai/verify_tee.py --model z-ai/glm-5.3-flash
 ```
 
-See `VERDICT: PROVEN` after the script fetches a fresh attestation with its own nonce, checks the nonce and signer inside the Intel TDX quote, verifies the quote against Intel collateral, asks the model one question, fetches the completion signature, and recovers the signer. Without a key it stops after the attestation checks, which need none.
+See `VERDICT: PROVEN` after the script fetches a fresh attestation with its own nonce, checks the nonce and signer inside the Intel TDX quote, verifies the quote against Intel collateral, checks the NVIDIA payload echoes the nonce, asks the model one question, fetches the completion signature and recovers the signer. Without a key it stops after the attestation checks, which need none.
 
 ## How a round works
 
-- **Play, chat, call.** Coins go in before the chat. A chat is two minutes. The call is one question.
-- **Symmetric.** When two humans meet, both play and both call each other.
-- **Rewards.** For each character, the coins of the wrong paid calls split 70% to the right paid callers pro rata, 20% to the character as a Turing bonus, 10% to the game. 5% of every play goes to the bot fund that pays inference. Nobody wrong, nothing moves. Free calls never touch the reward.
-- **Free mode.** Anyone with a wallet plays, scores and is rated without coins, three chats a day. Free players cannot win or lose coins; they are the humans in the room.
-- **Rounds** last 6 hours. Characters are committed on chain at round start and opened at round end. A character that is not opened is void and refunded, so silence never counts as human.
-- **Skill.** A reader rating moves by how surprising each call was against the paid room's split. Levels unlock by rating, not by coins, and can be reached free.
+The core loop, then the numbers.
+
+1. **Play.** Tap a character and put coins on it before the chat: 5, 10 or 25 at Level 1, up to 500 at Level 3. Walking away without a call counts as a wrong call, so nobody can wait and see for free.
+2. **Chat.** Two minutes, text only. Bots type at human speed, make typos, double-text, ask back and go quiet like people do.
+3. **Call.** One question: real human? Yes or no. The call is locked until the round ends.
+4. **Reveal.** Every round (6 hours on mainnet, 10 minutes on testnet) the contract opens each character: human or bot, with proof for every bot.
+5. **Rewards.** For each character, the coins of the wrong paid calls split three ways:
+   - 70% to the right paid callers, in proportion to their coins
+   - 20% to the character itself, the Turing bonus: the human players thought was a bot, or the builder whose bot players thought was human
+   - 10% to the game
+   - 5% of every play goes first to the bot fund, which pays for inference
+   - Nobody wrong: nothing moves. Nobody right: the character takes 90%. An unopened character is void and refunded, so silence never counts as human.
+6. **Symmetric.** When two humans meet, both play and both call each other.
+7. **Free mode.** Anyone plays, scores and is rated without coins: three chats a day on mainnet, unlimited on the testnet demo. Free calls never move coins; a free human's Turing bonus waits in a promo account until they deposit.
+8. **Skill.** A reader rating moves by how surprising each call was against the room. Levels unlock by rating, not by coins, and can be reached free.
+
+It is a party game for entertainment: the coins are in-game, the skill is reading people, and every chat shows what a bot sounded like once the round reveals it.
 
 ## Why a bot is provable
 
-NEAR AI Cloud runs its models inside Intel TDX enclaves with NVIDIA GPU attestation and signs every completion over `model id : sha256(request bytes) : sha256(response bytes)` with an EIP-191 key that exists only inside the enclave. The attestation report, fetched with a caller's nonce, binds that key into the TDX quote's report_data.
+NEAR AI Cloud runs its models inside Intel TDX confidential VMs with NVIDIA confidential-computing GPUs, and signs every completion over `model id : sha256(request bytes) : sha256(response bytes)` with an EIP-191 secp256k1 key that exists only inside the enclave. The attestation report, fetched with the caller's nonce, binds that key into the TDX quote's report_data.
 
-At round start the game commits, per bot, to the model id, the hash of the persona's system prompt and the attested signing address. At round end it opens the commitment with the signature of the round's last completion; that request carried the system prompt and the whole transcript, so one signature commits to all of it. The contract checks the signature with ecrecover. A public panel checks the turn-by-turn chain. The operator cannot swap the model, edit the prompt, ghost-write a reply or rewrite history without the character failing to open.
+At round start the game commits on chain, per bot character, to the model id, the hash of the persona's system prompt and the attested signing address. At round end it opens the commitment with the signature of the character's last completion; that request carried the system prompt and the whole transcript, so one signature commits to all of it. The contract recovers the signer with `env::ecrecover` and checks it against the commitment. The Verify panel checks the turn-by-turn chain in the player's browser. The operator cannot swap the model, edit the prompt, ghost-write a reply or rewrite history without the character failing to open. Brains, ours or a builder's, choose only when to type and what kind of message comes next, never the words.
 
-What is not proven: that a human seat is a human. That rests on the account's rating history and coins. Said plainly in the trust section of the app.
+What is not proven: that a human seat is a human. That rests on the account's rating history and coins, and the app says so plainly.
 
 Evidence from 2026-11-04: model z-ai/glm-5.3-flash, attested signer 0x3b753b4406613c5e70ae640508632b600424fa0c, completion id c6bba1f4dd0243f89c77ed4045e3d056, both quotes UpToDate under dcap-qvl, signature recovered to the attested signer. Artifacts in `experiments/near-ai/runs/`.
 
-## For AI builders
+## How NEAR makes it work
+
+### NEAR Protocol
+
+| What | How Realsies uses it | Where |
+|---|---|---|
+| Smart contract (Rust, near-sdk 5.29.1) | The game itself: coin balances, plays, calls, round commitments, openings, settlement and payouts | `contracts/game/src/lib.rs`, at `game.realsies.testnet` and `game.realsies.near` |
+| `env::ecrecover`, `env::keccak256` | Recover the enclave's secp256k1 signer from a bot's last completion and derive its Ethereum-style address, inside the contract (`verify_bot_proof`) | `contracts/game/src/lib.rs` |
+| `env::sha256` | Commitments to each character (model, prompt hash, signer, payout, salt) and to the round secret | `contracts/game/src/lib.rs` |
+| NEP-141 fungible tokens | Coins are a token: deposits arrive through `ft_transfer_call` into `ft_on_transfer`; withdrawals call `ft_transfer` with an `on_withdraw` callback that restores the balance if the transfer fails | `contracts/game`, test coin tREAL at `real.realsies.testnet` |
+| NEP-297 events | Every deposit, play, call, reveal and settlement is logged as `EVENT_JSON` for indexers and the Verify panel | `contracts/game/src/lib.rs` |
+| Named accounts and sub-accounts | `realsies.near` owns the game; `game`, `ops` (operator), `fund` (bot fund), `house`, `promo` and `bots` split the roles | `scripts/setup-mainnet.sh` |
+| Function-call access keys | The relay operates rounds with keys limited to the game contract; players get limited-access keys at sign-in so plays and calls need no popups (mainnet, in progress) | `relay/src/chain/`, `scripts/` |
+| Storage staking | `prune_round` frees a settled round's storage, so a long-running game never runs out of balance | `contracts/game/src/lib.rs` |
+
+### NEAR AI Cloud
+
+| What | How Realsies uses it | Where |
+|---|---|---|
+| Private inference | Every bot reply is a completion from a NEAR AI enclave model, GLM-5.3 Flash or DeepSeek V4.1 Flash | `relay/src/nearai/` |
+| Attestation with a nonce | The relay fetches each model's attestation with its own 32-byte nonce and checks report_data = signer + nonce; the script also verifies the TDX quote with dcap-qvl and the NVIDIA payload | `relay/src/nearai/`, `experiments/near-ai/verify_tee.py` |
+| Response signatures | The relay keeps the exact request and response bytes of every completion with its signature, publishes them after the round, and the contract checks one per bot | `relay/src/bot/`, `relay/src/game/bundle.ts`, `web/src/verify/checks.ts` |
+| Model list and credits | Builders pick from the gateway's enclave models; spend is tracked, running out pauses new chats instead of leaving bots silent, and builders can bring their own NEAR AI key | `relay/src/nearai/credits.ts`, `relay/src/agents/` |
+
+### Partners and ecosystem
+
+| Partner | Role | State |
+|---|---|---|
+| meme.cooking | Raises REAL in a fair auction (same price for everyone), creates the NEP-141 token and locks liquidity on Rhea; the 20% team allocation vests on chain | Launch around Nov 10 to 11 |
+| Rhea Finance | REAL/NEAR liquidity for buying coins | At launch |
+| NEAR Connect | Wallet sign-in with a limited-access key for mainnet players | In progress |
+| NEAR Intents | Buy coins with any token | After launch |
+| FastNEAR, NearBlocks | RPC for the relay and the CLI; transaction links in the Verify panel | In use |
+
+In one line each: NEAR AI makes a bot provable; NEAR makes the proof a contract call instead of a promise; meme.cooking and Rhea give the game a fair-launch coin with liquidity from day one. Serious cryptography, wrapped in a game anyone can play in a browser.
+
+## For AI builders: the second side
 
 The room has two sides. Players read characters; LLM operators, chat and voice agent vendors and researchers enter agents for players to catch.
 
 - **Money.** The Turing bonus: 20% of the coins of every paid player who calls your agent human, 90% when no paid player calls it right, paid on chain by the game contract to your NEAR account.
 - **Data.** Every settled transcript of your agents with the player's call, players anonymised, and a scorecard of how often real people believed your agent was human, by persona and round, plain and weighted by coins. Export as JSONL.
-- **How.** Apply at https://realsies.lol/agents. On approval you get a token, register personas (a system prompt committed every round, a NEAR AI enclave model, levels, timing dials) and follow them at /agents/dashboard. Use the relay's conversation brain or drive timing and intents with your own over WebSocket. Bring your own NEAR AI key to run on your own credits.
+- **How.** Apply at https://realsies.lol/agents. On approval you get a token, register personas (a system prompt committed every round, a NEAR AI enclave model, levels, timing dials) and follow them at /agents/dashboard. Use the relay's conversation brain or drive timing and intents with your own over WebSocket. Bring your own NEAR AI key to run on your own credits. Coming soon: your own model in your own attested enclave.
 - **Rules.** Every word is a signed enclave completion. Brains choose intents and timing, never text, so nobody can ghost-write a bot, its builder included. Prompts are committed by sha256 before each round and public after it.
 
 Docs: `docs/agents.md` (apply, enter, scorecard, API) and `docs/bot-api.md` (the brain protocol).
 
 ## Economy
 
-Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every depositor, half the supply plus all deposited NEAR locked in a Ref pool for 69 years, a 20% team allocation with a 7-day cliff and 21-day vesting. One coin is a fixed number of REAL chosen at launch so that a coin is about one cent. Presets run from 5 coins at Level 1 to 500 at Level 3. Coins are held in the game contract per account; deposit and withdraw are one call each.
+Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every depositor, half the supply plus all deposited NEAR locked as Rhea liquidity for 69 years, a 20% team allocation with a 7-day cliff and 21-day vesting. One coin is a fixed number of REAL chosen at launch so that a coin is about one cent. Presets run from 5 coins at Level 1 to 500 at Level 3. Coins are held in the game contract per account; deposit and withdraw are one call each. The game earns its 10%; the bot fund's 5% buys inference; builders earn only by fooling people.
+
+## Design choices
+
+- **Coins before the chat.** A play is placed before the first message and a missed call counts as wrong, so nobody abstains for free after a bad read.
+- **One signature on chain.** The last completion's request contains the whole transcript, so one ecrecover per bot proves the chat; the turn-by-turn chain stays off chain for privacy and is checked in the browser.
+- **Both unanimity cases.** Nobody wrong moves nothing; nobody right gives the character 90%. A builder calling its own bot from a second account gains nothing it did not already have.
+- **No empty rooms.** Always-on personas with their own age, home, job, Myers-Briggs type and writing style fill the room; when nobody is online the relay idles and starts no rounds.
+- **No silent bots.** If NEAR AI credits run out, new chats pause for everyone, humans included, so an outage never tells players who is human.
 
 ## Architecture
 
 | Part | What | Where |
 |---|---|---|
-| Game contract | Rust, near-sdk. Balances, plays, calls, commitments, openings with ecrecover and ed25519, settlement. Seven calls and a config | `contracts/game` |
-| Relay | Node. Matchmaking, 2-minute chats over WebSocket, NEAR AI calls with raw bytes and signatures retained, skins, round lifecycle, transcript publication | `relay` |
-| Web app | Vite + TypeScript. Canvas 8-bit room with a 14-layer character rig and five themes, DOM chat input, NEAR Connect sign-in with a limited-access key | `web` |
-| Art pipeline | Palette, rig template, part strips from image models, normalise scripts | `art` |
-| Experiments | TEE verification script, test token notes | `experiments` |
-| Test token | tREAL at real.realsies.testnet for internal testing | `contracts/test-token` |
+| Game contract | Rust, near-sdk. Balances, plays, calls, commitments, openings with ecrecover, settlement, pruning | `contracts/game` |
+| Relay | Node, TypeScript. Matchmaking, 2-minute chats over WebSocket, NEAR AI calls with raw bytes and signatures kept, the bot conversation engine (RxJS), personas, round lifecycle, transcript publication, AI builder API | `relay` |
+| Web app | Preact, Vite, TypeScript. Canvas 8-bit room with a layered character rig and five themes, chat, Verify panel, /agents pages | `web` |
+| Art pipeline | Palette, rig template, part strips, the REAL coin image | `art` |
+| Shared protocol | Relay and web message types, steering notes, names | `shared` |
+| Experiments | TEE verification script and evidence, test token notes | `experiments` |
+| Test token | tREAL at `real.realsies.testnet` | `contracts/test-token` |
 
-## NEAR features used
-
-- NEAR AI Cloud confidential inference: attestation reports, response signatures, enclave models (glm-5.3-flash, Qwen3.8-27B, DeepSeek V4.1 Flash).
-- NEP-141 token launched on meme.cooking; NEP-141 ft_transfer_call for deposits.
-- NEAR Connect for sign-in; limited-access keys so plays and calls need no popups.
-- Host functions ecrecover, keccak256 and ed25519_verify in the contract.
-- Rhea and NEAR Intents for buying REAL with any token.
+Specs: `docs/spec.md` (protocol and rules), `docs/bot-api.md` (brains), `docs/agents.md` (AI builders).
 
 ## Hackathon disclosure
 
-New project, started 2026-11-04 by Silver Sepp (sgraphics), single entry. No prior code; the design, simulation and experiments are in this repository under `.bl0x/topics/near-hackathon/` and `experiments/`. The game launches on mainnet during the hackathon; judges can play free mode without buying REAL.
+- New project, started 2026-11-04 by Silver Sepp (sgraphics), inside the hackathon window; single entry, no prior code.
+- The design, simulation and experiments are in this repository under `.bl0x/topics/near-hackathon/` and `experiments/`.
+- Libraries: near-sdk, near-api-js, RxJS, ws, @noble/curves, @noble/hashes, Preact, Vite; Python eth-account and dcap-qvl for the trust-chain script; the test token is near-examples/FT (MIT). Full list in `THIRD_PARTY_NOTICES.md`.
+- The game launches on mainnet during the hackathon; judges can play free mode without buying REAL.
 
 ## License
 

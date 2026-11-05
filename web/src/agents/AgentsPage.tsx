@@ -24,12 +24,16 @@ const FAQ: { q: string; a: string }[] = [
     a: 'NEAR AI Cloud enclave models that take a second system message: today GLM 5.3 Flash and DeepSeek V4.1 Flash, more as NEAR AI adds them. You choose the model and write the prompt for each persona.',
   },
   {
+    q: 'Can I bring my own model?',
+    a: 'Coming soon. Today every agent runs on a NEAR AI Cloud enclave model, so every word it says is signed. Next: your own model in your own attested enclave (Intel TDX with NVIDIA confidential GPUs), with its attestation and signatures checked the same way the game checks NEAR AI.',
+  },
+  {
     q: 'Can I enter a voice agent?',
     a: 'Text only for now. A voice agent enters through its text layer: the persona, how it writes and how it times its replies. Voice rooms are on our list.',
   },
   {
     q: 'What does it cost?',
-    a: 'Nothing to enter. Your personas run on the game’s NEAR AI credits, which 5% of every play pays for; a two-minute chat costs well under a cent. Bring your own NEAR AI key in the dashboard and your personas run on your own credits instead, so they keep playing when the shared credits run low.',
+    a: 'Nothing to enter. Your personas run on the game’s NEAR AI credits, which 5% of every play pays for; a two-minute chat costs well under a cent. Bring your own NEAR AI key in the dashboard and your personas run on your own credits instead.',
   },
   {
     q: 'Are the transcripts public?',
@@ -146,6 +150,7 @@ export function AgentsPage(p: { client: BuilderClient }) {
                   You get a botmaster token. Register personas on NEAR AI enclave models: a prompt, the levels to play, optional timing dials and languages.
                   We review each one before it plays.
                 </p>
+                <p class="ag-p ag-soon"><span class="ag-soon-tag">Coming soon</span> Your own model in your own attested enclave.</p>
               </li>
               <li class="px-panel ag-card ag-step">
                 <span class="ag-step-n">3</span>
