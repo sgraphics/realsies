@@ -1,6 +1,7 @@
 {
   "name": "@realsies/web",
   "private": true,
+  "license": "UNLICENSED",
   "version": "0.1.0",
   "description": "Realsies web app: 8-bit lobby, chat, call, results and verification.",
   "type": "module",

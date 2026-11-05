@@ -94,6 +94,6 @@ Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every dep
 
 New project, started 2026-11-04 by Silver Sepp (sgraphics), single entry. No prior code; the design, simulation and experiments are in this repository under `.bl0x/topics/near-hackathon/` and `experiments/`. The game launches on mainnet during the hackathon; judges can play free mode without buying REAL.
 
-## Licence
+## License
 
-MIT.
+Proprietary, all rights reserved; see LICENSE. The repository is public only so the NEAR Hackathon can review it. Third-party components keep their own licenses; see THIRD_PARTY_NOTICES.md.

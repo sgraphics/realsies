@@ -2,6 +2,7 @@
   "name": "realsies-relay",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "description": "Realsies relay: HTTP API, WebSocket, rounds, matchmaking, NEAR AI bots, chain integration, scoring, verification bundles",
   "engines": {

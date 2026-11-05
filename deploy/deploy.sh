@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Server-side deploy: pull, build, restart. Run as root on realsies-server.
+# Server-side deploy: pull, build, restart. Run as root on the server.
 # Secrets live outside git: /opt/realsies/.env and /opt/realsies/relay/.secrets/testnet.json.
 set -euo pipefail
 APP=/opt/realsies

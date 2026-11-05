@@ -1,6 +1,7 @@
 {
   "name": "@realsies/art",
   "private": true,
+  "license": "UNLICENSED",
   "version": "0.1.0",
   "description": "Realsies pixel-art engine: character rig, themes, props, UI sprites. Pure TS core renders into RGBA buffers.",
   "type": "module",
