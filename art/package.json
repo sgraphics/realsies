@@ -8,7 +8,8 @@
     "sheets": "tsx scripts/sheets.ts",
     "demo": "vite --port 5174 --strictPort",
     "typecheck": "tsc -p tsconfig.json",
-    "build": "tsc -p tsconfig.json && vite build"
+    "build": "tsc -p tsconfig.json && vite build",
+    "trailer": "tsx scripts/trailer/build.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
