@@ -21,6 +21,8 @@ export interface ScriptText {
   cast: string[];
   /** Names for the "Who" column, by speaker. */
   who?: Partial<Record<Line['speaker'], string>>;
+  /** What a line without a recording sounds like, for the voice notes (default: silent). */
+  unrecorded?: string;
 }
 
 export interface TrailerDef {
@@ -42,7 +44,12 @@ export interface TrailerDef {
   drawer(voice?: VoiceEnvelopes): (out: Rgba, shot: Shot, t: number) => void;
   /** The poster still. */
   poster(out: Rgba): void;
-  /** The soundtrack before loudness normalisation; recorded voices replace their lines' blips. */
+  /** The soundtrack before loudness normalisation, with these recorded voices mixed in. */
   soundtrack(voices: VoiceClip[]): Stereo;
+  /**
+   * When a line comes up on screen (its typing dots, or its text) and when it has gone, for
+   * script.md. Without an answer: from its start to the end of the shot it starts in.
+   */
+  onScreen?(line: Line): { from: number; until: number } | undefined;
   script: ScriptText;
 }

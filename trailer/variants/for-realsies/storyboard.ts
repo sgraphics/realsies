@@ -42,7 +42,7 @@ const T = {
 };
 
 /** Her close-up, and the extreme close-up of her eyes the camera pushes into. */
-const CUS: Framing = { cx: 208, cy: 87, k: 40, lens: 'tight' };
+const CUS: Framing = { cx: 209, cy: 87, k: 40, lens: 'tight' };
 const EYES_ECU: Framing = { cx: 212, cy: 86.5, k: 112, lens: 'tight' };
 /** The push: slow, in even zoom steps, then a held beat on her eyes before the glitch. */
 export const PUSH: Push = { from: CUS, to: EYES_ECU, t0: 30.45, t1: 33.25 };
@@ -65,8 +65,8 @@ export const SHOTS: Shot[] = [
   {
     id: 's03', kind: 'set', start: T.ms1, end: T.mi, key: 10.9,
     title: 'Medium: guest',
-    notes: 'Medium on the guest, framed right, big blue eyes on him. A blink. Her typing dots, then her first bubble types in: "I\'m engaging with you as a human being."',
-    framing: { cx: 199, cy: 90, k: 24, lens: 'tight' },
+    notes: 'Medium on the guest, centred, her big blue eyes on him. A blink. Her typing dots, then her first bubble types in: "I\'m engaging with you as a human being."',
+    framing: { cx: 213, cy: 90, k: 24, lens: 'tight' },
   },
   {
     id: 's04', kind: 'set', start: T.mi, end: T.ms2, key: 13.8,
@@ -78,7 +78,7 @@ export const SHOTS: Shot[] = [
     id: 's05', kind: 'set', start: T.ms2, end: T.mci, key: 17.7,
     title: 'Medium: guest again',
     notes: 'Back on her. Typing dots. "Why would I deceive you." The chat scrolls up. A small smile.',
-    framing: { cx: 199, cy: 90, k: 24, lens: 'tight' },
+    framing: { cx: 213, cy: 90, k: 24, lens: 'tight' },
   },
   {
     id: 's06', kind: 'set', start: T.mci, end: T.cui, key: 22.3,
@@ -90,7 +90,7 @@ export const SHOTS: Shot[] = [
     id: 's07', kind: 'set', start: T.cui, end: T.cus, key: 26.3,
     title: 'Close-up: interviewer',
     notes: 'Close-up, held. Typing dots. The key line, slowly: "you\'re for realsies?"',
-    framing: { cx: 114, cy: 87.5, k: 40, lens: 'tight' },
+    framing: { cx: 110, cy: 87.5, k: 40, lens: 'tight' },
   },
   {
     id: 's08', kind: 'set', start: T.cus, end: T.push, key: 30.0,
@@ -156,6 +156,11 @@ export const LINES: Line[] = [
 export const CHAT = LINES.filter((l) => l.speaker === 'host' || l.speaker === 'guest');
 /** The chat slides away as the push-in begins. */
 export const CHAT_AWAY = 30.3;
+/**
+ * Chat bubble size, the same in the interview and in the montage's chat: 8 output px per bubble
+ * and font pixel (56-px capitals at 1080p), wrapped at these widths in font px.
+ */
+export const BUBBLES = { k: 8, interviewWrap: 68, montageWrap: 80 };
 export const CARD_LINE = LINES.find((l) => l.id === 'can-you-tell')!;
 export const TAGLINE = LINES.find((l) => l.id === 'tagline')!;
 

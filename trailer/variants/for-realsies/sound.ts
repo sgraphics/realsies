@@ -1,11 +1,12 @@
 // For realsies?: the soundtrack. Room tone and a drone under the interview, a low swell under the
-// push-in, the chat's key ticks and blip voices, the glitch, then an original chiptune in C major
-// (C | G | Am | F || F | G) with the game's UI sounds on its beats and a final chime.
+// push-in, the glitch, then an original chiptune in C major (C | G | Am | F || F | G) with the
+// game's UI sounds on its beats and a final chime. No typing sounds and no synthesised voices: the
+// lines are silent until recorded (voice/<line-id>.wav), and each recording plays at its line.
 // The order of the calls below matters: they share one deterministic noise source.
 
 import { Mix, resetNoise, fadeTail, midi, nn, type Stereo } from '../../src/engine/audio/dsp.ts';
-import { roomTone, drone, lowSwell, typingTicks, glitchSfx, leadLine, arpeggios, bassLine, kick, snare, hat, crash, beep, whoosh, chirp, shing, ping, chime, barAt, type Song } from '../../src/engine/audio/instruments.ts';
-import { voiceLines, type VoiceClip } from '../../src/engine/audio/voice.ts';
+import { roomTone, drone, lowSwell, glitchSfx, leadLine, arpeggios, bassLine, kick, snare, hat, crash, beep, whoosh, chirp, shing, ping, chime, barAt, type Song } from '../../src/engine/audio/instruments.ts';
+import { mixVoices, type VoiceClip } from '../../src/engine/audio/voice.ts';
 import { BEAT, MUSIC_AT, CUE, END, DRONE, SWELL, PUSH, GLITCH, CLOSE_UPS, DURATION, LINES, beat } from './storyboard.ts';
 
 /** Lead melody in 16ths per bar (bars 1..6), one chord and one bass root per bar. */
@@ -55,9 +56,8 @@ function cues(m: Mix): void {
   beep(m, b(CUE.countGo), midi(nn('G6')), 0.3, 0.17, 0.5);
   // doors whoosh apart
   whoosh(m, b(CUE.doorsOpen), 0.45, 500, 8, 0.3);
-  // chat: my message goes out, she types, hers comes in
+  // chat: my message goes out, hers comes in
   chirp(m, b(CUE.bubbleMe), 0.09, 700, 2, 0.12, 0.2);
-  for (let t = b(CUE.typingFrom); t < b(CUE.bubbleThem) - 0.05; t += 0.16) beep(m, t, 2400, 0.012, 0.05, 0.5, -0.2);
   beep(m, b(CUE.bubbleThem), midi(nn('G5')), 0.05, 0.12, 0.5, -0.2);
   beep(m, b(CUE.bubbleThem) + 0.055, midi(nn('C6')), 0.09, 0.12, 0.5, -0.2);
   // call: the cursor ticks over each button
@@ -82,8 +82,8 @@ export function soundtrack(voices: VoiceClip[]): Stereo {
   roomTone(m, { until: MUSIC_AT });
   drone(m, { from: DRONE.from, to: DRONE.to, closeUps: CLOSE_UPS });
   lowSwell(m, { from: SWELL.from, peak: PUSH.t1, to: SWELL.to });
-  for (const l of LINES) if (l.speaker === 'host' || l.speaker === 'guest') typingTicks(m, l);
-  voiceLines(m, LINES, voices, DURATION, { card: 0.16, tagline: 0.07 });
+  // the recorded lines, if any (an unrecorded line is silent)
+  mixVoices(m, LINES, voices, DURATION);
   glitchSfx(m, GLITCH[0]);
   leadLine(m, SONG);
   arpeggios(m, SONG);

@@ -1,8 +1,8 @@
 // script.md for a variant, written from its storyboard so the paperwork always matches the cut:
 // the variant's prose around generated tables (shots, dialogue with line ids and timings) and the
-// generic voice drop-in and rebuild sections.
+// generic recording and rebuild sections.
 
-import { lineShown, lineTimes } from './timeline.ts';
+import { lineShown, lineTimes, shotAt, type Line } from './timeline.ts';
 import type { TrailerDef } from './types.ts';
 
 /** 0:07.5 style timecode. */
@@ -12,7 +12,18 @@ export function tc(t: number): string {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
+/** 0:07.45 style timecode, for the dialogue table (recordings are placed to the sample). */
+function tc2(t: number): string {
+  const m = Math.floor(t / 60);
+  return `${m}:${(t - m * 60).toFixed(2).padStart(5, '0')}`;
+}
+
 const WHO = { host: 'Interviewer', guest: 'Guest', card: 'Title card', tagline: 'End card' };
+
+/** When a line is on screen: the variant's answer, or from its start to the end of its shot. */
+function onScreen(def: TrailerDef, l: Line): { from: number; until: number } {
+  return def.onScreen?.(l) ?? { from: l.at, until: shotAt(def.shots, l.at).end };
+}
 
 export function scriptMarkdown(def: TrailerDef, o: { voices: string[]; video: string; sizeMb?: number }): string {
   const s = def.script;
@@ -36,12 +47,14 @@ export function scriptMarkdown(def: TrailerDef, o: { voices: string[]; video: st
   L.push('');
   L.push(s.dialogueNote);
   L.push('');
-  L.push('| Line id | Who | Typing dots | Types in | Line |');
-  L.push('|---------|-----|-------------|----------|------|');
+  L.push('Every line has an id: the name its recording goes under (see Recording your voice). **Starts** is when its text starts typing and when its recording starts playing; **Dots** is when its typing indicator comes up, if it has one; **Typed by** is when the last letter is in; **Gone at** is when the line has left the screen (scrolled off the chat, the chat slid away, the card cut), and **Up for** is how long it is up from its start, the room a take has.');
+  L.push('');
+  L.push('| Line id | Who | Line | Dots | Starts | Typed by | Gone at | Up for |');
+  L.push('|---------|-----|------|------|--------|----------|---------|--------|');
   for (const l of def.lines) {
-    const end = lineTimes(l).end;
-    const dots = l.lead ? tc(l.at - l.lead) : '-';
-    L.push(`| \`${l.id}\` | ${who[l.speaker]} | ${dots} | ${tc(l.at)} to ${tc(end)} | ${lineShown(l)} |`);
+    const span = onScreen(def, l);
+    const dots = span.from < l.at ? tc2(span.from) : '-';
+    L.push(`| \`${l.id}\` | ${who[l.speaker]} | ${lineShown(l)} | ${dots} | ${tc2(l.at)} | ${tc2(lineTimes(l).end)} | ${tc2(span.until)} | ${(span.until - l.at).toFixed(1)} s |`);
   }
   L.push('');
   if (s.dialogueAfter) {
@@ -57,11 +70,17 @@ export function scriptMarkdown(def: TrailerDef, o: { voices: string[]; video: st
   for (const b of s.cast) L.push('- ' + b);
   L.push('');
   const vdir = `trailer/variants/${def.name}/voice/`;
-  L.push('## Dropping in recorded voices');
+  L.push('## Recording your voice');
   L.push('');
-  L.push(`Put a recording named after a line id in \`${vdir}\`, for example \`${vdir}${def.lines[0]?.id ?? 'line-id'}.wav\` (any format ffmpeg reads: wav, mp3, m4a, flac, ogg), and render again. That line's blips (or typewriter ticks) are replaced by the recording, starting when its text starts typing; the text still types on, and the speaker's mouth follows the loudness of the recording. Lines without a file keep their blips. Line ids: ` + def.lines.map((l) => '`' + l.id + '`').join(', ') + '. Keep each take about as long as its typing. Record your own voices or performers who have agreed to it; do not imitate a real person.');
+  L.push(`${s.unrecorded ?? 'A line without a recording is silent; its text still types on.'} To give a line a voice, record it and put the file in \`${vdir}\`:`);
   L.push('');
-  L.push(o.voices.length ? `This render used recorded voices for: ${o.voices.map((v) => '`' + v + '`').join(', ')}.` : 'This render uses the synthesised blip voices only (no voice files present).');
+  L.push(`- **Naming**: one file per line, named after its line id from the table above: \`${vdir}${def.lines[0]?.id ?? 'line-id'}.wav\` and so on for ` + def.lines.map((l) => '`' + l.id + '`').join(', ') + '. A file whose name is not a line id is ignored.');
+  L.push('- **Format**: WAV, mono, 48 kHz, 16 or 24 bit is best; mp3, m4a, flac, ogg and aiff work too (whatever it is, ffmpeg converts it to 48 kHz mono). Record at a steady level, peaks around -6 dBFS and no clipping: a take plays at the level it was recorded, then the whole mix is loudness-normalised.');
+  L.push("- **Timing**: a take starts playing at its line's **Starts** time, so trim the silence before the first word, and keep it within the line's **Up for** (anything past the end of the video is cut). The text still types on at its own pace, and the speaker's mouth follows the loudness of the take.");
+  L.push(`- **Rebuild**: \`cd trailer && npm run render -- ${def.name} --dashboard\` (without \`--dashboard\` it only writes \`trailer/out/${def.name}/\`). The new script.md says which lines it found recordings for.`);
+  L.push('- Record your own voice, or performers who have agreed to it; do not imitate a real person.');
+  L.push('');
+  L.push(o.voices.length ? `This render used recordings for: ${o.voices.map((v) => '`' + v + '`').join(', ')}.` : 'This render has no recordings yet.');
   L.push('');
   L.push('## Rebuild');
   L.push('');

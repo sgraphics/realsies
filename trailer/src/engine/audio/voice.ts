@@ -1,6 +1,7 @@
-// Recorded voice drop-in: variants/<name>/voice/<line-id>.wav (any format ffmpeg reads) is decoded
-// to 48 kHz mono float, mixed under that line instead of its blips or ticks, and its loudness
-// drives the speaker's mouth on screen.
+// Recorded voices: variants/<name>/voice/<line-id>.wav (any format ffmpeg reads) is decoded to
+// 48 kHz mono float and mixed in from that line's start (when its text starts typing); its
+// loudness drives the speaker's mouth on screen. What a line without a recording sounds like is
+// the variant's choice: silent (mixVoices alone) or a synthesised stand-in (standInVoices).
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -40,21 +41,28 @@ export function envelopesOf(clips: VoiceClip[]): VoiceEnvelopes {
 }
 
 /**
- * The voice of every line: blips for dialogue, typewriter ticks for cards and taglines (at their
- * gains), skipping lines that have a recording; then the recordings themselves.
+ * The recordings: each clip plays from its line's start, panned a little toward its speaker, cut
+ * at the end of the video. Lines without a recording add nothing.
  */
-export function voiceLines(m: Mix, lines: Line[], voices: VoiceClip[], duration: number, gains: { card: number; tagline: number }): void {
-  const voiced = new Set(voices.map((v) => v.id));
-  for (const l of lines) {
-    if (voiced.has(l.id)) continue;
-    if (l.speaker === 'host' || l.speaker === 'guest') blips(m, l);
-    else ticks(m, l, l.speaker === 'card' ? gains.card : gains.tagline);
-  }
+export function mixVoices(m: Mix, lines: Line[], voices: VoiceClip[], duration: number): void {
   for (const v of voices) {
     const l = lines.find((x) => x.id === v.id);
     if (!l) continue;
     const pan = l.speaker === 'host' ? -0.15 : l.speaker === 'guest' ? 0.15 : 0;
     const dur = v.samples.length / SR;
     m.add(l.at, Math.min(dur, duration - l.at), pan, (i) => v.samples[i] * 0.9);
+  }
+}
+
+/**
+ * Synthesised stand-ins for the lines without a recording, for a variant that wants them: blips
+ * for dialogue, typewriter ticks for cards and taglines (at their gains).
+ */
+export function standInVoices(m: Mix, lines: Line[], voices: VoiceClip[], gains: { card: number; tagline: number }): void {
+  const voiced = new Set(voices.map((v) => v.id));
+  for (const l of lines) {
+    if (voiced.has(l.id)) continue;
+    if (l.speaker === 'host' || l.speaker === 'guest') blips(m, l);
+    else ticks(m, l, l.speaker === 'card' ? gains.card : gains.tagline);
   }
 }

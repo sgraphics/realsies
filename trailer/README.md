@@ -19,7 +19,7 @@ trailer/
       expressions.ts    smug pieces: half-lids, raised brow, smirk, crossed arms, sunglasses push, nod
       timeline.ts       shots, framings, push-ins in whole-number zoom steps, typed lines, beat grid
       audio/            dsp.ts (oscillators, filters, mixer, limiter, WAV), instruments.ts (beds,
-                        blip voices, chiptune band, UI one-shots), voice.ts (recorded voice drop-in)
+                        blip voices, chiptune band, UI one-shots), voice.ts (recorded voices)
       frames.ts         frame renderer and the PNG frame folder
       sheet.ts          keyframes.png contact sheet (one frame per shot)
       scriptmd.ts       script.md writer (shot list, dialogue with line ids, voice and rebuild notes)
@@ -76,14 +76,25 @@ frames, audio and MP4, so a refactor can be checked against an earlier render wi
    `src/scenes/`.
 5. `npm run render -- <name>`, then look at `out/<name>/keyframes.png` and the MP4.
 
-## Recorded voices
+## Recording your voice
 
-Put a recording named after a line id in `variants/<name>/voice/`, for example
-`variants/for-realsies/voice/for-realsies.wav` (wav, mp3, m4a, flac or ogg), and render again.
-That line's blips (or typewriter ticks, for cards and taglines) are replaced by the recording,
-starting when its text starts typing; the text still types on and the speaker's mouth follows
-the recording's loudness. The line ids are listed in each render's `script.md`. Record your own
-voices or performers who have agreed to it; do not imitate a real person.
+The dialogue has no synthesised voice and no typing sounds: a line is silent until it has a
+recording. Each render's `script.md` lists every line id with its start time and how long it is
+up on screen.
+
+- Naming: one file per line, named after its line id, in `variants/<name>/voice/`, for example
+  `variants/for-realsies/voice/for-realsies.wav`. Files whose names are not line ids are ignored.
+- Format: WAV, mono, 48 kHz, 16 or 24 bit is best; mp3, m4a, flac, ogg and aiff work too (ffmpeg
+  converts whatever it gets to 48 kHz mono). Peaks around -6 dBFS, no clipping: a take plays at
+  its recorded level, then the whole mix is loudness-normalised.
+- Timing: a take starts at its line's start time (when its text starts typing), so trim the
+  silence before the first word and keep it within the line's time on screen. The text still
+  types on, and the speaker's mouth follows the take's loudness.
+- Rebuild: `npm run render -- <name> --dashboard` (or without `--dashboard` for `out/` only).
+
+Record your own voice, or performers who have agreed to it; do not imitate a real person. A
+variant that wants placeholder voices can mix `standInVoices` (blips, typewriter ticks) from
+`src/engine/audio/voice.ts` into its soundtrack.
 
 ## Publish
 

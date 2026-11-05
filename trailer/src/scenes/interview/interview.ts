@@ -44,7 +44,7 @@ export class InterviewScene {
     this.guest.bigEyes = cfg.guestBigEyes;
   }
 
-  /** Is the speaker's mouth open at time t (typed blips, or the recorded voice's loudness)? */
+  /** Is the speaker's mouth open at time t (on the vowels as the line types, or with the recorded voice's loudness)? */
   mouthOpenAt(sp: Speaker, t: number, voice?: VoiceEnvelopes): boolean {
     for (const l of this.cfg.lines) {
       if (l.speaker !== sp) continue;
@@ -60,7 +60,7 @@ export class InterviewScene {
       for (let k = 0; k < times.length; k++) if (times[k] <= t) i = k;
       if (i < 0) return false;
       const ch = chars[i];
-      // vowels open the mouth for the length of their blip; 'm' and 'h' hum with it shut
+      // vowels open the mouth for one letter's time (at most 0.1 s); 'm' and 'h' keep it shut
       return VOWELS.has(ch) && t - times[i] < Math.min(0.1, 1 / l.cps);
     }
     return false;

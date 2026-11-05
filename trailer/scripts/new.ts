@@ -29,7 +29,7 @@ if (existsSync(dst)) {
   process.exit(1);
 }
 
-// copy everything but the recordings: a new variant starts on blip voices
+// copy everything but the recordings: a new variant starts with none
 cpSync(src, dst, { recursive: true, filter: (p) => !p.startsWith(join(src, 'voice') + (process.platform === 'win32' ? '\\' : '/')) });
 mkdirSync(join(dst, 'voice'), { recursive: true });
 writeFileSync(join(dst, 'voice', '.gitkeep'), '');

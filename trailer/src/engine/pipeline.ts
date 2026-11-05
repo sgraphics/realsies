@@ -55,7 +55,7 @@ export function renderTrailer(def: TrailerDef, o: RenderOptions): Rendered {
   try {
     step('voices');
     const voices = loadVoices(join(def.dir, 'voice'), def.lines, tmp);
-    log(voices.length ? `recorded: ${voices.map((v) => v.id).join(', ')}` : 'none found, using blip voices');
+    log(voices.length ? `recorded: ${voices.map((v) => v.id).join(', ')}` : 'none found');
 
     step('audio');
     resetNoise();

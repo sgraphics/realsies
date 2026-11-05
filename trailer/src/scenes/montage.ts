@@ -8,6 +8,7 @@ import { type Rgba, type Color, type Look, type Rect, type SceneSeat, type Theme
 import { createBuffer, nineSlice, px, get, PAL, TRANSPARENT, lighter, Rig, layoutLobby, layoutChat, layoutCall, SceneRenderer, getThemeKit, drawLogo, LOGO_W, LOGO_H, countdownSprite, countdownStyle, renderVsDoor, icon } from '../art.ts';
 import { blitK, rectOut, fillOut, OUT_W, OUT_H } from '../engine/camera.ts';
 import { drawString, drawCentered, measure, type TextStyle } from '../engine/font.ts';
+import { bubbleMetrics, bubbleStyles, bubbleSize, wrapText, drawBubble, drawDots, type BubbleMetrics } from '../engine/chat.ts';
 
 export interface MontageCues {
   /** Beats (from the music's downbeat) for: her pedestal lighting up; 3, 2, 1, CHAT!; the doors. */
@@ -41,6 +42,11 @@ export interface MontageConfig {
   /** The player in the countdown. */
   me: { seed: string; name: string };
   chat: { me: string; them: string };
+  /**
+   * Size of the chat's bubbles: output px per bubble and font pixel, and the wrap width in font
+   * px. Bigger than the game's own so the two messages read in a trailer.
+   */
+  bubbles: { k: number; wrap: number };
   cues: MontageCues;
   /** Music grid: absolute time of a beat, length of a beat. */
   beat: (n: number) => number;
@@ -113,7 +119,6 @@ const CURSOR = (() => {
 
 const DOOR_U = 10;
 const DW = OUT_W / DOOR_U, DH = OUT_H / DOOR_U;
-const BK = 3; // chat bubble sprite px
 
 export class GameMontage {
   private kit: ReturnType<typeof getThemeKit>;
@@ -127,9 +132,15 @@ export class GameMontage {
   private chatR: SceneRenderer;
   private callR: SceneRenderer;
   private doorCache = new Map<string, Rgba>();
+  private bm: BubbleMetrics;
+  private bs: ReturnType<typeof bubbleStyles>;
+  private rows: { me: string[]; them: string[] };
 
   constructor(private c: MontageConfig) {
     this.kit = getThemeKit(c.theme);
+    this.bm = bubbleMetrics(c.bubbles.k);
+    this.bs = bubbleStyles(c.theme);
+    this.rows = { me: wrapText(c.chat.me, c.bubbles.wrap), them: wrapText(c.chat.them, c.bubbles.wrap) };
     this.lobbyRigs = c.seeds.map((seed, i) => (i === c.guestSeat ? new Rig(c.guestLook()) : new Rig(seed)));
     this.guestRig = new Rig(c.guestLook());
     this.meRig = new Rig(c.me.seed);
@@ -269,17 +280,20 @@ export class GameMontage {
 
   // ---------------------------------------------------------------- chat
 
-  private bubble(out: Rgba, text: string, right: boolean, y: number, area: { x: number; w: number }, count = Infinity): number {
-    const kit = this.kit;
-    const ns = right ? kit.ui.bubbleMe : kit.ui.bubbleThem;
-    const tail = right ? kit.ui.tailMe : kit.ui.tailThem;
-    const tw = measure(text) * 3;
-    const w = Math.ceil((tw + 30) / BK) * BK, h = 17 * BK;
-    const x = right ? area.x + area.w - w - 6 : area.x + 6;
-    nine(out, ns, x, y, w, h, BK);
-    blitK(out, tail, right ? x + w - 9 * BK : x + 2 * BK, y + h - BK, BK);
-    drawString(out, text, x + 15, y + 14, textOn(hexC(right ? kit.colors.bubbleMeText : kit.colors.bubbleThemText), 3), count);
-    return h;
+  /** My message (right, the player's bubble), then her typing dots and her reply (left, the partner's). */
+  private messages(out: Rgba, t: number, b: number, cr: { x: number; y: number; w: number }): void {
+    const c = this.c, CUE = c.cues, m = this.bm, st = this.bs;
+    const inset = 6;
+    const pop = (since: number) => (since < 0.12 ? m.k : 0); // each lands with a one-pixel hop
+    let y = cr.y + 12;
+    const me = bubbleSize(this.rows.me, m);
+    drawBubble(out, st.me, m, cr.x + cr.w - inset - me.w, y + pop(b - CUE.bubbleMe), me.w, me.h, this.rows.me, Infinity);
+    y += me.h + m.gap;
+    if (b >= CUE.typingFrom && b < CUE.bubbleThem) drawDots(out, st.them, m, cr.x + inset, y, m.dotsH, t - c.beat(CUE.typingFrom));
+    else if (b >= CUE.bubbleThem) {
+      const them = bubbleSize(this.rows.them, m);
+      drawBubble(out, st.them, m, cr.x + inset, y + pop(b - CUE.bubbleThem), them.w, them.h, this.rows.them, Infinity);
+    }
   }
 
   renderChat(out: Rgba, t: number, under = false): void {
@@ -289,20 +303,7 @@ export class GameMontage {
     drawScene(out, this.chatR.render({ now: ms(t), partner: this.guestRig, fuse }));
     this.nameTag(out, chatL.partner.label, this.guestTag);
     const cr = O(chatL.chat);
-    const area = { x: cr.x, w: cr.w };
-    let y = cr.y + 12;
-    if (!under && b >= CUE.bubbleMe) {
-      const pop = b - CUE.bubbleMe < 0.12 ? 6 : 0;
-      y += this.bubble(out, c.chat.me, true, y + pop, area) + 24;
-      if (b >= CUE.typingFrom && b < CUE.bubbleThem) {
-        // typing dots in her bubble
-        const n = 1 + (Math.floor((t * 1000) / 160) % 3);
-        this.bubble(out, '.'.repeat(n).padEnd(3, ' '), false, y, area);
-      } else if (b >= CUE.bubbleThem) {
-        const pop2 = b - CUE.bubbleThem < 0.12 ? 6 : 0;
-        this.bubble(out, c.chat.them, false, y + pop2, area);
-      }
-    }
+    if (!under && b >= CUE.bubbleMe) this.messages(out, t, b, cr);
     // the input row at the bottom of the chat column
     const iy = cr.y + cr.h - 66;
     nine(out, kit.ui.panel, cr.x, iy, cr.w, 66, 3);

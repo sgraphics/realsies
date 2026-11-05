@@ -59,7 +59,7 @@ export function framingAt(s: Shot, t: number): Framing {
 export type Speaker = 'host' | 'guest';
 
 export interface Line {
-  /** Voice file id: variants/<name>/voice/<id>.wav replaces the blips for this line. */
+  /** Voice file id: variants/<name>/voice/<id>.wav plays from this line's start. */
   id: string;
   speaker: Speaker | 'card' | 'tagline';
   /** Shown verbatim; '|' marks a held pause while typing (not shown). */
@@ -72,7 +72,7 @@ export interface Line {
   lead?: number;
   /** Seconds a '|' pause holds (default 0.55). */
   pause?: number;
-  /** Semitone offsets per character for the blip voice (optional). */
+  /** Semitone offsets per character for a synthesised blip voice (optional). */
   tune?: number[];
 }
 
