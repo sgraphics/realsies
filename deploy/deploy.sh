@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Server-side deploy: pull, build, restart. Run as root on the server.
 # Secrets live outside git: /opt/realsies/.env and /opt/realsies/relay/.secrets/testnet.json.
+# While the GitHub repo is private the server cannot pull: push from a dev machine instead,
+#   git push root@<server>:/opt/realsies main:refs/heads/incoming
+#   ssh root@<server> 'cd /opt/realsies && NO_PULL=1 bash deploy/deploy.sh'
+# and NO_PULL=1 fast-forwards main to the pushed branch.
 set -euo pipefail
 APP=/opt/realsies
 id realsies >/dev/null 2>&1 || useradd --system --home-dir "$APP" --shell /usr/sbin/nologin realsies
@@ -9,9 +13,13 @@ if [ ! -d "$APP/.git" ]; then
 fi
 git config --global --add safe.directory "$APP" || true
 cd "$APP"
-git fetch --quiet origin
 git checkout --quiet main
-git pull --ff-only --quiet origin main
+if [ "${NO_PULL:-}" = 1 ]; then
+  git merge --ff-only --quiet incoming
+else
+  git fetch --quiet origin
+  git pull --ff-only --quiet origin main
+fi
 mkdir -p relay/data
 for pkg in art web relay; do
   echo "== $pkg: install"
