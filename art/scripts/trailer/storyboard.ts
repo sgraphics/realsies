@@ -3,6 +3,7 @@
 // read this file, so a retime here moves picture, sound and paperwork together.
 
 import type { ThemeId } from '../../../shared/protocol.ts';
+import { rngFrom, randomSeed } from '../../src/core/rng.ts';
 import type { ActorState } from './actor.ts';
 
 export const FPS = 24;
@@ -129,9 +130,9 @@ export const SHOTS: Shot[] = [
     notes: 'The call screen. A cursor drifts to YES, to NO, back to YES. Cut before the click.',
   },
   {
-    id: 's13', kind: 'end', start: T.end, end: T.out, key: 42.2, fadeOut: 0.5,
-    title: 'End card',
-    notes: 'The curved REALSIES logo drops in on a dark field with sparkles. "Come and guess if she\'s for realsies." realsies.lol. A final chime.',
+    id: 's13', kind: 'end', start: T.end, end: T.out, key: beat(24.4), fadeOut: 0.5,
+    title: 'End card: the smug three',
+    notes: 'Low-angle hero shot. The curved REALSIES logo drops in big across the top and a glint sweeps its letters, with sparkles. Below it three characters rise into frame, waist up and cropped by the bottom edge, looming over a low horizon (a planet\'s limb with the sun coming up behind them, rays fanning up the sky, a rim of backlight on each silhouette): the guest in the middle, arms crossed, with a slow nod; Coconut843 pushing his sunglasses up with one finger (ting); Pebble242 raising one eyebrow. All half-lidded, all smirking. "Come and guess if she\'s for realsies." under the logo, realsies.lol on a dark foot band. The shine sweeps again and the final chime rings out.',
   },
 ];
 
@@ -283,7 +284,26 @@ export const CHAT_LINES = {
   them: 'lol no. are you?',
 };
 
+/**
+ * End card beats (counted from MUSIC_AT, like CUE): the logo's shine sweeps, her nod (down, up),
+ * the sunglasses push (arm up, finger on the bridge, finger off, arm down), the eyebrow.
+ */
+export const END = {
+  glints: [17, 22, 24],
+  nod: [18.5, 19.25] as [number, number],
+  push: [19.6, 19.8, 20.6, 21.15] as [number, number, number, number],
+  brow: 21.5,
+};
+
 /** Gamertags for the lobby; index 2 is her. */
 export const TAGS = ['Maple330', 'Kraken246', 'Juniper31', 'Coconut843', 'Pebble242', 'Lobster99', 'Acorn132', 'Lemon89', 'Rhino946', 'Walnut81'];
 export const GUEST_SEAT = 2;
 export const GUEST_TAG = TAGS[GUEST_SEAT];
+
+/** The lobby's rig seeds by seat ('' at her seat), shared by the montage and the end card. */
+export function lobbySeeds(): string[] {
+  const r = rngFrom('trailer-lobby');
+  return TAGS.map((_, i) => (i === GUEST_SEAT ? '' : randomSeed(r)));
+}
+/** The two lobby characters who join her on the end card. */
+export const END_SEATS = { left: 3, right: 4 };

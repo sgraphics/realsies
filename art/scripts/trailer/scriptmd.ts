@@ -1,6 +1,6 @@
 // script.md, written from the storyboard so the paperwork always matches the cut.
 
-import { BPM, CUE, DURATION, FPS, LINES, SHOTS, TAGS, GUEST_SEAT, CHAT_LINES, GLITCH, beat, lineShown, lineTimes } from './storyboard.ts';
+import { BPM, CUE, DURATION, FPS, LINES, SHOTS, TAGS, GUEST_SEAT, CHAT_LINES, GLITCH, END_SEATS, beat, lineShown, lineTimes } from './storyboard.ts';
 import { CAST } from './actor.ts';
 
 /** 0:07.5 style timecode. */
@@ -47,7 +47,7 @@ export function scriptMarkdown(o: { voices: string[]; sizeMb?: number }): string
   L.push(`- Dialogue: one blip per letter, pitched per speaker, with a rise at the end of questions; vowels open the mouth on screen.`);
   L.push(`- ${tc(GLITCH[0])}: the glitch (bitcrushed noise, a diving square chirp, a thump) and the drone cuts dead. "Can you tell?" types on in near silence with typewriter ticks.`);
   L.push(`- ${tc(beat(-2))}: a two-beat snare pickup; ${tc(beat(0))}: an original chiptune at ${BPM} BPM in C major (C, G, Am, F; then F, G for the end card): 25% pulse lead, 12.5% pulse arpeggios, a stepped NES-style triangle bass, noise kick, snare and hats.`);
-  L.push(`- Game sounds on the beat: her pedestal lights up, countdown beeps on 3, 2, 1 and CHAT!, the doors whoosh, a message goes out, typing ticks, a message comes in, cursor ticks over YES and NO, a coin as the logo lands (${tc(beat(CUE.logo))}), a pop for realsies.lol, and a final chime at ${tc(beat(CUE.chime))} ringing out to the end.`);
+  L.push(`- Game sounds on the beat: her pedestal lights up, countdown beeps on 3, 2, 1 and CHAT!, the doors whoosh, a message goes out, typing ticks, a message comes in, cursor ticks over YES and NO, a coin as the logo lands (${tc(beat(CUE.logo))}) while the three rise in with a whoosh, a shing each time the shine sweeps the logo, a ting off the sunglasses, a bwip for the raised eyebrow, a pop for realsies.lol, and a final chime at ${tc(beat(CUE.chime))} ringing out to the end.`);
   L.push('- Mix: synthesised at 48 kHz, peak-limited, then two-pass `loudnorm` (I -14, TP -1.5, linear) so the quiet interview stays quiet against the music.');
   L.push('');
   L.push('## Cast (art engine rig)');
@@ -55,6 +55,7 @@ export function scriptMarkdown(o: { voices: string[]; sizeMb?: number }): string
   L.push(`- Interviewer: seed \`${CAST.host.seed}\`, pinned to glasses, a moustache and a notebook (bald, red sweater). Deadpan.`);
   L.push(`- Guest: seed \`${CAST.guest.seed}\`, pinned to wavy auburn hair, a neutral mouth that turns into a small smile (teal blazer over a white shirt).`);
   L.push('- Montage: nine more lobby characters from seeded random looks, and the player "Ana" (seed `me-120`).');
+  L.push(`- End card: the guest in the middle, flanked by two lobby regulars: ${TAGS[END_SEATS.left]} (in his own sunglasses) and ${TAGS[END_SEATS.right]} (cat ears). The smug pieces (half-lidded eyes, a raised brow, smirks, crossed arms, a finger pushing sunglasses up, a nod, a backlight rim) are composed from the rig's layer sprites in \`scripts/trailer/smug.ts\`; the game's own look is unchanged.`);
   L.push('');
   L.push('## Dropping in recorded voices');
   L.push('');
@@ -70,7 +71,7 @@ export function scriptMarkdown(o: { voices: string[]; sizeMb?: number }): string
   L.push('npm run trailer -- --keep  # keep the temp folder (frames, mix.wav) for inspection');
   L.push('```');
   L.push('');
-  L.push('Source: `art/scripts/trailer/` (`storyboard.ts` is the whole edit as data; `set.ts` the interview set; `actor.ts` the seated, directed rig; `interview.ts`, `montage.ts`, `endcard.ts` and `render.ts` the frames; `audio.ts` the soundtrack; `build.ts` the pipeline). Frames are rendered to a temp folder, encoded with libx264 (CRF 18, yuv420p, BT.709) and AAC, and the temp folder is deleted.');
+  L.push('Source: `art/scripts/trailer/` (`storyboard.ts` is the whole edit as data; `set.ts` the interview set; `actor.ts` the seated, directed rig; `smug.ts` the smug poses on the end card; `interview.ts`, `montage.ts`, `endcard.ts` and `render.ts` the frames; `audio.ts` the soundtrack; `build.ts` the pipeline). Frames are rendered to a temp folder, encoded with libx264 (CRF 18, yuv420p, BT.709) and AAC, and the temp folder is deleted.');
   L.push('');
   return L.join('\n');
 }

@@ -6,7 +6,6 @@
 import { type Rgba, createBuffer, nineSlice, blit, px, get } from '../../src/core/buffer.ts';
 import { type Color, PAL, TRANSPARENT, lighter } from '../../src/core/palette.ts';
 import { Rig } from '../../src/rig/rig.ts';
-import { rngFrom, randomSeed } from '../../src/core/rng.ts';
 import { layoutLobby, layoutChat, layoutCall } from '../../src/scene/layout.ts';
 import { SceneRenderer } from '../../src/scene/renderer.ts';
 import type { CallLayout, ChatLayout, LobbyLayout, Rect, SceneSeat } from '../../src/scene/types.ts';
@@ -17,7 +16,7 @@ import { icon } from '../../src/ui/icons.ts';
 import { blitK, rectOut, fillOut, OUT_W, OUT_H } from './camera.ts';
 import { drawString, drawCentered, measure, type TextStyle } from './font.ts';
 import { castLook, CAST } from './actor.ts';
-import { THEME, CUE, beat, BEAT, CHAT_LINES, TAGS, GUEST_SEAT, GUEST_TAG, type Shot } from './storyboard.ts';
+import { THEME, CUE, beat, BEAT, CHAT_LINES, TAGS, GUEST_SEAT, GUEST_TAG, lobbySeeds, type Shot } from './storyboard.ts';
 
 const S = 4; // device px per game px
 const HUD_H = 64; // CSS px of the HUD bar at 1080p
@@ -31,8 +30,7 @@ const ms = (t: number) => t * 1000;
 
 // ---------------------------------------------------------------- cast of the game screens
 
-const seedRng = rngFrom('trailer-lobby');
-const lobbyRigs: Rig[] = TAGS.map((_, i) => (i === GUEST_SEAT ? new Rig(castLook(CAST.guest)) : new Rig(randomSeed(seedRng))));
+const lobbyRigs: Rig[] = lobbySeeds().map((seed, i) => (i === GUEST_SEAT ? new Rig(castLook(CAST.guest)) : new Rig(seed)));
 const guestRig = new Rig(castLook(CAST.guest));
 const meRig = new Rig('me-120'); // dark bob, headphones, orange sweater
 meRig.lookToward(1);

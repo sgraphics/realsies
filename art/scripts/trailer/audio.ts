@@ -4,7 +4,7 @@
 // Recorded voices (voice/<line-id>.wav, decoded by the build) replace a line's blips.
 
 import { writeFileSync } from 'node:fs';
-import { BEAT, CUE, DRONE, DURATION, GLITCH, LINES, MUSIC_AT, beat, lineTimes, type Line } from './storyboard.ts';
+import { BEAT, CUE, DRONE, DURATION, END, GLITCH, LINES, MUSIC_AT, beat, lineTimes, type Line } from './storyboard.ts';
 
 export const SR = 48000;
 
@@ -399,6 +399,30 @@ function uiSounds(m: Mix): void {
   beep(m, b(CUE.logo), midi(nn('C6')), 0.07, 0.15, 0.5);
   beep(m, b(CUE.logo) + 0.07, midi(nn('F6')), 0.42, 0.15, 0.5);
   beep(m, b(CUE.url), midi(nn('A6')), 0.07, 0.09, 0.25);
+  // end card: the three rise into frame with a whoosh
+  {
+    const sv = new Svf();
+    const dur = 0.3;
+    m.add(b(CUE.logo), dur, 0, (_i, t) => sv.next(white(), 300 * Math.pow(7, t / dur), 1.6) * Math.sin((Math.PI * t) / dur) * 0.22);
+  }
+  // a shing each time the shine sweeps the logo (the chime rings for itself on the last one)
+  END.glints.filter((g) => g !== CUE.chime).forEach((g, i) => {
+    const hp = Biquad.make('hp', 6500);
+    m.add(b(g), 0.32, 0.25, (_n, t) => hp.next(white()) * ad(t, 0.004, 0.32, 5) * 0.12);
+    let ph = 0;
+    const f = midi(nn(i === 0 ? 'C7' : 'D7'));
+    m.add(b(g) + 0.02, 0.45, 0.25, (_n, t) => Math.sin((ph += (2 * Math.PI * f) / SR)) * ad(t, 0.002, 0.45, 5) * 0.05);
+  });
+  // a ting off his sunglasses as the finger pushes them up
+  for (const [f, g] of [[midi(nn('G7')), 0.06], [midi(nn('G7')) * 2.01, 0.02]] as [number, number][]) {
+    let ph = 0;
+    m.add(b(END.push[1]), 0.4, -0.35, (_n, t) => Math.sin((ph += (2 * Math.PI * f) / SR)) * ad(t, 0.001, 0.4, 5) * g);
+  }
+  // a bwip for the eyebrow going up
+  {
+    const o = new Pulse(0.25);
+    m.add(b(END.brow), 0.09, 0.35, (_n, t) => o.next(600 * Math.pow(2.2, t / 0.09)) * ad(t, 0.003, 0.09, 2) * 0.07);
+  }
 }
 
 /** The final chime: a fast arpeggio into a ringing C major bell over the last bass note. */
