@@ -16,6 +16,7 @@ import { ResultsScreen } from './screens/Results.tsx';
 import { VerifyDrawer } from './screens/Verify.tsx';
 import { PastRounds } from './screens/PastRounds.tsx';
 import { TermsScreen } from './screens/Terms.tsx';
+import { KeySetupDialog } from './screens/KeySetup.tsx';
 import { Button, Icon, type IconName } from './ui/kit.tsx';
 import { applyTheme } from './ui/theme.ts';
 import { runQa } from './qa.ts';
@@ -25,6 +26,8 @@ type Overlay =
   | { kind: 'deposit'; gate: boolean; then?: Overlay | null }
   | { kind: 'results'; roundId: number }
   | { kind: 'rounds' }
+  // enable coins (the browser's play key); `pick` goes on with the seat once it is on chain
+  | { kind: 'key'; pick?: { level: Level; seatIndex: number; coins: number }; why?: string; back?: Overlay | null }
   | null;
 
 export function App({ store }: { store: Store }) {
@@ -37,11 +40,14 @@ export function App({ store }: { store: Store }) {
   const lastReady = useRef(0);
 
   useEffect(() => {
-    store.actions.loadConfig().catch(() => {});
+    // a wallet session stored in this browser signs straight back in (QA runs drive their own)
+    const qa = /[?&](qa|as)=/.test(location.search);
+    store.actions.loadConfig().then(() => (qa ? undefined : store.actions.resumeSession())).catch(() => {});
     // mock-mode screenshot hooks (?mock=1&as=ana&qa=chat ...)
     runQa(store, location.search, (what, arg) => {
       if (what === 'seat') setOverlay({ kind: 'seat', ...(arg as { level: Level; seat: Seat }) });
       if (what === 'deposit') setOverlay({ kind: 'deposit', gate: false });
+      if (what === 'key') setOverlay({ kind: 'key' });
       if (what === 'rounds') setOverlay({ kind: 'rounds' });
       if (what === 'results') setOverlay({ kind: 'results', roundId: arg as number });
       if (what === 'verify') setVerify(arg as string);
@@ -55,10 +61,19 @@ export function App({ store }: { store: Store }) {
   const theme: ThemeId = s.chat?.theme ?? s.rooms[level]?.theme ?? (round ? round.themes[level] ?? themeFor(level, round.roundId) : 'castle');
   useEffect(() => applyTheme(theme), [theme]);
 
+  // the relay refused a paid pick for want of a usable play key: offer "Enable coins"
+  useEffect(() => {
+    if (!s.keyNeeded) return;
+    const why = s.keyNeeded.code === 'play_key_exhausted' ? "This browser's play key used up its gas allowance. One approval adds a fresh one." : undefined;
+    setOverlay({ kind: 'key', why });
+    store.actions.clearKeyNeeded();
+  }, [s.keyNeeded?.at]);
+
   // "Deposit to earn" before entering a room while the balance is zero (once per level and round)
   useEffect(() => {
     if (!s.welcomed || !s.me || !round || s.chat || s.search) return;
     if (s.me.balanceCoins > 0) return;
+    if (s.config?.coinsOpen === false) return; // nothing to deposit yet: free play only
     const key = `${s.accountId}:${round.roundId}:${s.level}`;
     if (gated.current.has(key)) return;
     gated.current.add(key);
@@ -120,6 +135,10 @@ export function App({ store }: { store: Store }) {
           setOverlay(null);
           store.actions.logout();
         }}
+        onSignOut={() => {
+          setOverlay(null);
+          void store.actions.signOut();
+        }}
         onTerms={openTerms}
       />
     );
@@ -135,6 +154,7 @@ export function App({ store }: { store: Store }) {
           theme={s.rooms[overlay.level]?.theme ?? theme}
           onClose={() => setOverlay(null)}
           onDeposit={() => setOverlay({ kind: 'deposit', gate: false, then: overlay })}
+          onNeedKey={(coins) => setOverlay({ kind: 'key', pick: { level: overlay.level, seatIndex: overlay.seat.index, coins } })}
         />
       )}
       {overlay?.kind === 'deposit' && (
@@ -142,6 +162,18 @@ export function App({ store }: { store: Store }) {
           store={store}
           gate={overlay.gate}
           onDone={() => setOverlay(overlay.then ?? null)}
+          onEnableCoins={() => setOverlay({ kind: 'key', back: overlay })}
+        />
+      )}
+      {overlay?.kind === 'key' && (
+        <KeySetupDialog
+          store={store}
+          why={overlay.why}
+          onDone={(enabled) => {
+            const o = overlay;
+            setOverlay(o.back ?? null);
+            if (enabled && o.pick) store.actions.pickSeat(o.pick.level, o.pick.seatIndex, 'paid', o.pick.coins);
+          }}
         />
       )}
       {overlay?.kind === 'results' && (

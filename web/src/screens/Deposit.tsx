@@ -1,5 +1,6 @@
 // "Deposit to earn": shown before entering a room while the balance is zero (skippable), and as
-// the coins panel from the HUD. Test mode: the faucet sends 100 test coins.
+// the coins panel from the HUD. Test mode: the faucet sends 100 test coins. A wallet player gets the
+// wallet version (WalletCoins.tsx): deposit and withdraw through the wallet.
 
 import { useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
@@ -7,8 +8,15 @@ import { useStore } from '../state/hooks.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 import { useEscape } from '../ui/hooks.ts';
 import { txUrl } from '../state/format.ts';
+import { WalletCoinsDialog } from './WalletCoins.tsx';
 
-export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void }) {
+export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void; onEnableCoins?(): void }) {
+  const s = useStore(p.store);
+  if (s.session || s.config?.coinsOpen === false) return <WalletCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} onEnableCoins={p.onEnableCoins ?? (() => {})} />;
+  return <TestCoinsDialog {...p} />;
+}
+
+function TestCoinsDialog(p: { store: Store; gate: boolean; onDone(): void }) {
   const s = useStore(p.store);
   const me = s.me;
   const cfg = s.config;

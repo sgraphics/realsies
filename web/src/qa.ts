@@ -14,6 +14,13 @@
 //   &consent=1                     the 18+ / terms box already ticked (who are you)
 //   &longnames=1                   every seat gets an 11-character gamertag
 //   &nobots=1                      the bots are napping: every pick gets bots_unavailable (no new chats)
+// Wallet sign-in (protocol v1.3), with &wallet=1 (a relay without test mode: no test users):
+//   &qa=signin-wait&hold=signIn    the sign-in waiting for the wallet
+//   &qa=signin-error&reject=signIn the player closed the wallet
+//   &as=sam&qa=key                 signed in as sam.testnet: the "Enable coins" dialog (&hold=key: waiting)
+//   &as=sam&qa=deposit             the wallet deposit dialog (200 test coins in the wallet, none in the game)
+//   &as=sam&qa=coins               coins enabled and 45 deposited: deposit, withdraw, key status
+//   &coins=closed                  the contract has no coin yet: "Coins open when REAL launches"
 // Only active together with ?mock=1.
 
 import type { Level } from '../../shared/protocol.ts';
@@ -82,12 +89,43 @@ export async function runQa(store: Store, search: string, open: (what: string, a
     open('terms');
     return;
   }
+  const walletMode = q.get('mock') === '1' && q.get('wallet') === '1';
+  if (walletMode && !q.get('as')) {
+    // the sign-in screens: waiting for the wallet, or the wallet closed
+    if (q.get('qa') === 'signin-wait' || q.get('qa') === 'signin-error') {
+      acceptTerms();
+      await store.actions.loadConfig();
+      void store.actions.walletSignIn();
+    }
+    return;
+  }
   const plan = qaPlan(search);
   if (!plan) return;
   const as = q.get('as')!;
-  const acct = as.includes('.') ? as : `${as}.realsies.testnet`;
-  await store.actions.selectUser(acct);
+  if (walletMode) {
+    acceptTerms();
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+  } else {
+    const acct = as.includes('.') ? as : `${as}.realsies.testnet`;
+    await store.actions.selectUser(acct);
+  }
   await until(store, (s) => s.welcomed);
+  if (walletMode && plan.step === 'key') {
+    open('key');
+    if (q.get('hold') === 'key') void store.actions.enableCoins();
+    return;
+  }
+  if (walletMode && (plan.step === 'deposit' || plan.step === 'coins') && store.get().config?.coinsOpen !== false) {
+    await store.actions.faucetToWallet(200);
+    if (plan.step === 'coins') {
+      await store.actions.enableCoins();
+      await store.actions.walletDeposit(45);
+    }
+    store.actions.resetFlow('walletTx');
+    open('deposit');
+    return;
+  }
   store.actions.enterRoom(plan.level);
   const s = await until(store, (x) => !!x.rooms[plan.level]);
   const room = s.rooms[plan.level]!;

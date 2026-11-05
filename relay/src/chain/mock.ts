@@ -1,12 +1,24 @@
 // In-memory chain with the game contract's rules (spec section 3, v1.1), for unit tests and keyless dev.
 // State can be snapshotted to JSON so a dev relay survives restarts.
+import crypto from 'node:crypto';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { SignedTransaction, baseEncode, encodeTransaction } from 'near-api-js';
 import type {
-  ChainAccounts, ChainAdapter, ChainCharacter, ChainConfig, ChainPlay, ChainRound, CommitItem, OpenReport, Opening,
-  TestUserKey, TxOutcome,
+  AccessKeyView, ChainAccounts, ChainAdapter, ChainCharacter, ChainConfig, ChainPlay, ChainRound, CommitItem, OpenReport, Opening,
+  TestUserKey, TxDetails, TxOutcome,
 } from './types.js';
 import { sha256Hex, recoverEip191, randomHex } from '../crypto.js';
 import { botPreimage, commitmentOf, handleOf, humanPreimage } from '../formats.js';
 import { settleCharacter, splitPlay, DEFAULT_PARAMS } from '../settlement.js';
+
+type KeyPermission = AccessKeyView['permission'];
+interface MKey {
+  nonce: bigint;
+  permission: KeyPermission;
+}
+
+/** yoctoNEAR of gas allowance one mock transaction burns (roughly a play at 15 Tgas prepaid). */
+export const MOCK_TX_ALLOWANCE = 1_600_000_000_000_000_000_000n;
 
 interface MPlay {
   account: string;
@@ -74,6 +86,14 @@ export class MockChain implements ChainAdapter {
   callGraceMs = 60_000;
   openWindowMs = 3_600_000;
   testMode = true;
+  /** false: the contract has no coin yet (mainnet before REAL launches); deposits and plays are refused */
+  coinsOpen = true;
+  /**
+   * Keyless dev relays only (CHAIN=mock with a real wallet in the browser): an access key the mock has never
+   * seen counts as what the caller expects (a full-access key at sign-in, a play key for plays and calls).
+   * Tests leave it off: then only keys added with addKey exist.
+   */
+  trustUnknownKeys = false;
   /** Simulated latency per tx in ms (tests may set 0). */
   txLatencyMs = 40;
   now: () => number = () => Date.now();
@@ -82,6 +102,13 @@ export class MockChain implements ChainAdapter {
   private height = 1000;
   private balances = new Map<string, bigint>();
   private rounds = new Map<number, MRound>();
+  /** account -> public key -> key */
+  private keys = new Map<string, Map<string, MKey>>();
+  /** coins held on the token by wallets (outside the game) */
+  private walletBalances = new Map<string, bigint>();
+  private tokenRegistered = new Set<string>();
+  private txIndex = new Map<string, TxDetails>();
+  readonly blockHash = baseEncode(new Uint8Array(crypto.createHash('sha256').update('realsies mock block').digest()));
   txLog: { hash: string; method: string; signer: string; ok: boolean; error?: string }[] = [];
 
   async init(): Promise<void> {}
@@ -101,9 +128,173 @@ export class MockChain implements ChainAdapter {
       callGraceMs: this.callGraceMs,
       openWindowMs: this.openWindowMs,
       testMode: this.testMode,
-      token: this.tokenId,
+      token: this.coinsOpen ? this.tokenId : undefined,
+      coinsOpen: this.coinsOpen,
       raw: { mock: true },
     };
+  }
+
+  // ---------- access keys (wallet accounts) ----------
+  /** Puts a key on an account (tests: the wallet's full-access key, or a play key the wallet added). */
+  addKey(accountId: string, publicKey: string, permission: KeyPermission, nonce = 0n): void {
+    let m = this.keys.get(accountId);
+    if (!m) this.keys.set(accountId, (m = new Map()));
+    m.set(publicKey, { nonce, permission });
+    this.onChange?.();
+  }
+  deleteKey(accountId: string, publicKey: string): void {
+    this.keys.get(accountId)?.delete(publicKey);
+  }
+  private keyOf(accountId: string, publicKey: string, hint?: 'full' | 'play'): MKey | null {
+    const k = this.keys.get(accountId)?.get(publicKey);
+    if (k) return k;
+    if (!this.trustUnknownKeys || !hint) return null;
+    const trusted: MKey = {
+      nonce: 0n,
+      permission: hint === 'full' ? 'FullAccess' : { receiverId: this.contractId, methodNames: ['play', 'call'], allowance: '250000000000000000000000' },
+    };
+    this.addKey(accountId, publicKey, trusted.permission);
+    return trusted;
+  }
+  async viewAccessKey(accountId: string, publicKey: string, hint?: 'full' | 'play'): Promise<AccessKeyView | null> {
+    const k = this.keyOf(accountId, publicKey, hint);
+    if (!k) return null;
+    const p = k.permission;
+    return { nonce: k.nonce, blockHash: this.blockHash, blockHeight: this.height, permission: p === 'FullAccess' ? 'FullAccess' : { ...p, methodNames: [...p.methodNames] } };
+  }
+
+  /**
+   * A player-signed transaction with the protocol's checks for a function-call key: the key exists and
+   * allows the receiver and method with no deposit, the nonce is fresh, the allowance covers the gas, the
+   * signature verifies. Then the call runs as the signer.
+   */
+  async sendSignedTx(bytes: Uint8Array, signerId: string, method: string): Promise<TxOutcome & { code?: 'nonce' | 'expired' | 'allowance' | 'key'; akNonce?: bigint }> {
+    if (this.txLatencyMs > 0) await new Promise((r) => setTimeout(r, this.txLatencyMs));
+    let signed: SignedTransaction;
+    try {
+      signed = SignedTransaction.decode(bytes);
+    } catch (e) {
+      return { hash: '', ok: false, error: `InvalidTransaction: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    const tx = signed.transaction;
+    const txBytes = encodeTransaction(tx);
+    const digest = new Uint8Array(crypto.createHash('sha256').update(txBytes).digest());
+    const hash = baseEncode(digest);
+    const reject = (error: string, code?: 'nonce' | 'expired' | 'allowance' | 'key', akNonce?: bigint) => {
+      this.txLog.push({ hash, method, signer: signerId, ok: false, error });
+      return { hash, ok: false, error, code, ...(akNonce !== undefined ? { akNonce } : {}) };
+    };
+    if (tx.signerId !== signerId) return reject('InvalidTxError: signer does not match');
+    const pk = tx.publicKey.toString();
+    const key = this.keyOf(tx.signerId, pk, 'play');
+    if (!key) return reject(`InvalidTxError: AccessKeyNotFound ${pk}`, 'key');
+    // borsh hands fixed-size arrays back as plain arrays
+    const sig = signed.signature.ed25519Signature?.data;
+    if (!sig || sig.length !== 64 || !ed25519.verify(Uint8Array.from(sig), digest, Uint8Array.from(tx.publicKey.data))) return reject('InvalidTxError: InvalidSignature');
+    if (baseEncode(Uint8Array.from(tx.blockHash)) !== this.blockHash) return reject('InvalidTxError: Expired', 'expired');
+    if (tx.nonce <= key.nonce) return reject(`InvalidTxError: InvalidNonce {"tx_nonce":${tx.nonce},"ak_nonce":${key.nonce}}`, 'nonce', key.nonce);
+    if (tx.actions.length !== 1 || !tx.actions[0].functionCall) return reject('InvalidTxError: a function-call key signs one function call');
+    const fc = tx.actions[0].functionCall;
+    if (key.permission !== 'FullAccess') {
+      const p = key.permission;
+      if (tx.receiverId !== p.receiverId) return reject('InvalidTxError: ReceiverMismatch');
+      if (p.methodNames.length && !p.methodNames.includes(fc.methodName)) return reject('InvalidTxError: MethodNameMismatch');
+      if (fc.deposit !== 0n) return reject('InvalidTxError: DepositWithFunctionCall');
+      if (p.allowance !== null) {
+        const left = BigInt(p.allowance);
+        if (left < MOCK_TX_ALLOWANCE) return reject('InvalidTxError: NotEnoughAllowance', 'allowance');
+        p.allowance = (left - MOCK_TX_ALLOWANCE).toString();
+      }
+    }
+    key.nonce = tx.nonce;
+    let args: any;
+    try {
+      args = JSON.parse(Buffer.from(fc.args).toString('utf8'));
+    } catch {
+      args = null;
+    }
+    const out = await this.runAs(hash, tx.signerId, tx.receiverId, fc.methodName, args);
+    return out;
+  }
+
+  /** Executes one call by `signer` (a wallet's own transaction, or a play key's), recorded for txDetails. */
+  private async runAs(hash: string, signer: string, receiver: string, method: string, args: any): Promise<TxOutcome> {
+    this.height += 1;
+    const logs: string[] = [];
+    let ok = true;
+    let error: string | undefined;
+    let value: unknown;
+    try {
+      if (receiver === this.contractId && method === 'play') this.doPlay(signer, Number(args?.round_id), String(args?.handle ?? ''), Number(args?.coins));
+      else if (receiver === this.contractId && method === 'call') this.doCall(signer, Number(args?.round_id), String(args?.handle ?? ''), args?.human);
+      else if (receiver === this.contractId && method === 'withdraw') {
+        const amount = BigInt(String(args?.amount ?? '0'));
+        if (amount <= 0n) throw new ContractError('nothing to withdraw');
+        this.debit(signer, amount);
+        logs.push(`EVENT_JSON:${JSON.stringify({ standard: 'realsies', version: '1.0.0', event: 'withdraw', data: [{ account: signer, amount: amount.toString() }] })}`);
+        // like the contract: the ft_transfer fails for an account that is not registered on the token, and the coins come back
+        if (this.tokenRegistered.has(signer)) this.walletBalances.set(signer, (this.walletBalances.get(signer) ?? 0n) + amount);
+        else {
+          this.credit(signer, amount);
+          value = false;
+          logs.push(`EVENT_JSON:${JSON.stringify({ standard: 'realsies', version: '1.0.0', event: 'withdraw_failed', data: [{ account: signer, amount: amount.toString() }] })}`);
+        }
+      } else if (receiver === this.tokenId && method === 'ft_transfer_call') {
+        if (!this.coinsOpen) throw new ContractError('token not set');
+        if (args?.receiver_id !== this.contractId) throw new ContractError('the mock token only transfers to the game');
+        const amount = BigInt(String(args?.amount ?? '0'));
+        const have = this.walletBalances.get(signer) ?? 0n;
+        if (have < amount) throw new ContractError('The account does not have enough balance');
+        this.walletBalances.set(signer, have - amount);
+        let target = signer;
+        if (typeof args?.msg === 'string' && args.msg.trim()) target = JSON.parse(args.msg).for;
+        this.credit(target, amount);
+        logs.push(`EVENT_JSON:${JSON.stringify({ standard: 'realsies', version: '1.0.0', event: 'deposit', data: [{ account: target, from: signer, amount: amount.toString() }] })}`);
+      } else if (receiver === this.tokenId && method === 'storage_deposit') {
+        this.tokenRegistered.add(String(args?.account_id ?? signer));
+      } else throw new ContractError(`the mock does not run ${receiver}.${method}`);
+    } catch (e) {
+      ok = false;
+      error = e instanceof Error ? e.message : String(e);
+    }
+    this.txLog.push({ hash, method, signer, ok, error });
+    this.txIndex.set(hash, { hash, ok, signerId: signer, receiverId: receiver, actions: [{ method, args }], logs, error });
+    this.onChange?.();
+    return ok ? { hash, ok, value } : { hash, ok, error };
+  }
+
+  async txDetails(hash: string, signerId: string): Promise<TxDetails | null> {
+    const t = this.txIndex.get(hash);
+    return t && t.signerId === signerId ? { ...t, actions: t.actions.map((a) => ({ ...a })), logs: [...t.logs] } : null;
+  }
+
+  async tokenStorage(accountId: string): Promise<{ registered: boolean; minDeposit: string }> {
+    return { registered: this.tokenRegistered.has(accountId), minDeposit: '1250000000000000000000' };
+  }
+
+  // ---------- a wallet's own transactions (tests: stand-ins for the wallet popup) ----------
+  /** Coins on the token in the account's wallet, outside the game. */
+  walletBalance(accountId: string): bigint {
+    return this.walletBalances.get(accountId) ?? 0n;
+  }
+  /** Tokens arrive in a wallet (bought on Rhea, say); registers it on the token. */
+  mintToWallet(accountId: string, amount: bigint): void {
+    this.tokenRegistered.add(accountId);
+    this.walletBalances.set(accountId, this.walletBalance(accountId) + amount);
+  }
+  registerOnToken(accountId: string): void {
+    this.tokenRegistered.add(accountId);
+  }
+  /** The wallet signs ft_transfer_call to the game (msg ""), as the deposit screen asks it to. */
+  walletDeposit(accountId: string, amount: bigint): Promise<TxOutcome> {
+    return this.runAs('mock' + randomHex(20), accountId, this.tokenId, 'ft_transfer_call', { receiver_id: this.contractId, amount: amount.toString(), msg: '' });
+  }
+  /** The wallet signs withdraw on the game. */
+  walletWithdraw(accountId: string, amount: bigint): Promise<TxOutcome> {
+    return this.runAs('mock' + randomHex(20), accountId, this.contractId, 'withdraw', { amount: amount.toString() });
+  }
+  async faucetToWallet(account: string, amount: bigint): Promise<TxOutcome> {
+    return this.tx(this.accounts.faucet, 'ft_transfer', () => this.mintToWallet(account, amount));
   }
   async balanceOf(account: string): Promise<bigint> {
     return this.balances.get(account) ?? 0n;
@@ -365,30 +556,34 @@ export class MockChain implements ChainAdapter {
   }
 
   // ---------- players ----------
+  private doPlay(account: string, roundId: number, handle: string, coins: number): void {
+    if (!this.coinsOpen) throw new ContractError('coin unit not set');
+    const r = this.round(roundId);
+    if (r.secret !== null || r.settled || this.now() >= r.endsAt) throw new ContractError('round is closed for plays');
+    if (!Number.isInteger(coins) || coins < this.minCoins || coins > this.maxCoins) throw new ContractError('coins out of range');
+    if (!/^[0-9a-f]{64}$/.test(handle)) throw new ContractError('bad handle');
+    if (r.plays.has(handle)) throw new ContractError('handle already played');
+    const amount = BigInt(coins) * this.coinUnit;
+    this.debit(account, amount);
+    const { fee, locked } = splitPlay(amount);
+    this.credit(this.accounts.fund, fee);
+    r.plays.set(handle, { account, coins, amount, locked, height: this.height, call: null, character: null, credited: null });
+  }
+  private doCall(account: string, roundId: number, handle: string, human: unknown): void {
+    if (typeof human !== 'boolean') throw new ContractError('human must be a boolean');
+    const r = this.round(roundId);
+    if (r.secret !== null || r.settled || this.now() > r.endsAt + this.callGraceMs) throw new ContractError('round is closed for calls');
+    const p = r.plays.get(handle);
+    if (!p) throw new ContractError('no play for handle');
+    if (p.account !== account) throw new ContractError('not your play');
+    if (p.call !== null) throw new ContractError('already called');
+    p.call = human;
+  }
   play(account: string, roundId: number, handle: string, coins: number) {
-    return this.tx(account, 'play', () => {
-      const r = this.round(roundId);
-      if (r.secret !== null || r.settled || this.now() >= r.endsAt) throw new ContractError('round is closed for plays');
-      if (!Number.isInteger(coins) || coins < this.minCoins || coins > this.maxCoins) throw new ContractError('coins out of range');
-      if (!/^[0-9a-f]{64}$/.test(handle)) throw new ContractError('bad handle');
-      if (r.plays.has(handle)) throw new ContractError('handle already played');
-      const amount = BigInt(coins) * this.coinUnit;
-      this.debit(account, amount);
-      const { fee, locked } = splitPlay(amount);
-      this.credit(this.accounts.fund, fee);
-      r.plays.set(handle, { account, coins, amount, locked, height: this.height, call: null, character: null, credited: null });
-    });
+    return this.tx(account, 'play', () => this.doPlay(account, roundId, handle, coins));
   }
   call(account: string, roundId: number, handle: string, human: boolean) {
-    return this.tx(account, 'call', () => {
-      const r = this.round(roundId);
-      if (r.secret !== null || r.settled || this.now() > r.endsAt + this.callGraceMs) throw new ContractError('round is closed for calls');
-      const p = r.plays.get(handle);
-      if (!p) throw new ContractError('no play for handle');
-      if (p.account !== account) throw new ContractError('not your play');
-      if (p.call !== null) throw new ContractError('already called');
-      p.call = human;
-    });
+    return this.tx(account, 'call', () => this.doCall(account, roundId, handle, human));
   }
   withdraw(account: string, amount: bigint) {
     return this.tx(account, 'withdraw', () => {
@@ -405,6 +600,7 @@ export class MockChain implements ChainAdapter {
   }
   faucetDeposit(account: string, amount: bigint) {
     return this.tx(this.accounts.faucet, 'ft_transfer_call', () => {
+      if (!this.coinsOpen) throw new ContractError('token not set');
       this.credit(account, amount);
     });
   }
@@ -416,6 +612,9 @@ export class MockChain implements ChainAdapter {
         height: this.height,
         balances: [...this.balances],
         rounds: [...this.rounds].map(([id, r]) => [id, { ...r, chars: [...r.chars], plays: [...r.plays] }]),
+        keys: [...this.keys].map(([a, m]) => [a, [...m]]),
+        wallets: [...this.walletBalances],
+        registered: [...this.tokenRegistered],
       },
       (_k, v) => (typeof v === 'bigint' ? `${v}n` : v),
     );
@@ -427,5 +626,8 @@ export class MockChain implements ChainAdapter {
     this.rounds = new Map(
       j.rounds.map(([id, r]: [number, any]) => [id, { ...r, chars: new Map(r.chars), plays: new Map(r.plays) }]),
     );
+    this.keys = new Map((j.keys ?? []).map(([a, m]: [string, [string, MKey][]]) => [a, new Map(m)]));
+    this.walletBalances = new Map(j.wallets ?? []);
+    this.tokenRegistered = new Set(j.registered ?? []);
   }
 }

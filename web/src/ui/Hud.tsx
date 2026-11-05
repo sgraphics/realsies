@@ -28,6 +28,8 @@ export interface HudProps {
   onRounds?(): void;
   onWallet?(): void;
   onSwitchUser?(): void;
+  /** wallet players: sign out (the session ends, this browser forgets its play key) */
+  onSignOut?(): void;
   onTerms?(): void;
   /** who: the title panel content. */
   title?: ComponentChildren;
@@ -230,6 +232,8 @@ export function Hud(p: HudProps) {
   }
 
   const label = me?.label ?? me?.accountId.split('.')[0] ?? s.accountId?.split('.')[0];
+  const walletAccount = s.session?.accountId;
+  const shortAccount = walletAccount && walletAccount.length > 22 ? `${walletAccount.slice(0, 8)}…${walletAccount.slice(-8)}` : walletAccount;
   return (
     <header ref={ref} class={'hud hud-' + kind} role="banner">
       <div class="hud-bar">
@@ -258,7 +262,12 @@ export function Hud(p: HudProps) {
             <button type="button" class="px-btn small hud-menu-item" onClick={() => { setMenu(false); p.onTerms?.(); }}>
               <Icon name="shield" /> Terms
             </button>
-            {kind === 'lobby' && label && (
+            {kind === 'lobby' && walletAccount && (
+              <button type="button" class="px-btn small hud-menu-item" title={walletAccount} onClick={() => { setMenu(false); p.onSignOut?.(); }}>
+                <Icon name="user" /> Sign out ({shortAccount})
+              </button>
+            )}
+            {kind === 'lobby' && !walletAccount && label && (
               <button type="button" class="px-btn small hud-menu-item" onClick={() => { setMenu(false); p.onSwitchUser?.(); }}>
                 <Icon name="user" /> Switch player ({label})
               </button>

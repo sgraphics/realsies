@@ -21,6 +21,7 @@ export interface LobbyProps {
   onRounds(): void;
   onWallet(): void;
   onSwitchUser(): void;
+  onSignOut?(): void;
   onTerms(): void;
   selectedSeat?: number | null;
 }
@@ -76,7 +77,7 @@ export function LobbyScreen(p: LobbyProps) {
 
   return (
     <>
-      <Hud store={store} kind="lobby" onResults={p.onResults} onRounds={p.onRounds} onWallet={p.onWallet} onSwitchUser={p.onSwitchUser} onTerms={p.onTerms} />
+      <Hud store={store} kind="lobby" onResults={p.onResults} onRounds={p.onRounds} onWallet={p.onWallet} onSwitchUser={p.onSwitchUser} onSignOut={p.onSignOut} onTerms={p.onTerms} />
       <World theme={theme} kind="lobby" seats={sceneSeats}>
         {(w) => {
           const l = w.layout.kind === 'lobby' ? w.layout : null;

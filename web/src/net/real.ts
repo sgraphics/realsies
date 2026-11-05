@@ -1,16 +1,21 @@
 // GameClient over the relay's HTTP API and WebSocket (spec section 4).
 
 import type {
+  AuthChallenge,
+  AuthProof,
+  AuthSession,
   ClientMsg,
   GameClient,
   LeaderRow,
   Me,
+  PlayKeyInfo,
   PublicConfig,
   RoundResults,
   RoundSummary,
   ServerMsg,
   TestUser,
   VerifyBundle,
+  WalletInfo,
 } from '../../../shared/protocol.ts';
 
 export type Status = 'connecting' | 'open' | 'closed';
@@ -43,6 +48,8 @@ export class RealGameClient implements GameClient {
   private handlers = new Set<(m: ServerMsg) => void>();
   private statusHandlers = new Set<(s: Status) => void>();
   private status: Status = 'closed';
+  /** wallet session (v1.3): sent as Bearer on every request, traded for a one-time ticket per WebSocket */
+  private session: { token: string; accountId: string } | null = null;
 
   constructor(o: RealClientOptions = {}) {
     this.base = o.base ?? '';
@@ -54,10 +61,13 @@ export class RealGameClient implements GameClient {
 
   // ---------- HTTP ----------
 
-  private async http<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  private async http<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (this.session) headers.Authorization = `Bearer ${this.session.token}`;
     const res = await this.fetchImpl(this.base + path, {
       method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json', Accept: 'application/json' } : { Accept: 'application/json' },
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     const text = await res.text();
@@ -111,9 +121,53 @@ export class RealGameClient implements GameClient {
     await this.http('POST', '/api/dev/end-round', {});
   }
 
+  // ---------- wallet sign-in (v1.3) ----------
+
+  authChallenge(): Promise<AuthChallenge> {
+    return this.http('POST', '/api/auth/challenge', {});
+  }
+  async authVerify(proof: AuthProof): Promise<AuthSession> {
+    const s = await this.http<AuthSession>('POST', '/api/auth/verify', proof);
+    this.session = { token: s.token, accountId: s.accountId };
+    return s;
+  }
+  async resumeSession(token: string): Promise<AuthSession | null> {
+    const prev = this.session;
+    this.session = { token, accountId: '' };
+    try {
+      const s = await this.http<AuthSession>('GET', '/api/session');
+      this.session = { token, accountId: s.accountId };
+      return { ...s, token };
+    } catch (e) {
+      this.session = prev;
+      if ((e as { status?: number }).status === 401) return null;
+      throw e;
+    }
+  }
+  async signOut(): Promise<void> {
+    try {
+      if (this.session) await this.http('DELETE', '/api/session');
+    } finally {
+      this.session = null;
+      this.disconnect();
+    }
+  }
+  registerPlayKey(publicKey: string): Promise<PlayKeyInfo> {
+    return this.http('POST', '/api/session/play-key', { publicKey });
+  }
+  walletInfo(): Promise<WalletInfo> {
+    return this.http('GET', '/api/session/wallet');
+  }
+  reportDeposit(txHash: string): Promise<{ me: Me; bonusTx?: string }> {
+    return this.http('POST', '/api/session/deposit', { txHash });
+  }
+  faucetToWallet(coins?: number): Promise<{ tx: string }> {
+    return this.http('POST', '/api/session/faucet-wallet', coins === undefined ? {} : { coins });
+  }
+
   // ---------- WebSocket ----------
 
-  private wsUrl(account: string): string {
+  private wsUrl(query: string): string {
     let base = this.wsBase;
     if (!base) {
       if (this.base) base = this.base.replace(/^http/, 'ws');
@@ -122,8 +176,9 @@ export class RealGameClient implements GameClient {
         base = loc ? `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}` : 'ws://localhost:3960';
       }
     }
-    return `${base}/ws?account=${enc(account)}`;
+    return `${base}/ws?${query}`;
   }
+
 
   private setStatus(s: Status): void {
     if (this.status === s) return;
@@ -143,9 +198,35 @@ export class RealGameClient implements GameClient {
   private open(): void {
     if (!this.want || !this.account) return;
     this.setStatus('connecting');
+    const account = this.account;
+    // a test user connects by name (test mode); a wallet session trades its token for a one-time ticket
+    if (!this.session || this.session.accountId !== account) {
+      this.openSocket(`account=${enc(account)}`);
+      return;
+    }
+    this.http<{ ticket: string }>('POST', '/api/session/ticket', {}).then(
+      (t) => {
+        if (!this.want || this.account !== account || this.ws) return;
+        this.openSocket(`ticket=${enc(t.ticket)}`);
+      },
+      (e: { status?: number }) => {
+        if (!this.want || this.account !== account) return;
+        if (e?.status === 401) {
+          // the session ended (expired or signed out elsewhere): stop and say so
+          this.want = false;
+          this.setStatus('closed');
+          for (const h of [...this.handlers]) h({ t: 'error', code: 'session_expired', message: 'Your session ended. Sign in again.' });
+          return;
+        }
+        this.scheduleReconnect();
+      },
+    );
+  }
+
+  private openSocket(query: string): void {
     let ws: WebSocket;
     try {
-      ws = new this.WS(this.wsUrl(this.account));
+      ws = new this.WS(this.wsUrl(query));
     } catch {
       this.scheduleReconnect();
       return;

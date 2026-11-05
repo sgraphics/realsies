@@ -9,7 +9,9 @@ import {
 import { gamertag } from '../../../shared/names.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db.js';
-import type { ChainAdapter, ChainConfig, Opening } from '../chain/types.js';
+import type { ChainAdapter, ChainConfig, Opening, TxOutcome } from '../chain/types.js';
+import type { AuthService, SessionRec } from '../auth/service.js';
+import { checkSignedTx, decodeSignedTxBase64, signRequestOf, type ExpectedTx, type PlayerMethod } from '../auth/tx.js';
 import type { NearAi } from '../nearai/client.js';
 import { CreditMonitor, type AiHealth } from '../nearai/credits.js';
 import { atRound, ownerOf, type Persona } from '../personas.js';
@@ -47,19 +49,41 @@ const SAY_INTERVAL_MS = 600;
 export const BOTS_UNAVAILABLE = 'The bots are napping. New chats are paused for a few minutes; chats already running finish as normal.';
 const BOT_CHAT_ABORTED = 'The bots are napping, so this chat could not start. New chats are paused for a few minutes; if you played coins, your locked coins come back when the round settles.';
 
-/** AI builders and NEAR AI credit tracking (src/agents/, src/nearai/credits.ts); all optional. */
+/** AI builders, NEAR AI credit tracking and wallet sessions (src/agents/, src/nearai/credits.ts, src/auth/); all optional. */
 export interface GameExtras {
   agents?: AgentStore;
   credits?: CreditMonitor;
   byok?: ByokKeys;
+  auth?: AuthService;
 }
 
 export interface Conn {
   account: string;
+  /** wallet accounts: the session the connection's ticket was issued for (test users have none) */
+  sessionId?: string;
   /** last level this connection entered; its room is re-sent when a new round starts */
   level?: Level;
   send(msg: ServerMsg): void;
   close(code?: number, reason?: string): void;
+}
+
+const TGAS = 1_000_000_000_000n;
+const YOCTO_PER_NEAR = 10n ** 24n;
+
+/** A play or call waiting for the browser's signature (ServerMsg sign_tx). */
+interface PendingSign {
+  reqId: string;
+  account: string;
+  sessionId: string;
+  chatId: string;
+  want: ExpectedTx;
+  msg: ServerMsg;
+  resolve(r: { ok: true; bytes: Uint8Array; hash: string } | { ok: false; error: string }): void;
+}
+
+/** NEAR yoctoNEAR from a decimal amount of NEAR (config), exact to 1e-6 NEAR. */
+function nearToYocto(near: number): bigint {
+  return (BigInt(Math.round(near * 1e6)) * YOCTO_PER_NEAR) / 1_000_000n;
 }
 
 /** The deployed contract reports panics as a bare wasm trap; keep the raw text in the DB, show something readable. */
@@ -133,6 +157,13 @@ export class Game implements BotHost {
   readonly credits: CreditMonitor;
   /** botmasters' own NEAR AI keys */
   readonly byok?: ByokKeys;
+  /** wallet sign-in: sessions and their browsers' play keys */
+  readonly auth?: AuthService;
+  /** plays and calls waiting for a browser's signature, by request id */
+  private signReqs = new Map<string, PendingSign>();
+  /** per play key (account|key): the next nonce to ask for and a recent block hash to sign with */
+  private keyNonces = new Map<string, { next: bigint; blockHash: string; at: number }>();
+  private configTimer: NodeJS.Timeout | null = null;
 
   constructor(
     readonly cfg: Config,
@@ -148,6 +179,7 @@ export class Game implements BotHost {
     this.botTimeScale = cfg.botTimeScale;
     this.agents = ext.agents;
     this.byok = ext.byok;
+    this.auth = ext.auth;
     this.credits = ext.credits ?? new CreditMonitor(db, { budgetUsd: cfg.nearAiBudgetUsd, recheckMs: cfg.nearAiRecheckSeconds * 1000 });
   }
 
@@ -172,12 +204,28 @@ export class Game implements BotHost {
       }
     }
     this.coinUnit = this.chainCfg.coinUnit;
-    this.publicConfig = {
+    this.publicConfig = this.makePublicConfig();
+    if (!this.chainCfg.coinsOpen) log.warn(`${this.chain.contractId} has no coin set yet: free play only, "Coins open when REAL launches" (re-checked every minute)`);
+    this.loadUsers();
+    const seen = Number(this.db.getKv('last_human_at') ?? '');
+    this.lastHumanAt = Number.isFinite(seen) && seen > 0 ? seen : Date.now();
+    await this.resume();
+    if (!this.current) {
+      if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; the next round starts when one connects`);
+      else await this.startRound();
+    }
+    this.housekeeping = setInterval(() => this.housekeep(), 30_000);
+    this.scheduleConfigRefresh();
+  }
+
+  private makePublicConfig(): PublicConfig {
+    const net = this.chain.network;
+    return {
       testMode: this.cfg.testMode,
-      network: this.chain.network,
+      network: net,
       contractId: this.chain.contractId,
-      tokenId: this.chain.tokenId,
-      tokenSymbol: this.chain.network === 'testnet' ? 'tREAL' : 'REAL',
+      tokenId: this.chainCfg.token ?? this.chain.tokenId,
+      tokenSymbol: net === 'testnet' ? 'tREAL' : 'REAL',
       coinUnit: this.coinUnit.toString(),
       usdPerCoin: this.cfg.usdPerCoin,
       presets: PRESETS,
@@ -189,18 +237,43 @@ export class Game implements BotHost {
       feeBps: this.chainCfg.feeBps,
       freeChatsPerDay: this.cfg.freeChatsPerDay,
       countdownSeconds: this.cfg.countdownSeconds,
-      explorerTx: `https://${this.chain.network === 'testnet' ? 'testnet.' : ''}nearblocks.io/txns/{hash}`,
-      explorerAccount: `https://${this.chain.network === 'testnet' ? 'testnet.' : ''}nearblocks.io/address/{account}`,
+      explorerTx: `https://${net === 'testnet' ? 'testnet.' : ''}nearblocks.io/txns/{hash}`,
+      explorerAccount: `https://${net === 'testnet' ? 'testnet.' : ''}nearblocks.io/address/{account}`,
+      coinsOpen: this.chainCfg.coinsOpen,
+      ...(this.cfg.buyUrl ? { buyUrl: this.cfg.buyUrl } : {}),
+      tokenDecimals: this.chain.tokenDecimals,
+      wallet: {
+        recipient: this.cfg.authRecipient,
+        playKey: { receiverId: this.chain.contractId, methodNames: ['play', 'call'], allowance: nearToYocto(this.cfg.playKeyAllowanceNear).toString() },
+        gas: { deposit: (100n * TGAS).toString(), withdraw: (50n * TGAS).toString(), storage: (30n * TGAS).toString() },
+      },
     };
-    this.loadUsers();
-    const seen = Number(this.db.getKv('last_human_at') ?? '');
-    this.lastHumanAt = Number.isFinite(seen) && seen > 0 ? seen : Date.now();
-    await this.resume();
-    if (!this.current) {
-      if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; the next round starts when one connects`);
-      else await this.startRound();
+  }
+
+  /**
+   * The contract's coin is set by the owner at the token launch (mainnet): re-read get_config every minute
+   * while there is none, every 15 minutes after, and tell every connection when the public config changes.
+   */
+  private scheduleConfigRefresh(): void {
+    if (this.stopped) return;
+    const ms = this.chainCfg.coinsOpen ? 15 * 60_000 : 60_000;
+    this.configTimer = setTimeout(() => void this.refreshChainConfig().finally(() => this.scheduleConfigRefresh()), ms);
+    this.configTimer.unref?.();
+  }
+
+  async refreshChainConfig(): Promise<void> {
+    try {
+      const c = await this.chain.getConfig();
+      const before = JSON.stringify(this.publicConfig);
+      const opened = c.coinsOpen && !this.chainCfg.coinsOpen;
+      this.chainCfg = c;
+      this.coinUnit = c.coinUnit;
+      this.publicConfig = this.makePublicConfig();
+      if (opened) log.info(`coins are open: ${c.token}, coin unit ${c.coinUnit}`);
+      if (JSON.stringify(this.publicConfig) !== before) this.broadcast({ t: 'config', config: this.publicConfig });
+    } catch (e) {
+      log.debug(`get_config: ${errMsg(e)}`);
     }
-    this.housekeeping = setInterval(() => this.housekeep(), 30_000);
   }
 
   /** No human connected for IDLE_MINUTES: no new rounds (no start_round, no commits) until one connects. */
@@ -220,6 +293,8 @@ export class Game implements BotHost {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.housekeeping) clearInterval(this.housekeeping);
+    if (this.configTimer) clearTimeout(this.configTimer);
+    for (const p of [...this.signReqs.values()]) p.resolve({ ok: false, error: 'the relay is stopping' });
     for (const ts of this.roundTimers.values()) ts.forEach(clearTimeout);
     for (const t of this.missTimers.values()) clearTimeout(t);
     for (const t of this.leftTimers.values()) clearTimeout(t);
@@ -232,12 +307,13 @@ export class Game implements BotHost {
 
   private loadUsers(): void {
     for (const u of this.db.loadUsers<UserRec>()) this.users.set(u.account, u);
-    for (const t of this.chain.testUsers) {
+    // test users exist only in test mode (TEST_MODE=0: players are wallet accounts, nobody else)
+    for (const t of this.cfg.testMode ? this.chain.testUsers : []) {
       this.labels.set(t.accountId, t.label);
       if (!this.users.has(t.accountId)) {
         const u: UserRec = {
           account: t.accountId, label: t.label, rating: RATING_START, chats: 0, right: 0, wrong: 0, streak: 0, bestStreak: 0,
-          lockedBonus: '0', freeDay: utcDay(), freeUsed: 0,
+          lockedBonus: '0', freeDay: utcDay(), freeUsed: 0, kind: 'test',
         };
         this.users.set(u.account, u);
         this.db.saveUser(u.account, u);
@@ -249,8 +325,37 @@ export class Game implements BotHost {
     this.db.saveUser(u.account, u);
   }
 
+  /** A test user in test mode: the relay holds its key and signs its plays, calls and withdrawals. */
   isTestUser(account: string): boolean {
-    return this.labels.has(account);
+    return this.cfg.testMode && this.labels.has(account);
+  }
+
+  /** The relay signs this account's transactions (test users only; never a wallet account). */
+  relaySigns(account: string): boolean {
+    return this.isTestUser(account);
+  }
+
+  /** Someone who may play: a test user (test mode) or an account that signed in with its wallet. */
+  isPlayer(account: string): boolean {
+    return this.isTestUser(account) || this.users.get(account)?.kind === 'wallet';
+  }
+
+  /** First sign-in of a wallet account: its player record (rating, stats). */
+  ensureWalletUser(account: string): UserRec {
+    let u = this.users.get(account);
+    if (!u) {
+      u = {
+        account, label: account, rating: RATING_START, chats: 0, right: 0, wrong: 0, streak: 0, bestStreak: 0,
+        lockedBonus: '0', freeDay: utcDay(), freeUsed: 0, kind: 'wallet',
+      };
+      this.users.set(account, u);
+      this.saveUser(u);
+      log.info(`new wallet player ${account}`);
+    } else if (u.kind !== 'wallet' && !this.isTestUser(account)) {
+      u.kind = 'wallet';
+      this.saveUser(u);
+    }
+    return u;
   }
 
   private async resume(): Promise<void> {
@@ -627,11 +732,11 @@ export class Game implements BotHost {
     return undefined;
   }
 
-  /** First connect of a test user in a round: their human character (payout own account if balance > 0, else promo). */
+  /** First connect of a player in a round: their human character (payout own account if balance > 0, else promo). */
   async ensureHuman(account: string): Promise<void> {
     const r = this.current;
     if (!r || (r.status !== 'open' && r.status !== 'closing') || Date.now() >= r.endsAt - 5000) return;
-    if (!this.isTestUser(account) || this.humanChar(r, account) || this.creatingHuman.has(account)) return;
+    if (!this.isPlayer(account) || this.humanChar(r, account) || this.creatingHuman.has(account)) return;
     this.creatingHuman.add(account);
     try {
       let bal = 0n;
@@ -1045,6 +1150,8 @@ export class Game implements BotHost {
     try {
       const me = await this.me(a);
       conn.send({ t: 'welcome', me, round: this.roundState(), config: this.publicConfig, activeChat: this.activeChatOf(a) });
+      // a reload while a play or call waits for this browser's signature: ask again
+      for (const p of this.signReqs.values()) if (p.account === a && p.sessionId === conn.sessionId) conn.send(p.msg);
     } catch (e) {
       log.error(`welcome for ${a}`, e);
       conn.send({ t: 'error', code: 'welcome_failed', message: errMsg(e) });
@@ -1075,6 +1182,12 @@ export class Game implements BotHost {
         }
       }, this.cfg.partnerLeftSeconds * 1000),
     );
+  }
+
+  /** Signed out: the session's sockets close and its pending signature requests end. */
+  closeSession(account: string, sessionId: string): void {
+    for (const p of [...this.signReqs.values()]) if (p.sessionId === sessionId) p.resolve({ ok: false, error: 'signed out' });
+    for (const c of [...(this.conns.get(account) ?? [])]) if (c.sessionId === sessionId) c.close(4001, 'signed out');
   }
 
   sendTo(account: string, msg: ServerMsg): void {
@@ -1132,7 +1245,13 @@ export class Game implements BotHost {
           conn.send(this.roomMsg(a, msg.level));
           return;
         case 'pick_seat':
-          await this.pickSeat(a, msg.level, msg.seatIndex, msg.mode, msg.coins);
+          await this.pickSeat(a, msg.level, msg.seatIndex, msg.mode, msg.coins, conn.sessionId);
+          return;
+        case 'signed_tx':
+          this.onSigned(conn, msg.reqId, msg.signedTx);
+          return;
+        case 'sign_declined':
+          this.onSignDeclined(conn, msg.reqId, msg.reason);
           return;
         case 'cancel_search':
           this.cancelSearch(a, true);
@@ -1222,7 +1341,7 @@ export class Game implements BotHost {
     return Math.max(0, this.cfg.freeChatsPerDay - used);
   }
 
-  async pickSeat(account: string, level: Level, seatIndex: number, mode: Mode, coins?: number): Promise<void> {
+  async pickSeat(account: string, level: Level, seatIndex: number, mode: Mode, coins?: number, sessionId?: string): Promise<void> {
     this.assertLevel(level);
     const r = this.current;
     const now = Date.now();
@@ -1230,7 +1349,16 @@ export class Game implements BotHost {
     if (!Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex > 9) throw new GameError('bad_seat', 'seatIndex must be 0..9');
     if (mode !== 'free' && mode !== 'paid') throw new GameError('bad_mode', 'mode must be free or paid');
     const user = this.users.get(account);
-    if (!user) throw new GameError('unknown_user', 'not a test user', 403);
+    if (!user || !this.isPlayer(account)) throw new GameError('unknown_user', 'sign in first', 403);
+    if (mode === 'paid') {
+      if (!this.chainCfg.coinsOpen) throw new GameError('coins_closed', 'Coins open when REAL launches. Play free for now.');
+      // a wallet account's play and call are signed by its browser's play key, never by the relay
+      if (!this.relaySigns(account)) {
+        const key = this.auth?.byId(sessionId)?.playKey;
+        if (!key) throw new GameError('play_key_missing', 'Enable coins first: one wallet approval lets this browser send your plays and calls.');
+        if (key.status !== 'active') throw new GameError('play_key_exhausted', "This browser's play key is out of gas allowance. Enable coins again for a fresh one.");
+      }
+    }
     if (level > this.levelUnlocked(user)) throw new GameError('level_locked', `level ${level} is locked`);
     if (this.searches.has(account)) throw new GameError('already_searching', 'already searching');
     const busy = [...this.sides.values()].find((s) => s.viewer === account && (s.phase === 'placing' || s.phase === 'chatting' || s.phase === 'calling'));
@@ -1258,7 +1386,7 @@ export class Game implements BotHost {
     }
     const [lo, hi] = this.cfg.searchDelay;
     const delay = uniform(lo * 1000, hi * 1000);
-    const s: Search = { account, roundId: r.id, level, seatIndex, mode, coins: c, startedAt: now, deadline: now + delay, timer: null, resolving: false };
+    const s: Search = { account, roundId: r.id, level, seatIndex, mode, coins: c, startedAt: now, deadline: now + delay, timer: null, resolving: false, sessionId };
     s.timer = setTimeout(() => void this.resolveSearch(account), delay);
     this.searches.set(account, s);
     this.sendTo(account, { t: 'searching', level, seatIndex });
@@ -1400,6 +1528,7 @@ export class Game implements BotHost {
       callStatus: 'none',
       playStatus: s.mode === 'paid' ? 'pending' : 'none',
       messages: [],
+      ...(s.sessionId ? { sessionId: s.sessionId } : {}),
     };
     if (s.mode === 'free') {
       const u = this.users.get(s.account);
@@ -1494,10 +1623,11 @@ export class Game implements BotHost {
     const p = (async () => {
       let res: { ok: boolean; hash: string; error?: string };
       try {
-        res = await Promise.race([
-          this.chain.play(side.viewer, side.roundId, side.handle, side.coins),
-          sleep(45_000).then(() => ({ ok: false, hash: '', error: 'play timed out' })),
-        ]);
+        // test users: the relay signs with their key; wallet accounts: their browser signs (sign_tx)
+        const play = this.relaySigns(side.viewer)
+          ? this.chain.play(side.viewer, side.roundId, side.handle, side.coins)
+          : this.playerSigned(side, 'play', { round_id: side.roundId, handle: side.handle, coins: side.coins });
+        res = await Promise.race([play, sleep(45_000 + this.cfg.signTimeoutSeconds * 1000).then(() => ({ ok: false, hash: '', error: 'play timed out' }))]);
       } catch (e) {
         res = { ok: false, hash: '', error: errMsg(e) };
       }
@@ -1811,7 +1941,9 @@ export class Game implements BotHost {
         this.sendTo(account, { t: 'call_recorded', chatId, human });
         return;
       }
-      const res = await this.chain.call(account, side.roundId, side.handle, human);
+      const res = this.relaySigns(account)
+        ? await this.chain.call(account, side.roundId, side.handle, human)
+        : await this.playerSigned(side, 'call', { round_id: side.roundId, handle: side.handle, human });
       if (res.ok) {
         side.callStatus = 'ok';
         side.callTx = res.hash;
@@ -1828,6 +1960,142 @@ export class Game implements BotHost {
   }
 
   // =====================================================================================
+  // player-signed plays and calls (wallet accounts, protocol v1.3)
+  // =====================================================================================
+
+  /**
+   * A wallet account's play or call: the relay fixes every field of the transaction (signer, the session's
+   * play key, the game contract, the method and its exact args, the gas, the key's next nonce, a recent
+   * block hash), asks the browser that picked the seat to sign it (sign_tx), checks the signed bytes are
+   * exactly that transaction under a valid signature (src/auth/tx.ts), then broadcasts it and tracks the
+   * outcome. A stale nonce or block hash is asked for again; a key out of allowance is marked exhausted.
+   */
+  private async playerSigned(side: ChatSide, method: PlayerMethod, args: Record<string, unknown>): Promise<TxOutcome> {
+    const s = this.auth?.byId(side.sessionId);
+    const key = s?.playKey;
+    if (!s || !key) return { ok: false, hash: '', error: 'no play key for this browser: enable coins first' };
+    if (key.status !== 'active') return { ok: false, hash: '', error: 'the play key is out of gas allowance' };
+    let last: TxOutcome = { ok: false, hash: '', error: 'not sent' };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const base = await this.keyState(side.viewer, key.publicKey, attempt > 0).catch((e) => {
+        log.warn(`view_access_key ${side.viewer}: ${errMsg(e)}`);
+        return undefined;
+      });
+      if (base === undefined) return { ok: false, hash: '', error: 'could not reach NEAR' };
+      if (base === null) {
+        this.auth!.forgetPlayKey(s);
+        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_missing', message: "This browser's play key is gone from your account. Enable coins again." });
+        return { ok: false, hash: '', error: 'the play key is not on the account any more' };
+      }
+      const want: ExpectedTx = {
+        signerId: side.viewer, publicKey: key.publicKey, receiverId: this.chain.contractId, nonce: base.nonce, blockHash: base.blockHash,
+        methodName: method, args: JSON.stringify(args), gas: BigInt(this.cfg.playGasTgas) * TGAS,
+      };
+      const signed = await this.askToSign(side, s.id, method, want);
+      if (!signed.ok) return { ok: false, hash: '', error: signed.error };
+      const out = await this.chain.sendSignedTx(signed.bytes, side.viewer, method);
+      this.db.logTx({ at: Date.now(), roundId: side.roundId, kind: `${method}:browser`, signer: side.viewer, hash: out.hash || signed.hash, ok: out.ok, error: out.error ?? null, ms: null });
+      if (out.ok) return out;
+      last = out;
+      if (out.code === 'nonce' || out.code === 'expired') {
+        const k = `${side.viewer}|${key.publicKey}`;
+        const st = this.keyNonces.get(k);
+        // the next attempt reads the key again (a fresh block hash), never below the nonce NEAR reported
+        if (st && out.akNonce !== undefined && out.akNonce + 1n > st.next) st.next = out.akNonce + 1n;
+        continue;
+      }
+      if (out.code === 'allowance') {
+        this.auth!.markPlayKey(s.id, 'exhausted');
+        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_exhausted', message: "This browser's play key used up its gas allowance. Enable coins again for a fresh one." });
+      } else if (out.code === 'key') {
+        this.auth!.forgetPlayKey(s);
+        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_missing', message: "This browser's play key is gone from your account. Enable coins again." });
+      }
+      return out;
+    }
+    return last;
+  }
+
+  /** The next nonce of a play key and a block hash to sign with; null when the key is not on chain. */
+  private async keyState(account: string, publicKey: string, fresh: boolean): Promise<{ nonce: bigint; blockHash: string } | null> {
+    const k = `${account}|${publicKey}`;
+    let st = this.keyNonces.get(k);
+    // a block hash stays valid for about a day of blocks; refresh well before
+    if (!st || fresh || Date.now() - st.at > 10 * 60_000) {
+      const v = await this.chain.viewAccessKey(account, publicKey, 'play');
+      if (!v) {
+        this.keyNonces.delete(k);
+        return null;
+      }
+      // the view is final (a block or two behind what just executed): never go below what was already asked for
+      const next = st && st.next > v.nonce ? st.next : v.nonce + 1n;
+      st = { next, blockHash: v.blockHash, at: Date.now() };
+      this.keyNonces.set(k, st);
+    }
+    const nonce = st.next;
+    st.next += 1n; // the next request gets the next nonce; a nonce asked for but never sent leaves a gap, which NEAR allows
+    return { nonce, blockHash: st.blockHash };
+  }
+
+  private askToSign(side: ChatSide, sessionId: string, method: PlayerMethod, want: ExpectedTx): Promise<{ ok: true; bytes: Uint8Array; hash: string } | { ok: false; error: string }> {
+    const reqId = randomId(9);
+    const ms = this.cfg.signTimeoutSeconds * 1000;
+    const msg: ServerMsg = { t: 'sign_tx', reqId, chatId: side.chatId, purpose: method, tx: signRequestOf(want), expiresAt: Date.now() + ms };
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.signReqs.delete(reqId);
+        log.warn(`${method} of ${side.viewer} in ${side.chatId}: no signature within ${this.cfg.signTimeoutSeconds} s`);
+        resolve({ ok: false, error: 'your browser did not sign in time' });
+      }, ms);
+      this.signReqs.set(reqId, {
+        reqId, account: side.viewer, sessionId, chatId: side.chatId, want, msg,
+        resolve: (r) => {
+          clearTimeout(timer);
+          this.signReqs.delete(reqId);
+          resolve(r);
+        },
+      });
+      this.sendToSession(side.viewer, sessionId, msg);
+    });
+  }
+
+  private sendToSession(account: string, sessionId: string, msg: ServerMsg): void {
+    for (const c of this.conns.get(account) ?? []) {
+      if (c.sessionId !== sessionId) continue;
+      try {
+        c.send(msg);
+      } catch (e) {
+        log.debug(`send to ${account} failed: ${errMsg(e)}`);
+      }
+    }
+  }
+
+  private onSigned(conn: Conn, reqId: unknown, signedTx: unknown): void {
+    const p = typeof reqId === 'string' ? this.signReqs.get(reqId) : undefined;
+    if (!p || p.account !== conn.account || p.sessionId !== conn.sessionId) throw new GameError('unknown_sign_request', 'no such signature request (it may have expired)');
+    const bytes = decodeSignedTxBase64(signedTx);
+    if (!bytes) {
+      p.resolve({ ok: false, error: 'the browser sent something that is not a signed transaction' });
+      throw new GameError('bad_signed_tx', 'signedTx must be a base64 borsh SignedTransaction');
+    }
+    const chk = checkSignedTx(bytes, p.want);
+    if (!chk.ok) {
+      log.warn(`${p.want.methodName} of ${p.account} in ${p.chatId}: signed transaction refused (${chk.code}: ${chk.reason})`);
+      p.resolve({ ok: false, error: `the signed ${p.want.methodName} was refused: ${chk.reason}` });
+      throw new GameError('bad_signed_tx', chk.reason);
+    }
+    p.resolve({ ok: true, bytes: chk.bytes, hash: chk.hash });
+  }
+
+  private onSignDeclined(conn: Conn, reqId: unknown, reason: unknown): void {
+    const p = typeof reqId === 'string' ? this.signReqs.get(reqId) : undefined;
+    if (!p || p.account !== conn.account || p.sessionId !== conn.sessionId) return;
+    const why = typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 200) : 'no reason given';
+    log.info(`${p.want.methodName} of ${p.account} in ${p.chatId}: the browser declined (${why})`);
+    p.resolve({ ok: false, error: `your browser did not sign it: ${why}` });
+  }
+
+  // =====================================================================================
   // players, balances, HTTP views
   // =====================================================================================
 
@@ -1841,7 +2109,7 @@ export class Game implements BotHost {
 
   async me(account: string, maxAgeMs = 2000): Promise<Me> {
     const u = this.users.get(account);
-    if (!u) throw new GameError('unknown_user', `${account} is not a test user`, 404);
+    if (!u || !this.isPlayer(account)) throw new GameError('unknown_user', `${account} is not a player here`, 404);
     const bal = await this.balanceOf(account, maxAgeMs);
     let locked = 0n;
     for (const s of this.sides.values()) {
@@ -1860,10 +2128,12 @@ export class Game implements BotHost {
       levelUnlocked: this.levelUnlocked(u),
       lockedBonusCoins: unitsToCoins(BigInt(u.lockedBonus || '0'), this.coinUnit),
       freeChatsLeft: this.freeLeft(u),
+      kind: this.relaySigns(account) ? 'test' : 'wallet',
     };
   }
 
   async testUsers(): Promise<TestUser[]> {
+    if (!this.cfg.testMode) return [];
     return Promise.all(
       this.chain.testUsers.map(async (t) => {
         const u = this.users.get(t.accountId)!;
@@ -1888,7 +2158,8 @@ export class Game implements BotHost {
 
   async faucet(account: string, coins = 100): Promise<{ tx: string; me: Me }> {
     if (!this.cfg.testMode) throw new GameError('not_test_mode', 'faucet is test mode only', 403);
-    if (!this.isTestUser(account)) throw new GameError('unknown_user', `${account} is not a test user`, 404);
+    if (!this.isPlayer(account)) throw new GameError('unknown_user', `${account} is not a player here`, 404);
+    if (!this.chainCfg.coinsOpen) throw new GameError('coins_closed', 'the game contract has no coin yet', 409);
     const c = Number(coins);
     if (!Number.isFinite(c) || c <= 0 || c > 10_000) throw new GameError('bad_coins', 'coins must be between 0 and 10000');
     const before = await this.balanceOf(account, 0).catch(() => null);
@@ -1897,21 +2168,88 @@ export class Game implements BotHost {
     if (!res.ok) throw new GameError('faucet_failed', res.error ?? 'deposit failed', 502);
     let expected = before === null ? null : before + deposit;
     this.db.logTx({ at: Date.now(), roundId: null, kind: 'faucet', signer: this.chain.accounts.faucet, hash: res.hash, ok: true, error: null, ms: null });
-    const u = this.users.get(account)!;
-    const bonus = BigInt(u.lockedBonus || '0');
-    if (bonus > 0n) {
-      const t = await this.chain.transfer(this.chain.accounts.promo, account, bonus);
-      if (t.ok) {
-        u.lockedBonus = '0';
-        this.saveUser(u);
-        if (expected !== null) expected += bonus;
-        log.info(`locked Turing bonus of ${unitsToCoins(bonus, this.coinUnit)} coins paid to ${account} from promo: ${t.hash}`);
-      } else log.warn(`locked bonus transfer to ${account} failed, kept for the next deposit: ${t.error}`);
-    }
+    const bonus = await this.payLockedBonus(account);
+    if (expected !== null) expected += bonus.amount;
     await this.settleBalance(account, (b) => expected === null || b >= expected);
     const me = await this.me(account, 0);
     this.sendTo(account, { t: 'me', me });
     return { tx: res.hash, me };
+  }
+
+  /** On a deposit: the Turing bonus earned as a free human, held by promo until now (spec "locked Turing bonus"). */
+  private async payLockedBonus(account: string): Promise<{ amount: bigint; tx?: string }> {
+    const u = this.users.get(account);
+    const bonus = BigInt(u?.lockedBonus || '0');
+    if (!u || bonus <= 0n) return { amount: 0n };
+    const t = await this.chain.transfer(this.chain.accounts.promo, account, bonus);
+    if (!t.ok) {
+      log.warn(`locked bonus transfer to ${account} failed, kept for the next deposit: ${t.error}`);
+      return { amount: 0n };
+    }
+    u.lockedBonus = '0';
+    this.saveUser(u);
+    log.info(`locked Turing bonus of ${unitsToCoins(bonus, this.coinUnit)} coins paid to ${account} from promo: ${t.hash}`);
+    return { amount: bonus, tx: t.hash };
+  }
+
+  /**
+   * A wallet account's own deposit (ft_transfer_call on the coin, sent from its wallet): checked on chain by
+   * hash, signer, receiver, method, the game as receiver_id and the game's deposit event for the account;
+   * then any locked Turing bonus is paid. Each transaction counts once.
+   */
+  async reportDeposit(account: string, txHash: unknown): Promise<{ me: Me; bonusTx?: string }> {
+    if (!this.isPlayer(account)) throw new GameError('unknown_user', `${account} is not a player here`, 404);
+    if (typeof txHash !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{30,50}$|^mock[0-9a-f]{40}$/.test(txHash)) throw new GameError('invalid_request', 'txHash must be a transaction hash');
+    const seen = this.db.getKv(`deposit_tx:${txHash}`);
+    if (seen && seen !== account) throw new GameError('not_your_tx', 'that deposit belongs to another account', 403);
+    let bonusTx: string | undefined;
+    if (!seen) {
+      // a transaction just sent may need a moment to show up; the browser asks again after tx_unknown
+      let d = null;
+      for (let i = 0; i < 3 && !d; i++) {
+        d = await this.chain.txDetails(txHash, account).catch(() => null);
+        if (!d && i < 2) await sleep(700 * (i + 1));
+      }
+      if (!d) throw new GameError('tx_unknown', 'that deposit is not on chain yet; try again in a few seconds', 409);
+      const fc = d.actions.find((a) => a.method === 'ft_transfer_call');
+      const credited = d.logs.some((l) => {
+        if (!l.startsWith('EVENT_JSON:')) return false;
+        try {
+          const e = JSON.parse(l.slice(11));
+          return e.standard === 'realsies' && e.event === 'deposit' && Array.isArray(e.data) && e.data.some((x: any) => x?.account === account);
+        } catch {
+          return false;
+        }
+      });
+      const ok = d.ok && d.signerId === account && d.receiverId === this.chain.tokenId && !!fc && (fc.args as any)?.receiver_id === this.chain.contractId && credited;
+      if (!ok) throw new GameError('not_a_deposit', `that transaction is not a deposit of ${account} into the game`, 400);
+      this.db.setKv(`deposit_tx:${txHash}`, account);
+      bonusTx = (await this.payLockedBonus(account)).tx;
+    }
+    this.balances.delete(account);
+    const me = await this.me(account, 0);
+    this.sendTo(account, { t: 'me', me });
+    return { me, bonusTx };
+  }
+
+  /** The coin's view of a wallet account: can it receive withdrawals (registered), and what registering costs. */
+  async walletInfo(account: string): Promise<{ accountId: string; coinsOpen: boolean; tokenId: string; tokenRegistered: boolean; storageDeposit: string }> {
+    if (!this.chainCfg.coinsOpen) return { accountId: account, coinsOpen: false, tokenId: this.chain.tokenId, tokenRegistered: false, storageDeposit: '0' };
+    const st = await this.chain.tokenStorage(account);
+    return { accountId: account, coinsOpen: true, tokenId: this.chain.tokenId, tokenRegistered: st.registered, storageDeposit: st.minDeposit };
+  }
+
+  /** Test mode: test coins into a wallet account's own wallet, so it can try a deposit from the wallet. */
+  async faucetToWallet(account: string, coins = 100): Promise<{ tx: string }> {
+    if (!this.cfg.testMode) throw new GameError('not_test_mode', 'faucet is test mode only', 403);
+    if (!this.isPlayer(account)) throw new GameError('unknown_user', `${account} is not a player here`, 404);
+    if (!this.chainCfg.coinsOpen) throw new GameError('coins_closed', 'the game contract has no coin yet', 409);
+    const c = Number(coins);
+    if (!Number.isFinite(c) || c <= 0 || c > 1000) throw new GameError('bad_coins', 'coins must be between 0 and 1000');
+    const res = await this.chain.faucetToWallet(account, coinsToUnits(c, this.coinUnit));
+    if (!res.ok) throw new GameError('faucet_failed', res.error ?? 'the faucet transfer failed', 502);
+    this.db.logTx({ at: Date.now(), roundId: null, kind: 'faucet_wallet', signer: this.chain.accounts.faucet, hash: res.hash, ok: true, error: null, ms: null });
+    return { tx: res.hash };
   }
 
   /** RPC nodes can trail a block right after a write: poll until the balance reflects it (max ~8 s). */
@@ -1927,7 +2265,11 @@ export class Game implements BotHost {
   }
 
   async withdraw(account: string, coins: number): Promise<{ tx: string; me: Me }> {
-    if (!this.isTestUser(account)) throw new GameError('unknown_user', `${account} is not a test user`, 404);
+    // the relay signs withdrawals only for test users; a wallet account withdraws from its wallet
+    if (!this.relaySigns(account)) {
+      if (this.isPlayer(account)) throw new GameError('withdraw_in_wallet', 'withdraw from your wallet: it signs withdraw on the game contract', 403);
+      throw new GameError('unknown_user', `${account} is not a test user`, 404);
+    }
     const c = Number(coins);
     if (!Number.isFinite(c) || c <= 0) throw new GameError('bad_coins', 'coins must be positive');
     const bal = await this.balanceOf(account, 0);
@@ -1960,7 +2302,7 @@ export class Game implements BotHost {
   }
 
   results(roundId: number, account: string): RoundResults {
-    if (!this.users.has(account)) throw new GameError('unknown_user', `${account} is not a test user`, 404);
+    if (!this.users.has(account)) throw new GameError('unknown_user', `${account} is not a player here`, 404);
     const stored = this.db.loadResult<RoundResults>(roundId, account);
     if (stored) return stored;
     const r = this.rounds.get(roundId) ?? this.db.loadRound<RoundRec>(roundId);

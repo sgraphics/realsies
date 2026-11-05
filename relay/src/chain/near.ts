@@ -3,12 +3,13 @@
 // fresh block hash and the same signed bytes are re-sent on rate limits or network errors (same
 // hash, so idempotent); "expired" or nonce errors re-sign with a fresh nonce lookup.
 import fs from 'node:fs';
-import { Account, JsonRpcProvider, KeyPairSigner, actions, baseEncode } from 'near-api-js';
+import { Account, JsonRpcProvider, KeyPairSigner, SignedTransaction, actions, baseEncode } from 'near-api-js';
 import type {
-  ChainAccounts, ChainAdapter, ChainCharacter, ChainConfig, ChainPlay, ChainRound, CommitItem, OpenReport, Opening,
-  TestUserKey, TxOutcome,
+  AccessKeyView, ChainAccounts, ChainAdapter, ChainCharacter, ChainConfig, ChainPlay, ChainRound, CommitItem, OpenReport, Opening,
+  TestUserKey, TxDetails, TxOutcome,
 } from './types.js';
 import { SerialQueue, sleep, errMsg } from '../util.js';
+import { txHashOf } from '../auth/tx.js';
 import { logger } from '../log.js';
 
 const log = logger('near');
@@ -19,26 +20,41 @@ interface KeyEntry {
   privateKey: string;
 }
 
+/**
+ * relay/.secrets/<network>.json. Testnet (test mode): every key below. Mainnet: no faucet and no test users;
+ * the coin (`tokenId`) may be left out while the contract has none, it is read from the contract's get_config.
+ */
 export interface Secrets {
   network: 'testnet' | 'mainnet';
   rpc: string[];
   contractId: string;
-  tokenId: string;
+  tokenId?: string;
   tokenDecimals: number;
   operator: KeyEntry;
-  faucet: KeyEntry;
+  /** test mode only: holds test coins and sends them (full-access key: ft_transfer_call needs 1 yoctoNEAR) */
+  faucet?: KeyEntry;
   promo: KeyEntry;
   accounts: { fund: string; house: string; bots: string };
-  testUsers: (KeyEntry & { label: string })[];
+  /** test mode only: accounts whose plays and calls the relay signs */
+  testUsers?: (KeyEntry & { label: string })[];
 }
 
 export function readSecrets(file: string): Secrets {
   const s = JSON.parse(fs.readFileSync(file, 'utf8')) as Secrets;
-  for (const k of ['contractId', 'tokenId', 'operator', 'faucet', 'promo', 'accounts', 'testUsers'] as const) {
+  for (const k of ['contractId', 'operator', 'promo', 'accounts'] as const) {
     if (!s[k]) throw new Error(`secrets file is missing ${k}`);
   }
-  if (!Array.isArray(s.rpc) || s.rpc.length === 0) s.rpc = ['https://rpc.testnet.fastnear.com', 'https://rpc.testnet.near.org'];
+  if (!Array.isArray(s.testUsers)) s.testUsers = [];
+  const mainnet = s.network === 'mainnet';
+  if (!Array.isArray(s.rpc) || s.rpc.length === 0) {
+    s.rpc = mainnet ? ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.near.org'] : ['https://rpc.testnet.fastnear.com', 'https://rpc.testnet.near.org'];
+  }
   return s;
+}
+
+/** A NEAR RPC error that means "no such account, key or transaction" rather than trouble. */
+function notFound(e: unknown): boolean {
+  return /does not exist|UNKNOWN_ACCOUNT|UNKNOWN_ACCESS_KEY|UNKNOWN_TRANSACTION|doesn't exist|AccessKeyDoesNotExist/i.test(errMsg(e));
 }
 
 type Wait = 'NONE' | 'INCLUDED' | 'EXECUTED_OPTIMISTIC' | 'INCLUDED_FINAL' | 'EXECUTED' | 'FINAL';
@@ -92,31 +108,36 @@ export class NearChain implements ChainAdapter {
   readonly kind = 'near' as const;
   readonly network: 'testnet' | 'mainnet';
   readonly contractId: string;
-  readonly tokenId: string;
+  tokenId: string;
   readonly tokenDecimals: number;
   readonly accounts: ChainAccounts;
   readonly testUsers: TestUserKey[];
   private rpc: string[];
   private providers: JsonRpcProvider[];
   private keys = new Map<string, Signing>();
+  /** one queue per player: their signed transactions go out in nonce order, one at a time */
+  private playerQueues = new Map<string, SerialQueue>();
+  private storageMin: string | null = null;
   private viewIndex = 0;
   /** Called for every transaction attempt result, for the tx log. */
   onTx?: (t: { method: string; signer: string; hash: string | null; ok: boolean; error?: string; ms: number }) => void;
 
-  constructor(private secrets: Secrets) {
+  /** `withTestUsers` false (TEST_MODE=0): the secrets file's test users are ignored, keys and all. */
+  constructor(private secrets: Secrets, opts: { withTestUsers?: boolean } = {}) {
     this.network = secrets.network || 'testnet';
     this.contractId = secrets.contractId;
-    this.tokenId = secrets.tokenId;
+    this.tokenId = secrets.tokenId ?? '';
     this.tokenDecimals = secrets.tokenDecimals ?? 18;
     this.accounts = {
       operator: secrets.operator.accountId,
-      faucet: secrets.faucet.accountId,
+      faucet: secrets.faucet?.accountId ?? '',
       promo: secrets.promo.accountId,
       fund: secrets.accounts.fund,
       house: secrets.accounts.house,
       bots: secrets.accounts.bots,
     };
-    this.testUsers = secrets.testUsers.map((u) => ({ accountId: u.accountId, label: u.label }));
+    const users = opts.withTestUsers === false ? [] : secrets.testUsers ?? [];
+    this.testUsers = users.map((u) => ({ accountId: u.accountId, label: u.label }));
     this.rpc = secrets.rpc;
     // near-api-js retries 500/503/408 on its own; keep that short, we fail over ourselves.
     this.providers = this.rpc.map((url) => new JsonRpcProvider({ url }, { retries: 3, wait: 400, backoff: 1.6 }));
@@ -129,14 +150,17 @@ export class NearChain implements ChainAdapter {
         providerIndex: 0,
       });
     add(secrets.operator);
-    add(secrets.faucet);
+    if (secrets.faucet) add(secrets.faucet);
     add(secrets.promo);
-    for (const u of secrets.testUsers) add(u);
+    for (const u of users) add(u);
   }
 
   async init(): Promise<void> {
     const cfg = await this.getConfig();
-    log.info(`connected to ${this.contractId} on ${this.network}: coin_unit ${cfg.coinUnit}, test_mode ${cfg.testMode}, latest_round ${(cfg.raw as any)?.latest_round}`);
+    log.info(
+      `connected to ${this.contractId} on ${this.network}: coin ${cfg.token ?? 'not set'}, coin_unit ${cfg.coinsOpen ? cfg.coinUnit : 'not set'}, ` +
+        `test_mode ${cfg.testMode}, latest_round ${(cfg.raw as any)?.latest_round}`,
+    );
   }
 
   queueDepth(): Record<string, number> {
@@ -202,6 +226,8 @@ export class NearChain implements ChainAdapter {
 
   async getConfig(): Promise<ChainConfig> {
     const c = await this.view<any>(this.contractId, 'get_config', {});
+    // the contract's coin wins over the secrets file (on mainnet it is set at the token launch)
+    if (c.token) this.tokenId = c.token;
     return {
       coinUnit: BigInt(c.coin_unit ?? '1000000000000000000'),
       feeBps: c.params.fee_bps,
@@ -213,7 +239,70 @@ export class NearChain implements ChainAdapter {
       openWindowMs: c.params.open_window_ms,
       testMode: !!c.test_mode,
       token: c.token ?? undefined,
+      coinsOpen: !!c.token && !!c.coin_unit,
       raw: c,
+    };
+  }
+
+  async viewAccessKey(accountId: string, publicKey: string, _hint?: 'full' | 'play'): Promise<AccessKeyView | null> {
+    let r: any;
+    try {
+      r = await this.rpcCall('query', { request_type: 'view_access_key', finality: 'final', account_id: accountId, public_key: publicKey });
+    } catch (e) {
+      if (notFound(e)) return null;
+      throw e;
+    }
+    const p = r.permission;
+    const fc = p && typeof p === 'object' ? p.FunctionCall : null;
+    return {
+      nonce: BigInt(r.nonce),
+      blockHash: r.block_hash,
+      blockHeight: r.block_height,
+      permission: p === 'FullAccess' ? 'FullAccess' : { receiverId: fc?.receiver_id ?? '', methodNames: fc?.method_names ?? [], allowance: fc?.allowance ?? null },
+    };
+  }
+
+  async tokenStorage(accountId: string): Promise<{ registered: boolean; minDeposit: string }> {
+    if (!this.tokenId) return { registered: false, minDeposit: '0' };
+    if (!this.storageMin) {
+      const b = await this.view<any>(this.tokenId, 'storage_balance_bounds', {}).catch(() => null);
+      this.storageMin = b?.min ?? '1250000000000000000000';
+    }
+    const bal = await this.view<any>(this.tokenId, 'storage_balance_of', { account_id: accountId });
+    return { registered: bal !== null && bal !== undefined, minDeposit: this.storageMin! };
+  }
+
+  async txDetails(hash: string, signerId: string): Promise<TxDetails | null> {
+    let r: any;
+    try {
+      r = await this.rpcCall('tx', { tx_hash: hash, sender_account_id: signerId, wait_until: 'EXECUTED_OPTIMISTIC' });
+    } catch (e) {
+      if (notFound(e)) return null;
+      throw e;
+    }
+    const t = r.transaction ?? {};
+    const st = r.status;
+    const failed = st && typeof st === 'object' && 'Failure' in st;
+    const receiptFail = (r.receipts_outcome ?? []).find((x: any) => x?.outcome?.status && typeof x.outcome.status === 'object' && 'Failure' in x.outcome.status);
+    const logs = [...(r.transaction_outcome?.outcome?.logs ?? []), ...(r.receipts_outcome ?? []).flatMap((x: any) => x?.outcome?.logs ?? [])];
+    return {
+      hash: t.hash ?? hash,
+      ok: !failed && !receiptFail,
+      signerId: t.signer_id,
+      receiverId: t.receiver_id,
+      actions: (t.actions ?? []).map((a: any) => {
+        const fc = a?.FunctionCall;
+        if (!fc) return {};
+        let args: unknown = undefined;
+        try {
+          args = JSON.parse(Buffer.from(fc.args ?? '', 'base64').toString('utf8'));
+        } catch {
+          args = undefined;
+        }
+        return { method: fc.method_name, args, deposit: String(fc.deposit ?? '0') };
+      }),
+      logs,
+      error: failed ? failureText(st.Failure) : receiptFail ? failureText(receiptFail.outcome.status.Failure) : undefined,
     };
   }
   async balanceOf(account: string): Promise<bigint> {
@@ -434,6 +523,7 @@ export class NearChain implements ChainAdapter {
     return this.send(from, this.contractId, 'transfer', { to, amount: amount.toString() }, 30, 0n, 'EXECUTED_OPTIMISTIC');
   }
   async faucetDeposit(account: string, amount: bigint) {
+    if (!this.secrets.faucet) return { hash: '', ok: false, error: 'no faucet on this relay' };
     const out = await this.send(
       this.accounts.faucet,
       this.tokenId,
@@ -446,5 +536,85 @@ export class NearChain implements ChainAdapter {
     // ft_transfer_call returns the used amount; "0" means the game refused it and the faucet got it back
     if (out.ok && (out.value === '0' || out.value === 0)) return { ...out, ok: false, error: 'game contract refused the deposit' };
     return out;
+  }
+
+  async faucetToWallet(account: string, amount: bigint): Promise<TxOutcome> {
+    if (!this.secrets.faucet) return { hash: '', ok: false, error: 'no faucet on this relay' };
+    const st = await this.tokenStorage(account);
+    if (!st.registered) {
+      const reg = await this.send(this.accounts.faucet, this.tokenId, 'storage_deposit', { account_id: account, registration_only: true }, 30, BigInt(st.minDeposit), 'EXECUTED');
+      if (!reg.ok) return reg;
+    }
+    return this.send(this.accounts.faucet, this.tokenId, 'ft_transfer', { receiver_id: account, amount: amount.toString(), memo: 'realsies test coins' }, 30, 1n, 'EXECUTED');
+  }
+
+  /**
+   * A player's own signed transaction (src/auth/tx.ts checked it): sent as is, the same bytes again on rate
+   * limits and network errors (same hash, so at most one lands), one at a time per player so nonces stay in
+   * order. Never re-signed: a stale nonce or block hash comes back as code 'nonce' or 'expired' for the
+   * caller to ask the browser again.
+   */
+  sendSignedTx(bytes: Uint8Array, signerId: string, method: string): Promise<TxOutcome & { code?: 'nonce' | 'expired' | 'allowance' | 'key'; akNonce?: bigint }> {
+    let q = this.playerQueues.get(signerId);
+    if (!q) this.playerQueues.set(signerId, (q = new SerialQueue()));
+    return q.run(async () => {
+      const t0 = Date.now();
+      let hash: string;
+      try {
+        // a V0 SignedTransaction is the transaction's bytes, then 1 + 64 bytes of ed25519 signature
+        const signed = SignedTransaction.decode(bytes);
+        if (signed.signature.ed25519Signature?.data?.length !== 64) throw new Error('not an ed25519 signature');
+        hash = txHashOf(bytes.subarray(0, bytes.length - 65));
+      } catch (e) {
+        return { hash: '', ok: false, error: `not a signed transaction: ${errMsg(e)}` };
+      }
+      const b64 = Buffer.from(bytes).toString('base64');
+      let lastErr = 'unknown error';
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const url = this.rpc[(this.viewIndex + attempt) % this.rpc.length];
+        let retry: 'rate' | 'network' | null = null;
+        try {
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            // the exact bytes the player signed, never re-encoded
+            body: JSON.stringify({ jsonrpc: '2.0', id: 'tx', method: 'send_tx', params: { signed_tx_base64: b64, wait_until: 'EXECUTED_OPTIMISTIC' } }),
+            signal: AbortSignal.timeout(30_000),
+          });
+          if (r.status === 429 || r.status >= 500) {
+            lastErr = `${url} http ${r.status}`;
+            retry = r.status === 429 ? 'rate' : 'network';
+          } else {
+            const j: any = await r.json();
+            if (!j.error) {
+              const out = this.outcome(method, signerId, hash, j.result, t0);
+              return !out.ok && /allowance/i.test(out.error ?? '') ? { ...out, code: 'allowance' as const } : out;
+            }
+            lastErr = JSON.stringify(j.error);
+            if (/TIMEOUT_ERROR|timeout/i.test(lastErr)) retry = 'network';
+            else if (/rate limit|too many/i.test(lastErr)) retry = 'rate';
+            else {
+              // the transaction itself was refused: say why, so the caller can ask the browser again
+              const code = /NotEnoughAllowance/i.test(lastErr) ? 'allowance' : /AccessKeyNotFound|AccessKeyDoesNotExist/i.test(lastErr) ? 'key' : /InvalidNonce|NonceTooLarge/i.test(lastErr) ? 'nonce' : /Expired/i.test(lastErr) ? 'expired' : undefined;
+              log.warn(`${method} by ${signerId} ${hash}: refused (${code ?? 'invalid'}): ${lastErr.slice(0, 200)}`);
+              this.onTx?.({ method, signer: signerId, hash, ok: false, error: lastErr, ms: Date.now() - t0 });
+              // InvalidNonce tells the key's current nonce: the next request starts above it
+              const ak = /"ak_nonce"\s*:\s*(\d+)/.exec(lastErr);
+              return { hash, ok: false, error: lastErr, code, ...(ak ? { akNonce: BigInt(ak[1]) } : {}) };
+            }
+          }
+        } catch (e) {
+          lastErr = errMsg(e);
+          retry = 'network';
+        }
+        // rate limit, network or timeout: it may have landed; ask for its status, then resend the same bytes
+        log.warn(`${method} by ${signerId} ${hash}: send failed (${retry}): ${lastErr.slice(0, 160)}`);
+        const landed = await this.statusOf(hash, signerId, 'EXECUTED_OPTIMISTIC');
+        if (landed) return this.outcome(method, signerId, hash, landed, t0);
+        await sleep(retry === 'rate' ? 1500 * (attempt + 1) : 800 * (attempt + 1));
+      }
+      this.onTx?.({ method, signer: signerId, hash, ok: false, error: lastErr, ms: Date.now() - t0 });
+      return { hash, ok: false, error: lastErr };
+    });
   }
 }

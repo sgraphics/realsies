@@ -55,6 +55,14 @@ add menu           "mock=1&as=ana&menu=1" 8000
 add terms          "mock=1&qa=terms" 5000
 add deposit        "mock=1&as=ben&qa=deposit" 8000
 add lobby-napping  "mock=1&as=ana&qa=search&level=1&nobots=1" 4500
+# wallet sign-in (protocol v1.3): a relay without test mode (&wallet=1), the mock wallet signs as sam.testnet
+add signin         "mock=1&wallet=1&qa=signin" 6000
+add signin-wait    "mock=1&wallet=1&qa=signin-wait&hold=signIn" 6000
+add playkey        "mock=1&wallet=1&as=sam&qa=key" 8000
+add playkey-wait   "mock=1&wallet=1&as=sam&qa=key&hold=key" 8000
+add deposit-wallet "mock=1&wallet=1&as=sam&qa=deposit" 9000
+add coins-wallet   "mock=1&wallet=1&as=sam&qa=coins" 10000
+add deposit-closed "mock=1&wallet=1&as=sam&qa=deposit&coins=closed" 8000
 # the pages for AI builders (a path instead of a query: qa-shot.sh loads it as is)
 add agents          "/agents?mock=1&qa=top" 7000
 add agents-form     "/agents?mock=1&qa=form" 7000

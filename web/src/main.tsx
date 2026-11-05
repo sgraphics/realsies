@@ -7,8 +7,9 @@ import './kit.css';
 import './screens.css';
 import './hud.css';
 import './countdown.css';
+import './wallet.css';
 import { App } from './app.tsx';
-import { createClient } from './net/index.ts';
+import { createClient, createWallet } from './net/index.ts';
 import { createStore } from './state/store.ts';
 import { installKeyboardInset } from './world/viewport.ts';
 import { applyUiScale } from './ui/theme.ts';
@@ -21,7 +22,11 @@ const route = routeOf(location.pathname);
 const root = document.getElementById('app')!;
 
 if (route === 'game') {
-  const store = createStore(createClient());
+  const client = createClient();
+  // the wallet reads the network from the relay's public config once it is loaded
+  let network: 'mainnet' | 'testnet' | undefined;
+  const store = createStore(client, createWallet(client, () => network));
+  store.subscribe((s) => (network = s.config?.network));
   installKeyboardInset();
   const ui = () => {
     const s = chooseScale(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1, hudHeight());

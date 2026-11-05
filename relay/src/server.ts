@@ -9,9 +9,10 @@ import { Game, GameError, type Conn } from './game/game.js';
 import type { BotmasterHub } from './bot/remote.js';
 import { BRAIN_PROTOCOL, INTENTS, LENGTHS, LIMITS, TOPICS } from './bot/api.js';
 import { STEERING, STEERING_SHA256, STEER_VERSION } from './bot/intents.js';
+import { AuthError, publicPlayKey, type AuthService, type SessionRec } from './auth/service.js';
 import { errMsg } from './util.js';
 import { logger } from './log.js';
-import { CORS, readBody, sendJson } from './http.js';
+import { CORS, bearerToken, clientIp, readBody, sendJson } from './http.js';
 
 const log = logger('http');
 
@@ -44,24 +45,130 @@ export interface ApiMount {
   handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean>;
 }
 
-export function createServer(game: Game, opts: { webDist: string; testMode: boolean; hub?: BotmasterHub; agents?: ApiMount }) {
+/** Sliding-window counter per key (sign-in requests per IP). */
+class Window {
+  private hits = new Map<string, number[]>();
+  constructor(private max: number, private ms: number) {}
+  allow(key: string, now = Date.now()): boolean {
+    if (this.hits.size > 20_000) this.hits.clear();
+    const xs = (this.hits.get(key) ?? []).filter((t) => t > now - this.ms);
+    if (xs.length >= this.max) {
+      this.hits.set(key, xs);
+      return false;
+    }
+    xs.push(now);
+    this.hits.set(key, xs);
+    return true;
+  }
+}
+
+function seg(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    throw new GameError('invalid_request', 'malformed path');
+  }
+}
+
+export function createServer(game: Game, opts: { webDist: string; testMode: boolean; hub?: BotmasterHub; agents?: ApiMount; auth?: AuthService }) {
   const routes: { method: string; re: RegExp; fn: Handler }[] = [];
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
+  const auth = opts.auth;
+  const signIns = new Window(60, 10 * 60_000);
+
+  /** The session of a Bearer token; 401 without one. */
+  function requireSession(req: http.IncomingMessage): SessionRec {
+    const s = auth?.session(bearerToken(req));
+    if (!s) throw new AuthError('unauthorized', 'sign in first (Authorization: Bearer <session token>)', 401);
+    return s;
+  }
+  /**
+   * Who may act as `account`: a test user without a session (test mode, as before), anyone else only with
+   * a session of that very account. Wallet sign-in replaces the test-user identity everywhere.
+   */
+  function actAs(req: http.IncomingMessage, account: string): void {
+    if (game.isTestUser(account)) return;
+    const s = requireSession(req);
+    if (s.account !== account) throw new AuthError('forbidden', 'that is another account', 403);
+  }
 
   route('GET', /^\/api\/config$/, () => game.publicConfig);
   route('GET', /^\/api\/test-users$/, () => game.testUsers());
   route('POST', /^\/api\/test-users\/([^/]+)\/faucet$/, async (m, req) => {
+    const account = seg(m[1]);
+    actAs(req, account);
     const body = await readBody(req);
-    return game.faucet(decodeURIComponent(m[1]), body?.coins === undefined ? 100 : Number(body.coins));
+    return game.faucet(account, body?.coins === undefined ? 100 : Number(body.coins));
   });
   route('POST', /^\/api\/withdraw$/, async (_m, req) => {
     const body = await readBody(req);
     return game.withdraw(String(body?.accountId ?? ''), Number(body?.coins));
   });
-  route('GET', /^\/api\/me\/([^/]+)$/, (m) => game.me(decodeURIComponent(m[1])));
+  route('GET', /^\/api\/me\/([^/]+)$/, (m, req) => {
+    const account = seg(m[1]);
+    actAs(req, account);
+    return game.me(account);
+  });
   route('GET', /^\/api\/rounds$/, () => game.listRounds());
-  route('GET', /^\/api\/rounds\/(\d+)\/results\/([^/]+)$/, (m) => game.results(Number(m[1]), decodeURIComponent(m[2])));
-  route('GET', /^\/api\/verify\/([^/]+)$/, (m, _req, url) => game.verify(decodeURIComponent(m[1]), url.searchParams.get('account') ?? ''));
+  route('GET', /^\/api\/rounds\/(\d+)\/results\/([^/]+)$/, (m, req) => {
+    const account = seg(m[2]);
+    actAs(req, account);
+    return game.results(Number(m[1]), account);
+  });
+  route('GET', /^\/api\/verify\/([^/]+)$/, (m, req, url) => {
+    const account = url.searchParams.get('account') ?? '';
+    // test mode: a bundle is for its viewer only; on mainnet bundles are public once the round settled
+    if (opts.testMode && account) actAs(req, account);
+    return game.verify(seg(m[1]), account);
+  });
+
+  // ---------- wallet sign-in and sessions (protocol v1.3; src/auth/service.ts) ----------
+  route('POST', /^\/api\/auth\/challenge$/, (_m, req) => {
+    if (!auth) throw new GameError('wallet_disabled', 'wallet sign-in is off on this relay', 404);
+    if (!signIns.allow(clientIp(req))) throw new GameError('rate_limited', 'too many sign-ins from here; wait a few minutes', 429);
+    return auth.challenge();
+  });
+  route('POST', /^\/api\/auth\/verify$/, async (_m, req) => {
+    if (!auth) throw new GameError('wallet_disabled', 'wallet sign-in is off on this relay', 404);
+    const body = await readBody(req);
+    const { token, session } = await auth.verify(body);
+    game.ensureWalletUser(session.account);
+    return { token, accountId: session.account, expiresAt: session.expiresAt, playKey: null, me: await game.me(session.account) };
+  });
+  route('GET', /^\/api\/session$/, async (_m, req) => {
+    const s = requireSession(req);
+    game.ensureWalletUser(s.account);
+    return { token: bearerToken(req), accountId: s.account, expiresAt: s.expiresAt, playKey: publicPlayKey(s.playKey), me: await game.me(s.account) };
+  });
+  route('DELETE', /^\/api\/session$/, (_m, req) => {
+    const s = auth?.session(bearerToken(req));
+    if (s) {
+      auth!.revoke(bearerToken(req));
+      game.closeSession(s.account, s.id);
+    }
+    return { ok: true };
+  });
+  route('POST', /^\/api\/session\/ticket$/, (_m, req) => auth!.ticket(requireSession(req)));
+  route('POST', /^\/api\/session\/play-key$/, async (_m, req) => {
+    const s = requireSession(req);
+    const body = await readBody(req);
+    return publicPlayKey(await auth!.registerPlayKey(s, body?.publicKey));
+  });
+  route('DELETE', /^\/api\/session\/play-key$/, (_m, req) => {
+    auth!.forgetPlayKey(requireSession(req));
+    return { ok: true };
+  });
+  route('GET', /^\/api\/session\/wallet$/, (_m, req) => game.walletInfo(requireSession(req).account));
+  route('POST', /^\/api\/session\/deposit$/, async (_m, req) => {
+    const s = requireSession(req);
+    const body = await readBody(req);
+    return game.reportDeposit(s.account, body?.txHash);
+  });
+  route('POST', /^\/api\/session\/faucet-wallet$/, async (_m, req) => {
+    const s = requireSession(req);
+    const body = await readBody(req);
+    return game.faucetToWallet(s.account, body?.coins === undefined ? 100 : Number(body.coins));
+  });
   route('GET', /^\/api\/leaderboard$/, () => game.leaderboard());
   route('POST', /^\/api\/dev\/end-round$/, async () => {
     if (!opts.testMode) throw new GameError('not_test_mode', 'test mode only', 403);
@@ -131,7 +238,7 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
         const out = await r.fn(url.pathname.match(r.re)!, req, url);
         sendJson(res, 200, out ?? { ok: true });
       } catch (e) {
-        if (e instanceof GameError) sendJson(res, e.status, { error: e.code, code: e.code, message: e.message });
+        if (e instanceof GameError || e instanceof AuthError) sendJson(res, e.status, { error: e.code, code: e.code, message: e.message });
         else {
           log.error(`${req.method} ${url.pathname}`, e);
           sendJson(res, 500, { error: 'internal', code: 'internal', message: errMsg(e) });
@@ -162,6 +269,19 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
       socket.destroy();
       return;
     }
+    // a wallet session: a one-time ticket from POST /api/session/ticket (the token itself never goes in a URL)
+    const ticket = url.searchParams.get('ticket');
+    if (ticket !== null) {
+      const s = auth?.redeemTicket(ticket);
+      if (!s || !game.isPlayer(s.account)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nunknown or used ticket; sign in again\r\n');
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => onSocket(ws, s.account, s.id));
+      return;
+    }
+    // test mode: test users by name, as before
     const account = url.searchParams.get('account') ?? '';
     if (!game.isTestUser(account)) {
       socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nunknown test user\r\n');
@@ -171,10 +291,11 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
     wss.handleUpgrade(req, socket, head, (ws) => onSocket(ws, account));
   });
 
-  function onSocket(ws: WebSocket, account: string): void {
+  function onSocket(ws: WebSocket, account: string, sessionId?: string): void {
     let alive = true;
     const conn: Conn = {
       account,
+      ...(sessionId ? { sessionId } : {}),
       send: (msg: ServerMsg) => {
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
       },

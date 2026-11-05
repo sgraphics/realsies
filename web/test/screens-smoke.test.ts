@@ -125,6 +125,10 @@ const { EVIDENCE_CHAT_ID } = await import('../src/net/mock/evidence.ts');
 const { AgentsPage } = await import('../src/agents/AgentsPage.tsx');
 const { Dashboard } = await import('../src/agents/Dashboard.tsx');
 const { MockBuilderClient } = await import('../src/net/mock/builders.ts');
+const { WalletSignInPanel } = await import('../src/screens/SignIn.tsx');
+const { KeySetupDialog } = await import('../src/screens/KeySetup.tsx');
+const { DepositDialog } = await import('../src/screens/Deposit.tsx');
+const { MockWallet } = await import('../src/wallet/mock.ts');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EV = join(here, '..', '..', 'experiments', 'near-ai', 'evidence', '2026-11-04');
@@ -250,6 +254,38 @@ try {
   await sleep(50);
   ok(/Paste your botmaster token/.test(root.textContent) && /any token works/.test(root.textContent), 'dashboard without a token: the token screen');
   render(null, root as unknown as Element);
+
+  // wallet sign-in (protocol v1.3): the sign-in panel, "Enable coins", the wallet coins dialog
+  const wc = new MockGameClient({ wallet: true, storageKey: null, timeScale: 0.02, searchMs: [20, 40], noHuman: true, loadEvidence: fsLoader, buyUrl: 'https://meme.cooking' });
+  const ws = createStore(wc, new MockWallet(wc, { accountId: 'sam.testnet', delayMs: 2 }));
+  await ws.actions.loadConfig();
+  render(h(WalletSignInPanel, { store: ws, ok: true, onNeedConsent() {} }), root as unknown as Element);
+  await sleep(20);
+  const si = root.textContent;
+  ok(/Sign in with a NEAR wallet/.test(si) && /no transaction, no gas/.test(si) && /Get a wallet/.test(si), 'sign-in panel: the button, free to play, get a wallet: ' + si.slice(0, 90));
+  await ws.actions.walletSignIn();
+  render(h(KeySetupDialog, { store: ws, onDone() {} }), root as unknown as Element);
+  await sleep(20);
+  const kt = root.textContent;
+  ok(/Enable coins/.test(kt) && /sam\.testnet/.test(kt) && /play/.test(kt) && /call/.test(kt) && /0\.25 NEAR/.test(kt) && /never withdraw/.test(kt) && /Approve in wallet/.test(kt), 'enable coins: whose key, what it may do, the allowance, the approval');
+  render(h(DepositDialog, { store: ws, gate: false, onDone() {}, onEnableCoins() {} }), root as unknown as Element);
+  await sleep(40);
+  const dt = root.textContent;
+  ok(/Deposit to earn/.test(dt) && /Deposit from wallet/.test(dt) && /Buy tREAL/.test(dt) && /Enable coins/.test(dt) && !/Get 100 test coins/.test(dt), 'wallet deposit: from the wallet, Buy link, enable coins, no faucet without test mode');
+  render(null, root as unknown as Element);
+  ws.actions.logout();
+  wc.dispose();
+  const closedClient = new MockGameClient({ wallet: true, coinsOpen: false, storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
+  const cs = createStore(closedClient, new MockWallet(closedClient, { accountId: 'sam.testnet', delayMs: 2 }));
+  await cs.actions.loadConfig();
+  await cs.actions.walletSignIn();
+  render(h(DepositDialog, { store: cs, gate: false, onDone() {} }), root as unknown as Element);
+  await sleep(40);
+  const ct2 = root.textContent;
+  ok(/Coins open when REAL launches/.test(ct2) && /Get REAL at the launch/.test(ct2) && /everyone plays free/.test(ct2) && /Play free/.test(ct2) && !/Deposit from wallet/.test(ct2), 'no coin yet: free play only, no deposit form');
+  render(null, root as unknown as Element);
+  cs.actions.logout();
+  closedClient.dispose();
 } catch (e) {
   failures++;
   console.log('  FAIL', e);
@@ -259,7 +295,7 @@ try {
 }
 ok(errors.length === 0, 'no uncaught errors' + (errors.length ? ': ' + String(errors[0]) : ''));
 const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
-for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Who.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx']) {
+for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Who.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }

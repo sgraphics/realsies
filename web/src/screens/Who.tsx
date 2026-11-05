@@ -1,5 +1,6 @@
 // "Who are you?" (test mode): the six test users idle on pedestals right under the top bar; tap one
-// to play as them. First entry asks once, lightly: "I'm 18 or older and accept the terms".
+// to play as them. First entry asks once, lightly: "I'm 18 or older and accept the terms". Test mode also
+// offers wallet sign-in (to try it on testnet); without test mode the wallet is the only door (SignIn.tsx).
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
@@ -13,12 +14,21 @@ import type { SceneSeat } from '../../../art/src/scene/types.ts';
 import { themeFor } from '../../../shared/protocol.ts';
 import { acceptTerms, termsAccepted } from '../state/consent.ts';
 import { agentsHref } from '../agents/route.ts';
+import { SignInScreen } from './SignIn.tsx';
 
 export function WhoScreen({ store, onTerms }: { store: Store; onTerms(): void }) {
+  const s = useStore(store);
+  if (s.config && !s.config.testMode) return <SignInScreen store={store} onTerms={onTerms} />;
+  return <TestUserScreen store={store} onTerms={onTerms} />;
+}
+
+function TestUserScreen({ store, onTerms }: { store: Store; onTerms(): void }) {
   const s = useStore(store);
   useEffect(() => {
     store.actions.loadTestUsers().catch(() => {});
   }, [store]);
+  const walletOn = !!s.config?.wallet && !!store.wallet && !!store.client.authChallenge;
+  const f = s.signIn;
   const users = s.testUsers ?? [];
   const rigs = useRigs(users.map((u) => u.seed));
   const seats: SceneSeat[] = useMemo(() => rigs.map((r) => ({ rig: r, look: 'idle' as const })), [rigs.map((r) => r?.seed).join()]);
@@ -38,13 +48,27 @@ export function WhoScreen({ store, onTerms }: { store: Store; onTerms(): void })
     store.actions.selectUser(accountId).catch(() => {});
   };
 
+  const walletSignIn = () => {
+    if (!ok) {
+      setNudge((n) => n + 1);
+      setTimeout(() => box.current?.focus(), 0);
+      return;
+    }
+    void store.actions.walletSignIn();
+  };
   const title = (
     <div class="who-title">
       <h1 class="px-title">Who are you?</h1>
-      <p class="who-sub">Pick a test player.</p>
+      <p class="who-sub">Pick a test player{walletOn ? ' or' : '.'}</p>
+      {walletOn && (
+        <button type="button" class="px-btn small who-wallet" disabled={f.phase === 'wallet' || f.phase === 'checking'} onClick={walletSignIn} title="Sign in with your own testnet account">
+          <Icon name="shield" /> {f.phase === 'wallet' ? 'Waiting for your wallet…' : f.phase === 'checking' ? 'Checking…' : 'Sign in with a NEAR wallet'}
+        </button>
+      )}
       <a class="px-link who-agents" href={agentsHref()} title="For AI builders: enter your agent, earn the Turing bonus, get the transcripts">
         <Icon name="bot" /> Run an AI? Enter it
       </a>
+      {f.phase === 'error' && <p class="who-error px-bad"><Icon name="cross" /> {f.error}</p>}
       {!ok && (
         <label key={nudge} class={'who-consent' + (nudge ? ' nudge' : '')}>
           <input

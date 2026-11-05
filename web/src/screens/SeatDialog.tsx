@@ -9,7 +9,7 @@ import { Button, Icon } from '../ui/kit.tsx';
 import { Portrait } from '../ui/Portrait.tsx';
 import { useEscape, useRig } from '../ui/hooks.ts';
 
-export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: ThemeId; onClose(): void; onDeposit(): void }) {
+export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: ThemeId; onClose(): void; onDeposit(): void; onNeedKey?(coins: number): void }) {
   const s = useStore(p.store);
   const cfg = s.config;
   const me = s.me;
@@ -24,7 +24,14 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
   const customOk = custom !== '' && Number.isFinite(customN) && customN >= min && customN <= max && customN <= balance;
   const freeLeft = me?.freeChatsLeft;
   const dollars = (n: number) => '$' + (n * usd).toFixed(n * usd < 1 ? 2 : 2);
+  // a wallet player's first paid chat in this browser: enable coins (one approval), then the pick goes on
+  const needsKey = !!s.session && !p.store.actions.coinsEnabled();
+  const closed = cfg?.coinsOpen === false;
   const pick = (mode: 'free' | 'paid', coins?: number) => {
+    if (mode === 'paid' && needsKey && p.onNeedKey) {
+      p.onNeedKey(coins ?? 0);
+      return;
+    }
     p.store.actions.pickSeat(p.level, p.seat.index, mode, coins);
     p.onClose();
   };
@@ -44,7 +51,11 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
               <h2 class="px-title" style={{ wordBreak: 'break-all' }}>{p.seat.skin.name}</h2>
               <p class="px-body px-dim" style={{ marginTop: '6px' }}>Then make your call: real human, yes or no?</p>
             </div>
-            {balance > 0 ? (
+            {closed ? (
+              <div class="px-panel tight light">
+                <p class="px-sub" style={{ marginBottom: 0 }}><Icon name="coin" /> Coins open when REAL launches. Until then every chat is free.</p>
+              </div>
+            ) : balance > 0 ? (
               <>
                 <p class="px-label">Put coins on the table</p>
                 <div class="preset-grid">
@@ -59,7 +70,7 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
                   <input class="px-input" type="number" inputMode="numeric" min={min} max={Math.min(max, balance)} placeholder={`${min}-${Math.min(max, balance)}`} value={custom} onInput={(e) => setCustom((e.target as HTMLInputElement).value)} aria-label="Custom amount of coins" />
                   <Button type="submit" disabled={!customOk}>{customOk ? `Play ${customN} (${dollars(customN)})` : 'Custom'}</Button>
                 </form>
-                <p class="px-dim" style={{ fontSize: '13px', margin: 0 }}>Right calls share the coins of wrong ones. You have <Icon name="coin" /> {balance}.</p>
+                <p class="px-dim" style={{ fontSize: '13px', margin: 0 }}>Right calls share the coins of wrong ones. You have <Icon name="coin" /> {balance}.{needsKey ? ' Your first coin chat asks your wallet once.' : ''}</p>
               </>
             ) : (
               <div class="px-panel tight light">
@@ -68,7 +79,7 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
               </div>
             )}
             <div class="px-row">
-              <Button kind={balance > 0 ? 'default' : 'primary'} onClick={() => pick('free')} disabled={freeLeft === 0}>
+              <Button kind={balance > 0 && !closed ? 'default' : 'primary'} onClick={() => pick('free')} disabled={freeLeft === 0}>
                 Play free
               </Button>
               {freeLeft != null && <span class="px-dim" style={{ fontSize: '13px' }}>{freeLeft} free chats left today</span>}

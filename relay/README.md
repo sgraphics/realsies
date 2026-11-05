@@ -4,9 +4,10 @@ Node service for the Realsies E2E test variant: HTTP API and WebSocket on one po
 round scheduler, matchmaking, two-minute chats, bots on NEAR AI Cloud enclave models with every
 completion's exact bytes and signature kept, chain integration on NEAR testnet (operator, faucet,
 promo and test-user keys), scoring and rating, verification bundles, persistence, and static
-hosting of `../web/dist`, and the AI builders API (access requests, botmasters, their agents' stats and
-transcripts, their own NEAR AI keys; `docs/agents.md`). Spec: `docs/spec.md` sections 2 to 4 (v1.1).
-Protocol: `shared/protocol.ts`.
+hosting of `../web/dist`, the AI builders API (access requests, botmasters, their agents' stats and
+transcripts, their own NEAR AI keys; `docs/agents.md`), and wallet sign-in: NEP-413 sessions, the browser's
+play key, plays and calls signed in the browser and checked here, deposits through the wallet (`docs/spec.md`
+section 7). Spec: `docs/spec.md` sections 2 to 4 and 7 (v1.3). Protocol: `shared/protocol.ts` (v1.3).
 
 ## Run
 
@@ -18,6 +19,9 @@ npm run build        # esbuild -> dist/index.js (plain ESM, Node 22.13+)
 npm start            # node dist/index.js
 npm test             # unit + integration tests (mock chain, mock NEAR AI signer; no credits, no testnet)
 npm run e2e          # the scenario against testnet; spawns a relay if none answers on RELAY_URL
+                     # (never spawn one on game.realsies.testnet: the server is its only operator; use
+                     #  RELAY_URL=https://realsies.lol, or SECRETS/E2E_USERS of a throwaway deployment)
+npx tsx tools/wallet-proof.ts   # wallet sign-in and the play key on testnet (PLAYER=..., a throwaway relay)
 npm run typecheck
 npm run botmaster-admin -- requests   # AI builders: access requests, botmasters, personas (tools/botmaster-admin.ts)
 ```
@@ -33,7 +37,14 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | Var | Default | Notes |
 |---|---|---|
 | `PORT` | 3960 | HTTP and `/ws` |
-| `TEST_MODE` | 1 | test-user screen, faucet, dev endpoints, all levels unlocked |
+| `TEST_MODE` | 1 | test-user screen, faucet, dev endpoints, relay-signed test users, all levels unlocked; wallet sign-in works too. `0`: wallet accounts only (mainnet), no test users, no dev endpoints, no faucet |
+| `AUTH_RECIPIENT` | realsies.lol | NEP-413 recipient every sign-in signature must name: the domain the players see (a testnet relay moved to test.realsies.lol says so here) |
+| `SESSION_DAYS` | 30 | a wallet session lives this long |
+| `BUY_URL` | | "Buy REAL": the meme.cooking page before the launch finalizes, the Rhea swap after; unset = no link |
+| `PLAY_KEY_ALLOWANCE_NEAR` | 0.25 | gas allowance of the play key a browser asks its wallet to add |
+| `PLAY_GAS_TGAS` | 30 | prepaid gas of each browser-signed play and call (only burnt gas is charged; a play burns about 3 Tgas) |
+| `SIGN_TIMEOUT_SECONDS` | 20 | a browser has this long to sign a play or call (`sign_tx`); then the play goes free |
+| `MOCK_WALLETS` | | `1` on a keyless dev relay (mock chain): any key a real wallet signs with counts, so a wallet works locally |
 | `ROUND_MINUTES` / `CHAT_SECONDS` / `CALL_SECONDS` | 10 / 120 / 20 | |
 | `COUNTDOWN_SECONDS` | 3 | full-screen 3-2-1 before every chat: `chat_started.startedAt` = now + this; `say` before it is refused (`chat_not_started`), typing dropped, bots start their clocks at `startedAt`; `PublicConfig.countdownSeconds` |
 | `CAST_SIZE` | 39 | demo bot characters per round, 13 a level, nationalities drawn from a Western mix (`src/persona/cast.ts`); each a hand-written persona of that country or a person generated from the round's `castSeed`; 0 = the personas folder as is, nobody generated (`GEN_PERSONAS` is no longer read) |
@@ -68,7 +79,10 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | File | Role |
 |---|---|
 | `src/index.ts`, `src/app.ts` | entry point and wiring |
-| `src/server.ts`, `src/http.ts` | HTTP routes, `/ws` upgrade (test users only), `/bot/ws` (remote brains), heartbeat, static files; JSON, body, bearer and client-IP helpers |
+| `src/server.ts`, `src/http.ts` | HTTP routes, `/ws` upgrade (a wallet session's one-time ticket, or a test user by name in test mode), who may act as an account (a test user, or a session of that account), the wallet routes, `/bot/ws` (remote brains), heartbeat, static files; JSON, body, bearer and client-IP helpers |
+| `src/auth/nep413.ts` | NEP-413 payloads (borsh with the 2^31+413 tag), ed25519 verification, the signature encodings wallets use (base64, base64url, `ed25519:` base58, hex), account id rules |
+| `src/auth/service.ts` | sign-in: one-use 32-byte nonces, the signature for `AUTH_RECIPIENT`, `view_access_key` must say FullAccess; sessions (table `sessions`, token sha256 only), one-time WebSocket tickets, sign-out; the browser's play key checked on chain (the game contract, exactly `play` and `call`) and kept on the session |
+| `src/auth/tx.ts` | the transaction a browser is asked to sign (`sign_tx`) and the check of what comes back: byte for byte that transaction, canonical, under the play key's ed25519 signature |
 | `src/agents/` | AI builders (`docs/agents.md`): `store.ts` the tables (access requests, DB botmasters with token sha256 only, personas, sealed keys, settled chat records), `api.ts` the HTTP API (`/api/agents`, `/api/admin`, `/api/botmaster`), `admin.ts` operator actions shared with `tools/botmaster-admin.ts`, `validate.ts` input checks and the model check against `/v1/models`, `stats.ts` the settled chat records (anonymised players, the chat's share of the Turing bonus from chain plays) and scorecards, `byok.ts` botmasters' own NEAR AI keys, `persona.ts` an approved persona as a round persona |
 | `src/nearai/credits.ts` | spend per key from `usage` times price, the house budget, credit-failure detection (402; 400 or 403 about credits, balance, quota or billing; 401; never 429 or 5xx), keys out of credits, one-token rechecks, recovery; `TrackedAi` wraps a client |
 | `src/secretbox.ts` | AES-256-GCM sealing with RELAY_ENCRYPTION_KEY, bound to the owner |
@@ -82,8 +96,8 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `src/bot/remote.ts` | botmaster registry (files and DB, read on every use), `/bot/ws` auth (token sha256), per-chat event routing, disconnect signalling, kick on rotate or revoke, token re-check at every heartbeat |
 | `src/game/results.ts` | ratings, coins deltas from chain plays, would-have, Turing and locked bonuses |
 | `src/game/bundle.ts` | `VerifyBundle` per bot chat; the proof is the chat's last signed completion |
-| `src/chain/near.ts` | near-api-js 7.4 adapter; one serial queue per key; signs once and resends the same bytes on 429 or network errors; re-signs on expiry or nonce errors; RPC failover |
-| `src/chain/mock.ts` | in-memory contract with the same rules and error strings (replays the contract's own full-round test to the exact balances) |
+| `src/chain/near.ts` | near-api-js 7.4 adapter; one serial queue per key; signs once and resends the same bytes on 429 or network errors; re-signs on expiry or nonce errors; RPC failover. Wallet players: `view_access_key`, player-signed bytes broadcast as is with `send_tx` (one at a time per player; a stale nonce, an expired block hash, an empty allowance or a deleted key come back as codes), transactions read back by hash (deposits), the coin's NEP-145 registration; the coin comes from the contract's `get_config` (mainnet: once set at the launch) |
+| `src/chain/mock.ts` | in-memory contract with the same rules and error strings (replays the contract's own full-round test to the exact balances); access keys with NEAR's function-call rules (receiver, methods, no deposit, nonces, allowance), wallets' own deposits and withdrawals, registration on the coin, a contract without a coin (`coinsOpen`) |
 | `src/nearai/client.ts`, `verify.ts` | attestation (nonce = round secret_hash), completions with exact bytes, signatures with retries; EIP-191 recovery, report_data binding, think-stripping |
 | `src/formats.ts`, `settlement.ts`, `scoring.ts` | spec section 3 strings, contract settlement math, rating rules |
 | `src/models.ts` | per-model request options (reasoning off) and prices |
@@ -99,6 +113,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `examples/remote-brain.mjs` | a minimal remote brain (Node 22+, no dependencies) |
 | `tools/mcp-botmaster.mjs` | stdio MCP server for botmasters: the bot API docs and a request-a-persona tool that files a pending request |
 | `tools/botmaster-admin.ts` | the operator's command line on the DB: requests, approve or reject, botmasters, create, rotate, revoke, personas, approve, reject or disable; a token is printed once |
+| `tools/wallet-proof.ts` | wallet sign-in and the play key end to end on testnet, against a relay on a throwaway deployment (it refuses `game.realsies.testnet` and `game.realsies.near`): the account's full-access key from the legacy keychain signs the NEP-413 sign-in, the near CLI does what a wallet popup would (AddKey, deposit, withdraw), the web app's encoder signs the play and the call; gas and allowance measured; a report in `data/` |
 
 Round lifecycle: start (secret, cast seed, `start_round`, attestation per model of the round's cast, `CAST_SIZE` demo bot
 characters, one level each, plus remote-brain personas at each of their levels, each storing the persona it plays, `commit_characters` FINAL) -> humans committed on first connect (batched) ->
@@ -163,12 +178,53 @@ pause (or a bot chat whose key died) but not started yet never starts (`bots_una
 `call_missed` to every side; its play is in no opening, so it is refunded; no rating change). `GET /api/health`
 carries `ai: {status, since}` for the relay's key; spend, budget and the reason are in `GET /api/admin/health`.
 
+Wallet sign-in is part of `shared/protocol.ts` v1.3: `PublicConfig.coinsOpen`, `buyUrl`, `tokenDecimals`, `wallet`; `Me.kind`;
+`AuthChallenge`, `AuthProof`, `AuthSession`, `PlayKeyInfo`, `WalletInfo`, `SignRequestTx`; `sign_tx`, `config`, `signed_tx`,
+`sign_declined`; the optional `GameClient` methods.
+
 Extra fields beyond `shared/protocol.ts` (optional, backward compatible): `PersonaCard` carries `name` and
 `mood`; `ChatResult` and `VerifyBundle` carry `botmaster` for an AI builder's agent; `VerifyBundle` carries
 `proofCompletionIndex`, `openReport`, `relayChecks` (with `steeringOk`) and `steering`; HTTP error bodies are `{error, code, message}`;
 a fresh `room` is pushed to each connection's last entered level when a new round starts;
 `GET /api/dev/state`, `GET /api/dev/bot-trace/:chatId?account=` (test mode, the viewer, after the round settles) and `GET /api/health` exist for
 diagnostics; `GET /api/bot/steering` publishes the steering catalogue and its sha256.
+
+## Mainnet relay (not running yet)
+
+Same code with `TEST_MODE=0`. It needs, next to the testnet relay (its own unit, port, DB and secrets):
+
+| Env | Value |
+|---|---|
+| `TEST_MODE` | `0` |
+| `SECRETS` | `relay/.secrets/mainnet.json` (shape below) |
+| `DB` | its own file, for example `relay/data/mainnet.db`: never the testnet DB |
+| `PORT` | its own port if it runs next to the testnet relay, for example 3962 |
+| `AUTH_RECIPIENT` | `realsies.lol` (and `test.realsies.lol` on the testnet relay once it moves there) |
+| `ROUND_MINUTES`, `FREE_CHATS_PER_DAY` | 360 and 3 |
+| `BUY_URL` | the meme.cooking page of REAL now; the Rhea swap after the launch finalizes (a restart) |
+| `NEAR_AI_API_KEY`, `NEAR_AI_BUDGET_USD`, `ADMIN_TOKEN`, `RELAY_ENCRYPTION_KEY` | as on testnet; its own NEAR AI budget |
+| `CHAIN` | `near` (or `auto` with the secrets file present) |
+
+`relay/.secrets/mainnet.json` (mode 600, never in git):
+
+```json
+{
+  "network": "mainnet",
+  "rpc": ["https://free.rpc.fastnear.com", "https://rpc.mainnet.near.org"],
+  "contractId": "game.realsies.near",
+  "tokenDecimals": 18,
+  "operator": { "accountId": "ops.realsies.near", "privateKey": "ed25519:<function-call key on game.realsies.near: start_round, commit_characters, reveal_round, open_characters, settle_round, prune_round>" },
+  "promo": { "accountId": "promo.realsies.near", "privateKey": "ed25519:<function-call key on game.realsies.near: transfer>" },
+  "accounts": { "fund": "fund.realsies.near", "house": "house.realsies.near", "bots": "bots.realsies.near" }
+}
+```
+
+No `faucet` and no `testUsers` (ignored anyway without test mode). `tokenId` may stay out: the relay reads the coin from
+the contract's `get_config`, so until the owner calls `set_token` and `set_coin_unit` the game is free play only
+("Coins open when REAL launches") and within a minute of them coins open everywhere, no restart. At the launch, also
+register `game.realsies.near` on the REAL token (`storage_deposit`, or deposits fail), and fund, house, promo and bots
+if they will ever withdraw. ops and promo need a little NEAR for gas; players pay their own plays, calls, deposits and
+withdrawals. The relay never holds a player's key.
 
 ## Tests
 
@@ -202,6 +258,29 @@ the relay's key at HTTP 402: `bots_unavailable` at once, no human-to-human match
 chats matched before the pause never start (human and bot, plays refunded, no rating change), recovery by the
 recheck resumes matching; a level whose only bot is on an empty key paused on its own; a 429 saying "quota
 exceeded" never marks a key out; public health without spend, admin health with it.
+
+Wallet sign-in (`test/wallet-unit.test.ts`, `test/wallet.test.ts`): NEP-413 against near-api-js's own `signNep413Message`
+with keys made in the test (byte for byte the same signature; a wrong recipient, message, nonce, callback URL or key fails;
+every encoding wallets use); the sign-in service (reused, unknown and expired nonces, a nonce spent by a failed attempt, a
+function-call key, a key that is not the account's, a forged claim); sessions (token sha256 only, expiry, sign-out, one-time
+and short-lived tickets); play keys (exactly play and call on the game contract; any-method, withdraw, transfer, another
+contract or a full-access key refused); client-signed transactions (the web app's encoder equal to near-api-js byte for byte;
+another signer, key, receiver, method, coins, handle, extra argument, reordered JSON, deposit, gas, nonce, block hash, a
+spliced or flipped signature, two actions or an AddKey refused); mainnet secrets without faucet, test users or coin; the mock
+chain's access-key rules. Then in-process relays: without test mode (no test users, dev endpoints or faucet; sign-in over
+HTTP; my coins need my session; a ticketed socket; a wallet deposit counted once with the locked bonus; a paid chat whose
+play and call the browser signs, on chain as the player's own; a tampered and a declined signature going free; the round
+settling on its own with the player's results; sign-out closing the socket); before the coin exists (free play only, the
+coin showing up pushed to every socket); and test mode (a wallet account next to the test users, the faucet into the game
+and into the wallet, browser-signed plays only).
+
+`npx tsx tools/wallet-proof.ts` (testnet, a throwaway deployment; 2026-11-05 on `game.rlzw-134fbb.testnet` with its own coin
+`token.rlzw-134fbb.testnet`): passed in about a minute: the sign-in, a replayed sign-in refused, the AddKey, the relay's
+check of the key, the faucet into the wallet, the deposit, the play and the call signed by the browser's key and on chain as
+the player's, NEAR itself refusing a `withdraw` signed with the play key (MethodNameMismatch), settlement, the withdrawal and
+sign-out. A play burnt 3.02 Tgas (0.000279 NEAR), a call 2.47 Tgas (0.000224 NEAR), and the key's allowance dropped by
+exactly what was burnt; a separate probe sent the same call at 10, 30 and 100 Tgas prepaid and was charged the same.
+`npm run e2e` against a local relay on that deployment (its own test users) passed with 101 checks in round 3.
 
 Also covered: `prune_round` in the mock chain with the contract's rules, the relay pruning a settled
 round while results and bundles stay served, and idle mode (no `start_round` or commits while nobody

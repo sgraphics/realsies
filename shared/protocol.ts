@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.2 (2026-11-05: chat countdown, persona cards, AI builders; all additive).
+// Realsies relay <-> web protocol, v1.3 (2026-11-05: wallet sign-in with NEP-413 sessions, play keys, player-signed plays and calls, wallet deposits; all additive).
+// v1.2 (2026-11-05): chat countdown, persona cards, AI builders.
 // Authoritative. Owned by the lead; workstreams import it and do not edit it.
 // Spec: docs/spec.md
 
@@ -73,6 +74,85 @@ export interface PublicConfig {
   countdownSeconds?: number; // full-screen 3-2-1 before every chat; default 3
   explorerTx: string; // template containing {hash}
   explorerAccount: string; // template containing {account}
+  // ----- v1.3, optional -----
+  /** false while the game contract has no coin set (mainnet before REAL launches): free play only */
+  coinsOpen?: boolean;
+  /** "Buy REAL": the meme.cooking page before the launch finalizes, the Rhea swap after; absent = no link */
+  buyUrl?: string;
+  tokenDecimals?: number;
+  /** wallet sign-in; absent on relays before v1.3 (test users only) */
+  wallet?: WalletConfig;
+}
+
+// ---------- wallet sign-in (v1.3) ----------
+// Sign in: the relay issues a nonce (AuthChallenge), the wallet signs a NEP-413 message for `recipient`, the
+// relay checks the signature and, over RPC, that the key is a full-access key of the account, then issues a
+// session (AuthSession.token, sent as `Authorization: Bearer`). The WebSocket takes a one-time ticket for it
+// (`/ws?ticket=`). Free play needs nothing more. Coins: the browser makes its own ed25519 key and the wallet
+// adds it in one approval as a function-call key for the game contract (`play`, `call`, a small gas
+// allowance). From then on the relay sends `sign_tx` for every play and call, the browser checks and signs
+// it with that key, and the relay checks the signed bytes, broadcasts and tracks them. Deposits
+// (ft_transfer_call on the coin) and withdrawals (`withdraw` on the game) go through the wallet.
+
+export interface WalletConfig {
+  /** NEP-413 recipient every sign-in message names, e.g. "realsies.lol" */
+  recipient: string;
+  /** the function-call key a browser asks its wallet to add for plays and calls without popups */
+  playKey: { receiverId: string; methodNames: string[]; allowance: string };
+  /** gas (units, decimal strings) the wallet transactions attach */
+  gas: { deposit: string; withdraw: string; storage: string };
+}
+
+/** POST /api/auth/challenge */
+export interface AuthChallenge {
+  nonce: string; // 32 random bytes, base64: the NEP-413 nonce; one use, expires
+  message: string;
+  recipient: string;
+  expiresAt: number;
+}
+
+/** POST /api/auth/verify: what the wallet returned for the challenge. */
+export interface AuthProof {
+  accountId: string;
+  publicKey: string; // "ed25519:<base58>", a full-access key of the account
+  signature: string; // base64 (also accepted: base64url, "ed25519:<base58>", hex)
+  nonce: string; // the challenge nonce
+  callbackUrl?: string; // only if the wallet signed one
+}
+
+export interface PlayKeyInfo {
+  publicKey: string;
+  receiverId: string;
+  methodNames: string[];
+  allowance: string | null; // yoctoNEAR of gas left; null = unlimited
+  status: 'active' | 'exhausted';
+}
+
+export interface AuthSession {
+  token: string;
+  accountId: string;
+  expiresAt: number;
+  playKey: PlayKeyInfo | null; // this browser's play key, once registered
+  me: Me;
+}
+
+/** GET /api/session/wallet */
+export interface WalletInfo {
+  accountId: string;
+  coinsOpen: boolean;
+  tokenId: string;
+  tokenRegistered: boolean; // NEP-145: the account can receive the coin (withdrawals need it)
+  storageDeposit: string; // yoctoNEAR to register on the coin, if needed
+}
+
+/** The one transaction the relay asks the browser to sign with its play key; every field is fixed. */
+export interface SignRequestTx {
+  signerId: string;
+  publicKey: string;
+  nonce: string; // decimal
+  receiverId: string;
+  blockHash: string; // base58
+  actions: { type: 'FunctionCall'; methodName: 'play' | 'call'; args: string; gas: string; deposit: '0' }[]; // args: the exact JSON to sign
 }
 
 export interface PlayerStats {
@@ -93,6 +173,7 @@ export interface Me {
   levelUnlocked: Level;
   lockedBonusCoins: number; // Turing bonus earned as a free human, paid on first deposit
   freeChatsLeft: number | null; // null = unlimited
+  kind?: 'test' | 'wallet'; // v1.3: a test user (the relay signs) or a wallet account (the browser signs)
 }
 
 export interface TestUser {
@@ -353,7 +434,10 @@ export type ClientMsg =
   | { t: 'typing'; chatId: string; on: boolean }
   | { t: 'call'; chatId: string; human: boolean }
   | { t: 'dev_end_chat'; chatId: string }
-  | { t: 'ping' };
+  | { t: 'ping' }
+  // v1.3: the answer to sign_tx, the borsh SignedTransaction in base64; or why the browser would not sign it
+  | { t: 'signed_tx'; reqId: string; signedTx: string }
+  | { t: 'sign_declined'; reqId: string; reason: string };
 
 export type ServerMsg =
   | { t: 'welcome'; me: Me; round: RoundState; config: PublicConfig; activeChat?: ActiveChat }
@@ -376,7 +460,11 @@ export type ServerMsg =
   | { t: 'me'; me: Me }
   | { t: 'results_ready'; roundId: number }
   | { t: 'error'; code: string; message: string }
-  | { t: 'pong' };
+  | { t: 'pong' }
+  // v1.3: sign this play or call with the browser's play key (wallet accounts); answer signed_tx before expiresAt
+  | { t: 'sign_tx'; reqId: string; chatId: string; purpose: 'play' | 'call'; tx: SignRequestTx; expiresAt: number }
+  // v1.3: the public config changed (for example the coin was set on the contract)
+  | { t: 'config'; config: PublicConfig };
 
 // ---------- client interface used by the web app ----------
 
@@ -398,4 +486,19 @@ export interface GameClient {
   /** Subscribe to server messages and connection state. Returns an unsubscribe function. */
   on(handler: (msg: ServerMsg) => void): () => void;
   onStatus(handler: (status: 'connecting' | 'open' | 'closed') => void): () => void;
+
+  // ---------- v1.3 wallet sign-in, optional (a client without them offers test users only) ----------
+  authChallenge?(): Promise<AuthChallenge>;
+  /** checks the signed challenge and holds the session for every later call and connect */
+  authVerify?(proof: AuthProof): Promise<AuthSession>;
+  /** a stored session token: the session again, or null when it expired or was revoked */
+  resumeSession?(token: string): Promise<AuthSession | null>;
+  signOut?(): Promise<void>;
+  /** after the wallet added this browser's key: the relay checks it on chain and keeps it for the session */
+  registerPlayKey?(publicKey: string): Promise<PlayKeyInfo>;
+  walletInfo?(): Promise<WalletInfo>;
+  /** a deposit sent from the wallet: the relay checks it on chain, then pays any locked Turing bonus */
+  reportDeposit?(txHash: string): Promise<{ me: Me; bonusTx?: string }>;
+  /** test mode: test coins into the wallet itself, to try a wallet deposit */
+  faucetToWallet?(coins?: number): Promise<{ tx: string }>;
 }

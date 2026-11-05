@@ -2,14 +2,35 @@
 // Keeps the player's own transcript copy in localStorage as messages arrive (Verify drawer check).
 
 import type {
-  ActiveChat, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PublicConfig, RoundResults, RoundState,
-  RoundSummary, Seat, ServerMsg, TestUser, ThemeId, VerifyBundle,
+  ActiveChat, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PublicConfig, RoundResults, RoundState,
+  RoundSummary, Seat, ServerMsg, TestUser, ThemeId, VerifyBundle, WalletInfo,
 } from '../../../shared/protocol.ts';
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
 import { countdownFor, isCounting } from './countdown.ts';
 import { BOTS_NAPPING } from './notices.ts';
+import type { WalletApi, WalletTx } from '../wallet/types.ts';
+import { forgetPlayKey, loadPlayKey, newPlayKey, savePlayKey } from '../wallet/keys.ts';
+import { parsePublicKey, signTransaction } from '../wallet/tx.ts';
+import { base58Decode, base64Decode, base64Encode } from '../wallet/base58.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
+
+/** A wallet session (protocol v1.3): the relay's Bearer token for this browser. */
+export interface SessionView {
+  accountId: string;
+  token: string;
+  expiresAt: number;
+  playKey: PlayKeyInfo | null;
+}
+
+/** A wallet step on screen: waiting for the wallet, checking on chain, done or failed. */
+export interface Flow {
+  phase: 'idle' | 'wallet' | 'checking' | 'done' | 'error';
+  error?: string;
+  /** a friendly line under the step, e.g. why a second approval is needed */
+  note?: string;
+  tx?: string;
+}
 
 export interface RoomView {
   roundId: number;
@@ -64,6 +85,14 @@ export interface AppState {
   notice?: { code: string; message: string; at: number };
   /** True once the welcome for the current account arrived. */
   welcomed: boolean;
+  // ----- wallet sign-in (v1.3) -----
+  session?: SessionView;
+  signIn: Flow;
+  keySetup: Flow & { via?: 'sign-in' | 'transaction' };
+  walletTx: Flow & { kind?: 'deposit' | 'withdraw' | 'faucet' };
+  walletInfo?: WalletInfo;
+  /** the relay refused a paid pick for want of a play key: the screen offers "Enable coins" */
+  keyNeeded?: { code: string; at: number };
 }
 
 export interface StoreActions {
@@ -90,6 +119,23 @@ export interface StoreActions {
   getVerify(chatId: string): Promise<VerifyBundle>;
   listRounds(): Promise<RoundSummary[]>;
   leaderboard(): Promise<LeaderRow[]>;
+  // ----- wallet sign-in (v1.3) -----
+  /** Sign in with a NEAR wallet: one approval, a signed message, no gas. */
+  walletSignIn(): Promise<boolean>;
+  /** A session stored in this browser, if the relay still knows it. */
+  resumeSession(): Promise<boolean>;
+  signOut(): Promise<void>;
+  /** This browser's play key: one wallet approval, then plays and calls without popups. */
+  enableCoins(): Promise<boolean>;
+  /** True when this browser holds an active play key for the session. */
+  coinsEnabled(): boolean;
+  walletDeposit(coins: number): Promise<boolean>;
+  walletWithdraw(coins: number): Promise<boolean>;
+  /** Test mode: test coins into the wallet itself, to try a deposit. */
+  faucetToWallet(coins?: number): Promise<boolean>;
+  refreshWalletInfo(): Promise<WalletInfo | undefined>;
+  resetFlow(which: 'signIn' | 'keySetup' | 'walletTx'): void;
+  clearKeyNeeded(): void;
 }
 
 export interface Store {
@@ -97,6 +143,19 @@ export interface Store {
   subscribe(fn: (s: AppState) => void): () => void;
   actions: StoreActions;
   client: GameClient;
+  wallet?: WalletApi;
+}
+
+const SESSION_KEY = (network: string) => `realsies:session:${network}`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const IDLE: Flow = { phase: 'idle' };
+
+/** An Error from the client (HTTP code) or the wallet, as one line for the screen. */
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+function errCode(e: unknown): string | undefined {
+  return (e as { code?: string } | null)?.code;
 }
 
 const RESULTS_KEY = (a: string) => `realsies:resultsReady:${a}`;
@@ -109,8 +168,10 @@ function ls(): Storage | null {
   }
 }
 
-export function createStore(client: GameClient): Store {
-  let state: AppState = { status: 'idle', level: 1, rooms: {}, resultsReady: [], welcomed: false };
+export function createStore(client: GameClient, wallet?: WalletApi): Store {
+  let state: AppState = { status: 'idle', level: 1, rooms: {}, resultsReady: [], welcomed: false, signIn: IDLE, keySetup: IDLE, walletTx: IDLE };
+  /** the coins the player chose at the last pick: a play to sign must be for exactly these */
+  let pickedCoins: number | null = null;
   const subs = new Set<(s: AppState) => void>();
   let welcomeWaiters: { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }[] = [];
   let localSeq = 0;
@@ -168,8 +229,62 @@ export function createStore(client: GameClient): Store {
     return { ...a, messages: [...a.messages], partnerTyping: false, ...cd };
   };
 
+  /**
+   * The relay asks this browser to sign a play or call with its play key. Signed only when it is exactly what
+   * the player asked for: their account and this browser's key, the game contract, play or call only, no
+   * deposit, the chat on screen, the coins they chose, the call they made. Anything else is declined.
+   */
+  const onSignTx = (m: Extract<ServerMsg, { t: 'sign_tx' }>) => {
+    const decline = (reason: string) => client.send({ t: 'sign_declined', reqId: m.reqId, reason });
+    const s = state.session;
+    const cfg = state.config;
+    if (!s || !cfg) return decline('not signed in');
+    const key = loadPlayKey(cfg.network, s.accountId);
+    if (!key || key.publicKey !== m.tx.publicKey) return decline('this browser does not hold that play key');
+    const a = m.tx.actions[0];
+    if (m.tx.actions.length !== 1 || !a || a.type !== 'FunctionCall') return decline('one function call expected');
+    if (m.tx.signerId !== s.accountId) return decline('that is another account');
+    if (m.tx.receiverId !== cfg.contractId) return decline('not the game contract');
+    if (a.methodName !== m.purpose || (a.methodName !== 'play' && a.methodName !== 'call')) return decline('a play key signs play and call only');
+    if (a.deposit !== '0') return decline('a play key attaches no deposit');
+    let gas: bigint, nonce: bigint, args: { round_id?: unknown; coins?: unknown; human?: unknown; handle?: unknown };
+    try {
+      gas = BigInt(a.gas);
+      nonce = BigInt(m.tx.nonce);
+      args = JSON.parse(a.args);
+    } catch {
+      return decline('malformed request');
+    }
+    if (gas <= 0n || gas > 100_000_000_000_000n) return decline('unexpected gas');
+    const c = state.chat;
+    if (!c || c.chatId !== m.chatId) return decline('not the chat on screen');
+    if (args.round_id !== c.roundId || typeof args.handle !== 'string') return decline('not this chat');
+    if (m.purpose === 'play') {
+      const want = pickedCoins ?? c.coins;
+      if (c.mode !== 'paid' || args.coins !== want || c.coins !== want) return decline(`not the ${want} coins you chose`);
+    } else if (typeof args.human !== 'boolean' || args.human !== c.myCall) return decline('not the call you made');
+    try {
+      const { signed } = signTransaction(
+        {
+          signerId: m.tx.signerId, publicKey: parsePublicKey(m.tx.publicKey), nonce, receiverId: m.tx.receiverId, blockHash: base58Decode(m.tx.blockHash),
+          methodName: a.methodName, args: new TextEncoder().encode(a.args), gas, deposit: 0n,
+        },
+        key.secretKey,
+      );
+      client.send({ t: 'signed_tx', reqId: m.reqId, signedTx: base64Encode(signed) });
+    } catch (e) {
+      decline(`could not sign: ${errText(e)}`);
+    }
+  };
+
   const onMsg = (m: ServerMsg) => {
     switch (m.t) {
+      case 'sign_tx':
+        onSignTx(m);
+        return;
+      case 'config':
+        set({ config: m.config });
+        return;
       case 'welcome': {
         const chat = m.activeChat ? fromActive(m.activeChat, m.config) : state.chat && state.chat.phase !== 'called' && state.chat.phase !== 'missed' ? undefined : state.chat;
         if (m.activeChat) for (const msg of m.activeChat.messages) saveTranscriptMessage(m.activeChat.chatId, msg);
@@ -267,6 +382,23 @@ export function createStore(client: GameClient): Store {
         return;
       }
       case 'error': {
+        if (m.code === 'session_expired') {
+          // the relay no longer knows this browser's session: back to sign-in
+          clearSession();
+          actions.logout();
+          set({ signIn: { phase: 'error', error: m.message } });
+          return;
+        }
+        if (m.code === 'play_key_missing' || m.code === 'play_key_exhausted') {
+          // a paid pick without a usable play key: the seat goes back and the screen offers "Enable coins"
+          if (m.code === 'play_key_exhausted' && state.session && state.config) forgetPlayKey(state.config.network, state.session.accountId);
+          set((s) => ({
+            search: undefined,
+            keyNeeded: { code: m.code, at: Date.now() },
+            session: s.session ? { ...s.session, playKey: m.code === 'play_key_exhausted' && s.session.playKey ? { ...s.session.playKey, status: 'exhausted' } : m.code === 'play_key_missing' ? null : s.session.playKey } : s.session,
+          }));
+          return;
+        }
         const running = state.chat && (state.chat.phase === 'searching' || state.chat.phase === 'placing' || state.chat.phase === 'chatting');
         if (m.code === 'bots_unavailable' && !running) {
           // the bots are out of credits, so no new chats start for now: the search ends, the seat goes back
@@ -275,7 +407,7 @@ export function createStore(client: GameClient): Store {
           set({ search: undefined, notice: { code: m.code, message: BOTS_NAPPING, at: Date.now() } });
           return;
         }
-        const searchErrors = ['room_empty', 'round_closing', 'round_closed', 'busy', 'seat_taken', 'bad_coins', 'insufficient_coins', 'insufficient_balance', 'round_ended', 'level_locked', 'bad_seat', 'bad_level', 'bad_mode', 'free_limit', 'already_searching', 'no_round'];
+        const searchErrors = ['room_empty', 'round_closing', 'round_closed', 'busy', 'seat_taken', 'bad_coins', 'insufficient_coins', 'insufficient_balance', 'round_ended', 'level_locked', 'bad_seat', 'bad_level', 'bad_mode', 'free_limit', 'already_searching', 'no_round', 'coins_closed', 'unknown_user'];
         const sayErrors = ['rate_limited', 'too_long', 'message_too_long', 'not_chatting', 'chat_not_active', 'empty_message'];
         const c = state.chat;
         if (c && m.code === 'chat_not_started') {
@@ -317,6 +449,63 @@ export function createStore(client: GameClient): Store {
     return state.accountId;
   };
 
+  // ----- wallet session plumbing -----
+  const storeSession = (s: SessionView | undefined) => {
+    const net = state.config?.network;
+    if (!net) return;
+    try {
+      if (s) ls()?.setItem(SESSION_KEY(net), JSON.stringify({ token: s.token, accountId: s.accountId, expiresAt: s.expiresAt }));
+      else ls()?.removeItem(SESSION_KEY(net));
+    } catch {
+      /* private mode: the session lasts for this page */
+    }
+  };
+  const clearSession = () => {
+    storeSession(undefined);
+    set({ session: undefined, walletInfo: undefined, keyNeeded: undefined });
+  };
+  /**
+   * A session from the relay. If this browser still holds an active play key the relay has not seen for
+   * this session (a new sign-in), it is registered again quietly: the key is on chain already, no approval.
+   */
+  const adoptSession = (s: AuthSession) => {
+    const view: SessionView = { accountId: s.accountId, token: s.token, expiresAt: s.expiresAt, playKey: s.playKey };
+    set({ session: view, me: s.me });
+    storeSession(view);
+    const net = state.config?.network;
+    const local = net ? loadPlayKey(net, s.accountId) : null;
+    if (local && (!s.playKey || s.playKey.publicKey !== local.publicKey) && client.registerPlayKey) {
+      client.registerPlayKey(local.publicKey).then(
+        (info) => {
+          savePlayKey(net!, s.accountId, { ...local, status: 'active' });
+          set((x) => (x.session?.accountId === s.accountId ? { session: { ...x.session, playKey: info } } : {}));
+        },
+        () => {
+          /* not on chain (removed in the wallet, or never approved): "Enable coins" makes a new one */
+        },
+      );
+    }
+  };
+  /** The play key is on chain: the relay checks it and keeps it for the session (polls while finality catches up). */
+  const registerKey = async (publicKey: string, tries: number): Promise<PlayKeyInfo | null> => {
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await client.registerPlayKey!(publicKey);
+      } catch (e) {
+        if (errCode(e) !== 'play_key_not_found') throw e;
+        if (i < tries - 1) await sleep(2000);
+      }
+    }
+    return null;
+  };
+  const walletReady = (): { s: SessionView; cfg: PublicConfig; w: WalletApi } => {
+    const s = state.session;
+    const cfg = state.config;
+    if (!s || !cfg) throw new Error('Sign in with your wallet first.');
+    if (!wallet) throw new Error('No wallet in this browser.');
+    return { s, cfg, w: wallet };
+  };
+
   const actions: StoreActions = {
     async loadConfig() {
       const config = await client.getConfig();
@@ -356,7 +545,8 @@ export function createStore(client: GameClient): Store {
       client.send({ t: 'enter_room', level });
     },
     pickSeat(level, seatIndex, mode, coins) {
-      set({ search: { level, seatIndex, mode, coins: mode === 'paid' ? coins ?? 0 : 0, startedAt: Date.now() }, lastError: undefined, notice: undefined });
+      pickedCoins = mode === 'paid' ? coins ?? 0 : null;
+      set({ search: { level, seatIndex, mode, coins: mode === 'paid' ? coins ?? 0 : 0, startedAt: Date.now() }, lastError: undefined, notice: undefined, keyNeeded: undefined });
       client.send(mode === 'paid' ? { t: 'pick_seat', level, seatIndex, mode, coins } : { t: 'pick_seat', level, seatIndex, mode });
     },
     cancelSearch() {
@@ -434,6 +624,226 @@ export function createStore(client: GameClient): Store {
     leaderboard() {
       return client.leaderboard();
     },
+
+    // ----- wallet sign-in (v1.3) -----
+    async walletSignIn() {
+      if (state.signIn.phase === 'wallet' || state.signIn.phase === 'checking') return false;
+      set({ signIn: { phase: 'wallet' } });
+      try {
+        if (!state.config) await actions.loadConfig();
+        if (!wallet || !client.authChallenge || !client.authVerify) throw new Error('Wallet sign-in is not available here.');
+        const ch = await client.authChallenge();
+        const signed = await wallet.signIn({ message: ch.message, recipient: ch.recipient, nonce: base64Decode(ch.nonce) });
+        set({ signIn: { phase: 'checking' } });
+        const s = await client.authVerify({ accountId: signed.accountId, publicKey: signed.publicKey, signature: signed.signature, nonce: ch.nonce });
+        adoptSession(s);
+        set({ signIn: IDLE });
+        await actions.selectUser(s.accountId);
+        return true;
+      } catch (e) {
+        set({ signIn: { phase: 'error', error: errText(e) } });
+        return false;
+      }
+    },
+    async resumeSession() {
+      const cfg = state.config ?? (await actions.loadConfig().catch(() => undefined));
+      if (!cfg || !client.resumeSession) return false;
+      let saved: { token?: string } | null = null;
+      try {
+        saved = JSON.parse(ls()?.getItem(SESSION_KEY(cfg.network)) ?? 'null');
+      } catch {
+        saved = null;
+      }
+      if (!saved?.token) return false;
+      const s = await client.resumeSession(saved.token).catch(() => null);
+      if (!s) {
+        storeSession(undefined);
+        return false;
+      }
+      adoptSession(s);
+      await actions.selectUser(s.accountId).catch(() => {});
+      return true;
+    },
+    async signOut() {
+      const s = state.session;
+      const net = state.config?.network;
+      try {
+        await client.signOut?.();
+      } catch {
+        /* the relay forgets the session anyway when it expires */
+      }
+      await wallet?.signOut().catch(() => {});
+      // the browser forgets its play key too: on a shared computer nobody else can play your coins
+      if (s && net) forgetPlayKey(net, s.accountId);
+      clearSession();
+      set({ signIn: IDLE, keySetup: IDLE, walletTx: IDLE });
+      actions.logout();
+    },
+    coinsEnabled() {
+      const s = state.session;
+      const cfg = state.config;
+      if (!s || !cfg || s.playKey?.status !== 'active') return false;
+      const local = loadPlayKey(cfg.network, s.accountId);
+      return !!local && local.publicKey === s.playKey.publicKey;
+    },
+    async enableCoins() {
+      if (state.keySetup.phase === 'wallet' || state.keySetup.phase === 'checking') return false;
+      try {
+        const { s, cfg, w } = walletReady();
+        const pk = cfg.wallet?.playKey;
+        if (!pk || !client.registerPlayKey) throw new Error('This relay does not take play keys.');
+        set({ keySetup: { phase: 'checking' }, keyNeeded: undefined });
+        // a key made earlier in this browser may be on chain already (approved, then the page reloaded)
+        let key = loadPlayKey(cfg.network, s.accountId);
+        let info: PlayKeyInfo | null = null;
+        if (key && s.playKey?.status !== 'exhausted') info = await registerKey(key.publicKey, 1).catch(() => null);
+        if (info?.status === 'exhausted') info = null;
+        if (!info) {
+          key = newPlayKey();
+          savePlayKey(cfg.network, s.accountId, key);
+          let req = { accountId: s.accountId, publicKey: key.publicKey, contractId: pk.receiverId, methodNames: pk.methodNames, allowance: pk.allowance };
+          const atSignIn = await w.canAddKeyAtSignIn();
+          set({ keySetup: { phase: 'wallet', via: atSignIn ? 'sign-in' : 'transaction' } });
+          let added = true;
+          try {
+            await w.addPlayKey(req, atSignIn ? 'sign-in' : 'transaction');
+          } catch (e) {
+            if (!atSignIn || errCode(e) === 'rejected' || errCode(e) === 'wrong_account') throw e;
+            added = false;
+          }
+          set({ keySetup: { phase: 'checking', via: atSignIn ? 'sign-in' : 'transaction' } });
+          // a wallet may add a broader key than asked (any method, another contract): the relay refuses it
+          let mismatch = false;
+          if (added) {
+            try {
+              info = await registerKey(key.publicKey, 8);
+            } catch (e) {
+              if (!atSignIn || !['play_key_methods', 'play_key_wrong_contract', 'play_key_full_access'].includes(errCode(e) ?? '')) throw e;
+              mismatch = true;
+            }
+          }
+          if (!info && atSignIn) {
+            // the sign-in added no key, or the wrong one: one AddKey transaction with exactly play and call instead
+            if (mismatch) {
+              key = newPlayKey();
+              savePlayKey(cfg.network, s.accountId, key);
+              req = { ...req, publicKey: key.publicKey };
+            }
+            const note = mismatch
+              ? 'Your wallet added a broader key than asked (you can delete it in your wallet). One more approval sends the right one as a transaction.'
+              : 'Your wallet did not add the key while signing in. One more approval sends it as a transaction.';
+            set({ keySetup: { phase: 'wallet', via: 'transaction', note } });
+            await w.addPlayKey(req, 'transaction');
+            set({ keySetup: { phase: 'checking', via: 'transaction' } });
+            info = await registerKey(key.publicKey, 8);
+          }
+          if (!info) throw new Error('The key did not show up on your account. Try again in a minute.');
+        }
+        savePlayKey(cfg.network, s.accountId, { ...key!, status: 'active' });
+        set((x) => ({ session: x.session ? { ...x.session, playKey: info } : x.session, keySetup: { phase: 'done', via: x.keySetup.via } }));
+        return true;
+      } catch (e) {
+        set((x) => ({ keySetup: { phase: 'error', via: x.keySetup.via, error: errText(e) } }));
+        return false;
+      }
+    },
+    async walletDeposit(coins) {
+      try {
+        const { s, cfg, w } = walletReady();
+        const n = Math.floor(coins);
+        if (!(n > 0)) throw new Error('Choose how many coins to deposit.');
+        if (cfg.coinsOpen === false) throw new Error('Coins open when REAL launches.');
+        const amount = BigInt(n) * BigInt(cfg.coinUnit);
+        set({ walletTx: { phase: 'wallet', kind: 'deposit' } });
+        const tx: WalletTx = {
+          receiverId: cfg.tokenId,
+          actions: [{ type: 'FunctionCall', params: { methodName: 'ft_transfer_call', args: { receiver_id: cfg.contractId, amount: amount.toString(), msg: '' }, gas: cfg.wallet?.gas.deposit ?? '100000000000000', deposit: '1' } }],
+        };
+        const [hash] = await w.send(s.accountId, [tx]);
+        set({ walletTx: { phase: 'checking', kind: 'deposit', tx: hash } });
+        let me: Me | undefined;
+        for (let i = 0; i < 6 && client.reportDeposit; i++) {
+          try {
+            me = (await client.reportDeposit(hash)).me;
+            break;
+          } catch (e) {
+            if (errCode(e) !== 'tx_unknown' || i === 5) throw e;
+            await sleep(2000);
+          }
+        }
+        if (me) set({ me });
+        else await actions.refreshMe().catch(() => undefined);
+        set({ walletTx: { phase: 'done', kind: 'deposit', tx: hash } });
+        return true;
+      } catch (e) {
+        set((x) => ({ walletTx: { ...x.walletTx, phase: 'error', kind: 'deposit', error: errText(e) } }));
+        return false;
+      }
+    },
+    async walletWithdraw(coins) {
+      try {
+        const { s, cfg, w } = walletReady();
+        const n = Math.floor(coins);
+        if (!(n > 0)) throw new Error('Choose how many coins to withdraw.');
+        if (n > (state.me?.balanceCoins ?? 0) + 1e-9) throw new Error('Not enough coins in the game.');
+        set({ walletTx: { phase: 'checking', kind: 'withdraw' } });
+        const info = await actions.refreshWalletInfo();
+        const amount = BigInt(n) * BigInt(cfg.coinUnit);
+        const txs: WalletTx[] = [];
+        // the coin pays out only to accounts registered on it: register first, in the same approval
+        if (info && !info.tokenRegistered) {
+          txs.push({
+            receiverId: cfg.tokenId,
+            actions: [{ type: 'FunctionCall', params: { methodName: 'storage_deposit', args: { account_id: s.accountId, registration_only: true }, gas: cfg.wallet?.gas.storage ?? '30000000000000', deposit: info.storageDeposit } }],
+          });
+        }
+        txs.push({ receiverId: cfg.contractId, actions: [{ type: 'FunctionCall', params: { methodName: 'withdraw', args: { amount: amount.toString() }, gas: cfg.wallet?.gas.withdraw ?? '50000000000000', deposit: '0' } }] });
+        set({ walletTx: { phase: 'wallet', kind: 'withdraw' } });
+        const hashes = await w.send(s.accountId, txs);
+        const hash = hashes[hashes.length - 1];
+        set({ walletTx: { phase: 'checking', kind: 'withdraw', tx: hash } });
+        const before = state.me?.balanceCoins ?? 0;
+        for (let i = 0; i < 6; i++) {
+          const me = await actions.refreshMe().catch(() => undefined);
+          if (me && me.balanceCoins <= before - n + 1e-6) break;
+          await sleep(1500);
+        }
+        void actions.refreshWalletInfo();
+        set({ walletTx: { phase: 'done', kind: 'withdraw', tx: hash } });
+        return true;
+      } catch (e) {
+        set((x) => ({ walletTx: { ...x.walletTx, phase: 'error', kind: 'withdraw', error: errText(e) } }));
+        return false;
+      }
+    },
+    async faucetToWallet(coins) {
+      try {
+        if (!client.faucetToWallet) throw new Error('No faucet here.');
+        set({ walletTx: { phase: 'checking', kind: 'faucet' } });
+        const r = await client.faucetToWallet(coins);
+        set({ walletTx: { phase: 'done', kind: 'faucet', tx: r.tx } });
+        return true;
+      } catch (e) {
+        set({ walletTx: { phase: 'error', kind: 'faucet', error: errText(e) } });
+        return false;
+      }
+    },
+    async refreshWalletInfo() {
+      if (!state.session || !client.walletInfo) return undefined;
+      try {
+        const walletInfo = await client.walletInfo();
+        set({ walletInfo });
+        return walletInfo;
+      } catch {
+        return undefined;
+      }
+    },
+    resetFlow(which) {
+      set({ [which]: IDLE } as Partial<AppState>);
+    },
+    clearKeyNeeded() {
+      set({ keyNeeded: undefined });
+    },
   };
 
   return {
@@ -444,5 +854,6 @@ export function createStore(client: GameClient): Store {
     },
     actions,
     client,
+    wallet,
   };
 }

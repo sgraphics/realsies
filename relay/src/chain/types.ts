@@ -86,7 +86,30 @@ export interface ChainConfig {
   openWindowMs: number;
   testMode: boolean;
   token?: string;
+  /** the contract has a coin and a coin unit: deposits and paid plays work (false on mainnet before REAL launches) */
+  coinsOpen: boolean;
   raw: unknown;
+}
+
+/** view_access_key */
+export interface AccessKeyView {
+  nonce: bigint;
+  /** base58 hash of the block the view was taken at: a recent block hash to sign with */
+  blockHash: string;
+  blockHeight: number;
+  permission: 'FullAccess' | { receiverId: string; methodNames: string[]; allowance: string | null };
+}
+
+/** A finished transaction as read back by hash (a player's own deposit, for example). */
+export interface TxDetails {
+  hash: string;
+  ok: boolean;
+  signerId: string;
+  receiverId: string;
+  actions: { method?: string; args?: unknown; deposit?: string }[];
+  /** every receipt's logs, in order (EVENT_JSON lines included) */
+  logs: string[];
+  error?: string;
 }
 
 export interface ChainAccounts {
@@ -107,6 +130,7 @@ export interface ChainAdapter {
   readonly kind: 'mock' | 'near';
   readonly network: 'testnet' | 'mainnet';
   readonly contractId: string;
+  /** the coin; the contract's own `token` once get_config has been read (it wins over the secrets file) */
   readonly tokenId: string;
   readonly tokenDecimals: number;
   readonly accounts: ChainAccounts;
@@ -146,4 +170,23 @@ export interface ChainAdapter {
   transfer(from: string, to: string, amount: bigint): Promise<TxOutcome>;
   /** ft_transfer_call from the faucet with msg {"for": account}. */
   faucetDeposit(account: string, amount: bigint): Promise<TxOutcome>;
+  /** Test mode: the faucet sends coins to the account's own wallet (registering it on the token first if needed). */
+  faucetToWallet(account: string, amount: bigint): Promise<TxOutcome>;
+
+  // wallet accounts (v1.3): the relay holds no key of theirs
+  /**
+   * view_access_key; null when the account or the key does not exist. `hint` says what the caller expects
+   * (a sign-in key or a play key); only the keyless dev mock reads it (MockChain.trustUnknownKeys).
+   */
+  viewAccessKey(accountId: string, publicKey: string, hint?: 'full' | 'play'): Promise<AccessKeyView | null>;
+  /**
+   * Broadcasts a transaction a player signed (borsh SignedTransaction) and waits for its outcome; the same
+   * bytes are resent on rate limits and network errors. `code` tells a stale nonce or block hash
+   * ('nonce', 'expired') or a play key out of gas allowance ('allowance') from other failures.
+   */
+  sendSignedTx(bytes: Uint8Array, signerId: string, method: string): Promise<TxOutcome & { code?: 'nonce' | 'expired' | 'allowance' | 'key'; akNonce?: bigint }>;
+  /** A transaction by hash and signer, once executed; null while unknown. */
+  txDetails(hash: string, signerId: string): Promise<TxDetails | null>;
+  /** NEP-145 on the coin: whether the account is registered, and the deposit that registers one (yoctoNEAR). */
+  tokenStorage(accountId: string): Promise<{ registered: boolean; minDeposit: string }>;
 }

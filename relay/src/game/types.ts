@@ -94,6 +94,8 @@ export interface ChatSide {
   aborted?: 'bots_unavailable';
   /** messages from this viewer's perspective; also stored row by row */
   messages: ChatMessage[];
+  /** wallet accounts: the session (src/auth/service.ts) whose browser holds the play key that signs this chat's play and call */
+  sessionId?: string;
 }
 
 export interface RoundRec {
@@ -135,6 +137,8 @@ export interface UserRec {
   lockedBonus: string;
   freeDay: string;
   freeUsed: number;
+  /** 'wallet': signed in with a wallet (the browser signs its plays and calls); absent or 'test': a test user */
+  kind?: 'test' | 'wallet';
 }
 
 export interface Search {
@@ -148,4 +152,6 @@ export interface Search {
   deadline: number;
   timer: NodeJS.Timeout | null;
   resolving: boolean;
+  /** the session that picked the seat (wallet accounts) */
+  sessionId?: string;
 }

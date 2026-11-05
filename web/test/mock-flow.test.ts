@@ -470,4 +470,6 @@ const { spawnSync } = await import('node:child_process');
 const smoke = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'screens-smoke.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
 // ---------- 6. the AI-builder side (own process) ----------
 const agents = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'agents.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
-process.exit(failures || smoke.status !== 0 || agents.status !== 0 ? 1 : 0);
+// ---------- 7. wallet sign-in, play keys, wallet deposits (own process) ----------
+const wallet = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'wallet.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
+process.exit(failures || smoke.status !== 0 || agents.status !== 0 || wallet.status !== 0 ? 1 : 0);

@@ -18,6 +18,7 @@ import { createAgentApi } from './agents/api.js';
 import type { AdminContext } from './agents/admin.js';
 import { parseEncryptionKey } from './secretbox.js';
 import { Game } from './game/game.js';
+import { AuthService } from './auth/service.js';
 import { createServer } from './server.js';
 import { errMsg } from './util.js';
 import { logger, setLogLevel } from './log.js';
@@ -27,7 +28,8 @@ const log = logger('app');
 export async function createChain(cfg: Config, db: Db): Promise<ChainAdapter> {
   const useNear = cfg.chain === 'near' || (cfg.chain === 'auto' && fs.existsSync(cfg.secretsPath));
   if (useNear) {
-    const chain = new NearChain(readSecrets(cfg.secretsPath));
+    // TEST_MODE=0: the secrets file's test users are ignored (players are wallet accounts)
+    const chain = new NearChain(readSecrets(cfg.secretsPath), { withTestUsers: cfg.testMode });
     chain.onTx = (t) => db.logTx({ at: Date.now(), roundId: null, kind: t.method, signer: t.signer, hash: t.hash, ok: t.ok, error: t.error ?? null, ms: t.ms });
     await chain.init();
     return chain;
@@ -35,6 +37,11 @@ export async function createChain(cfg: Config, db: Db): Promise<ChainAdapter> {
   const chain = new MockChain();
   const snap = db.getKv('mockchain');
   if (snap) chain.restore(snap);
+  // local development with a real wallet in the browser: the mock has never seen its keys, so trust them
+  if (process.env.MOCK_WALLETS === '1') {
+    chain.trustUnknownKeys = true;
+    log.warn('MOCK_WALLETS=1: the mock chain trusts any key a wallet signs with (local development only)');
+  }
   let pending: NodeJS.Timeout | null = null;
   chain.onChange = () => {
     if (pending) return;
@@ -80,6 +87,7 @@ export interface App {
   game: Game;
   port: number;
   hub: BotmasterHub;
+  auth: AuthService;
   agents: AgentStore;
   credits: CreditMonitor;
   byok: ByokKeys;
@@ -138,24 +146,27 @@ export async function createApp(overrides: Partial<Config> = {}, deps: AppDeps =
       log.warn(`persona ${p.id} names botmaster ${p.brain.botmaster}, which ${bm ? 'does not list it' : 'is not registered'}; it plays with the default brain`);
     }
   }
-  const game = new Game(cfg, db, chain, ai, personas, hub, { agents, credits, byok });
+  const auth = new AuthService(db, chain, { recipient: cfg.authRecipient, sessionDays: cfg.sessionDays, contractId: chain.contractId });
+  const game = new Game(cfg, db, chain, ai, personas, hub, { agents, credits, byok, auth });
   await game.start();
   const admin: AdminContext = { store: agents, fileBotmasters: () => fileBotmasters.map((b) => b.name), kick: (n, c, m) => hub.kick(n, c, m) };
   const agentApi = createAgentApi({ cfg, store: agents, game, hub, credits, byok, admin, models: cachedModels(ai) });
-  const srv = createServer(game, { webDist: cfg.webDist, testMode: cfg.testMode, hub, agents: agentApi });
+  const srv = createServer(game, { webDist: cfg.webDist, testMode: cfg.testMode, hub, agents: agentApi, auth });
   const port = await srv.listen(cfg.port);
   log.info(
     `relay on http://localhost:${port} (chain ${chain.kind} ${chain.contractId}, ai ${ai.kind}, ${personas.length} personas, ` +
       `${hub.botmasters.length} botmasters, ${game.agentPersonas().length} AI builder personas, admin ${cfg.adminToken && cfg.adminToken.length >= 16 ? 'on' : 'off'}, ` +
-      `own keys ${encKey ? 'on' : 'off'}, test mode ${cfg.testMode})`,
+      `own keys ${encKey ? 'on' : 'off'}, test mode ${cfg.testMode}, wallet sign-in for ${cfg.authRecipient}, ` +
+      `${game.chainCfg.coinsOpen ? 'coins open' : 'no coin yet: free play only'})`,
   );
   return {
-    cfg, db, chain, ai, game, port, hub, agents, credits, byok,
+    cfg, db, chain, ai, game, port, hub, agents, credits, byok, auth,
     async close() {
       await game.stop();
       hub.close();
       await srv.close();
       credits.stop();
+      auth.close();
       db.close();
     },
   };

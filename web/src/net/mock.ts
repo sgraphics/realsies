@@ -8,7 +8,14 @@ import {
   type LeaderRow, type Level, type Me, type Mode, type PlayerStats, type PublicConfig, type RoundResults, type RoundState,
   type RoundStatus, type RoundSummary, type Seat, type ServerMsg, type Skin, type TestUser, type ThemeId, type Truth,
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
+  type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo,
 } from '../../../shared/protocol.ts';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { verifyNep413 } from '../wallet/nep413.ts';
+import { decodeSignedTransaction, publicKeyString, verifySignedTransaction } from '../wallet/tx.ts';
+import { base58Encode, base64Decode, base64Encode } from '../wallet/base58.ts';
+import type { KeyPermission, MockLedger } from '../wallet/mock.ts';
+import type { WalletTx } from '../wallet/types.ts';
 import { gamertag, WORDS } from '../../../shared/names.ts';
 import { sha256Hex } from '../verify/crypto.ts';
 import { bubblesOf, commitmentPreimage } from '../verify/checks.ts';
@@ -53,15 +60,36 @@ export interface MockOptions {
    * seat goes back. Chats already running finish as normal.
    */
   noBots?: boolean;
+  /**
+   * Like a mainnet relay (TEST_MODE=0): no test users, players sign in with a wallet (MockWallet) and their
+   * browser signs every play and call with its play key (sign_tx).
+   */
+  wallet?: boolean;
+  /** false: the contract has no coin yet (mainnet before REAL launches): free play only */
+  coinsOpen?: boolean;
+  buyUrl?: string;
+  /** ms a browser has to answer sign_tx (default 20000) */
+  signTimeoutMs?: number;
 }
 
 /** The relay's words for bots_unavailable on a search (the web shows its own calm note instead). */
 const BOTS_UNAVAILABLE = 'The bots are out of NEAR AI credits: no new chats for a few minutes.';
 
+const COIN_UNIT = 10n ** 18n;
+const MOCK_BLOCK_HASH = base58Encode(sha256(new TextEncoder().encode('realsies mock block')));
+const MOCK_ALLOWANCE = '250000000000000000000000';
+
+function apiError(code: string, message: string, status = 400): Error {
+  const e = new Error(message) as Error & { code: string; status: number };
+  e.code = code;
+  e.status = status;
+  return e;
+}
+
 /** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
-export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds'> = {}): PublicConfig {
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl'> = {}): PublicConfig {
   return {
-    testMode: true,
+    testMode: !opts.wallet,
     network: 'testnet',
     contractId: 'game.realsies.testnet',
     tokenId: 'real.realsies.testnet',
@@ -79,6 +107,14 @@ export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds'
     countdownSeconds: opts.countdownSeconds ?? 3,
     explorerTx: 'https://testnet.nearblocks.io/txns/{hash}',
     explorerAccount: 'https://testnet.nearblocks.io/address/{account}',
+    coinsOpen: opts.coinsOpen ?? true,
+    ...(opts.buyUrl ? { buyUrl: opts.buyUrl } : {}),
+    tokenDecimals: 18,
+    wallet: {
+      recipient: 'realsies.lol',
+      playKey: { receiverId: 'game.realsies.testnet', methodNames: ['play', 'call'], allowance: MOCK_ALLOWANCE },
+      gas: { deposit: '100000000000000', withdraw: '50000000000000', storage: '30000000000000' },
+    },
   };
 }
 
@@ -108,6 +144,25 @@ interface UserRec {
   stats: PlayerStats;
   lockedBonus: number;
   payout: Record<string, 'self' | 'promo'>;
+  /** signed in with a wallet (the browser signs plays and calls) */
+  kind?: 'wallet';
+}
+
+interface MockSession {
+  account: string;
+  expiresAt: number;
+  playKey: PlayKeyInfo | null;
+}
+
+interface PendingSign {
+  reqId: string;
+  chatId: string;
+  viewer: string;
+  purpose: 'play' | 'call';
+  tx: SignRequestTx;
+  timer: Timer;
+  /** ok: info is the transaction hash; not ok: the reason */
+  done(ok: boolean, info: string): void;
 }
 
 interface RoundRec {
@@ -186,6 +241,15 @@ interface Persisted {
   results: Record<string, RoundResults>;
   bundles: Record<string, VerifyBundle>;
   unavailable: string[];
+  // wallet sign-in (protocol v1.3); absent in state saved before it
+  /** account -> public key -> key on the mock chain */
+  keys?: Record<string, Record<string, { permission: KeyPermission; nonce: number }>>;
+  /** coins held in wallets, outside the game */
+  walletCoins?: Record<string, number>;
+  registered?: string[];
+  sessions?: Record<string, MockSession>;
+  /** deposit tx hash -> account */
+  deposits?: Record<string, string>;
 }
 
 interface Brain {
@@ -215,8 +279,13 @@ function flag(name: string): boolean {
   }
 }
 
-export class MockGameClient implements GameClient {
+export class MockGameClient implements GameClient, MockLedger {
   readonly config: PublicConfig;
+  /** the session this client holds (wallet sign-in), like the real client's Bearer token */
+  private token: string | null = null;
+  private challenges = new Map<string, { message: string; expiresAt: number }>();
+  private spentNonces = new Set<string>();
+  private signs = new Map<string, PendingSign>();
   private o: Required<Pick<MockOptions, 'timeScale'>> & MockOptions;
   private now: () => number;
   private r: Rand;
@@ -491,6 +560,7 @@ export class MockGameClient implements GameClient {
       levelUnlocked: 3,
       lockedBonusCoins: c4(u.lockedBonus),
       freeChatsLeft: null,
+      kind: u.kind === 'wallet' ? 'wallet' : 'test',
     };
   }
 
@@ -567,7 +637,253 @@ export class MockGameClient implements GameClient {
     return this.tick(() => ({ ...this.config, presets: { ...this.config.presets } }));
   }
 
+  // ======================= wallet sign-in (protocol v1.3) =======================
+
+  private sessionOf(viewer: string): MockSession | null {
+    const s = this.token ? this.st.sessions?.[this.token] : undefined;
+    return s && s.account === viewer && s.expiresAt > this.now() ? s : null;
+  }
+
+  private isWallet(viewer: string): boolean {
+    return this.st.users[viewer]?.kind === 'wallet';
+  }
+
+  private sessionView(token: string, s: MockSession): AuthSession {
+    return { token, accountId: s.account, expiresAt: s.expiresAt, playKey: s.playKey ? { ...s.playKey } : null, me: this.meOf(s.account) };
+  }
+
+  authChallenge(): Promise<AuthChallenge> {
+    return this.tick(() => {
+      const nonce = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) nonce[i] = this.r.int(256);
+      const n = base64Encode(nonce);
+      const c = { message: `Sign in to Realsies at ${this.config.wallet!.recipient}.\n\nThis is a signature, not a transaction: it costs nothing and moves nothing.`, expiresAt: this.now() + 600_000 };
+      this.challenges.set(n, c);
+      return { nonce: n, message: c.message, recipient: this.config.wallet!.recipient, expiresAt: c.expiresAt };
+    });
+  }
+
+  authVerify(proof: AuthProof): Promise<AuthSession> {
+    return this.tick(() => {
+      if (this.spentNonces.has(proof.nonce)) throw apiError('nonce_used', 'This sign-in request was already used; sign in again.', 401);
+      const c = this.challenges.get(proof.nonce);
+      if (!c) throw apiError('nonce_unknown', 'Unknown sign-in request; sign in again.', 401);
+      this.challenges.delete(proof.nonce);
+      this.spentNonces.add(proof.nonce);
+      if (c.expiresAt <= this.now()) throw apiError('nonce_expired', 'The sign-in request expired; sign in again.', 401);
+      const ok = verifyNep413({ message: c.message, nonce: base64Decode(proof.nonce), recipient: this.config.wallet!.recipient, callbackUrl: proof.callbackUrl ?? null }, proof.publicKey, proof.signature);
+      if (!ok) throw apiError('bad_signature', `The signature does not match this sign-in for ${this.config.wallet!.recipient}.`, 401);
+      const key = this.st.keys?.[proof.accountId]?.[proof.publicKey];
+      if (!key) throw apiError('key_not_found', `${proof.publicKey} is not a key of ${proof.accountId}.`, 403);
+      if (key.permission !== 'FullAccess') throw apiError('not_full_access', 'Sign in with a full-access key of the account.', 403);
+      if (!this.st.users[proof.accountId]) {
+        this.st.users[proof.accountId] = {
+          accountId: proof.accountId, label: proof.accountId, seed: sha256Hex(proof.accountId), balance: 0, locked: 0, rating: 1000,
+          stats: { chats: 0, right: 0, wrong: 0, streak: 0, bestStreak: 0 }, lockedBonus: 0, payout: {}, kind: 'wallet',
+        };
+      } else if (!TEST_USERS.some((t) => t.accountId === proof.accountId)) this.st.users[proof.accountId].kind = 'wallet';
+      const token = 'mst_' + randHex(this.r, 32);
+      const s: MockSession = { account: proof.accountId, expiresAt: this.now() + 30 * 86_400_000, playKey: null };
+      (this.st.sessions ??= {})[token] = s;
+      this.token = token;
+      this.save();
+      return this.sessionView(token, s);
+    });
+  }
+
+  resumeSession(token: string): Promise<AuthSession | null> {
+    return this.tick(() => {
+      const s = this.st.sessions?.[token];
+      if (!s || s.expiresAt <= this.now() || !this.st.users[s.account]) return null;
+      this.token = token;
+      return this.sessionView(token, s);
+    });
+  }
+
+  async signOut(): Promise<void> {
+    await this.tick(() => {
+      if (this.token && this.st.sessions) delete this.st.sessions[this.token];
+      this.token = null;
+      this.save();
+    });
+    this.disconnect();
+  }
+
+  registerPlayKey(publicKey: string): Promise<PlayKeyInfo> {
+    return this.tick(() => {
+      const s = this.token ? this.st.sessions?.[this.token] : undefined;
+      if (!s) throw apiError('unauthorized', 'Sign in first.', 401);
+      const k = this.st.keys?.[s.account]?.[publicKey];
+      if (!k) throw apiError('play_key_not_found', `The key is not on ${s.account} yet; approve it in your wallet, then try again.`, 409);
+      if (k.permission === 'FullAccess') throw apiError('play_key_full_access', 'A play key must be a function-call key.', 400);
+      if (k.permission.receiverId !== this.config.contractId) throw apiError('play_key_wrong_contract', `The key is for ${k.permission.receiverId}.`, 400);
+      const methods = [...k.permission.methodNames].sort().join(',');
+      if (methods !== 'call,play') throw apiError('play_key_methods', 'A play key may call exactly play and call.', 400);
+      s.playKey = { publicKey, receiverId: k.permission.receiverId, methodNames: ['play', 'call'], allowance: k.permission.allowance, status: 'active' };
+      this.save();
+      return { ...s.playKey };
+    });
+  }
+
+  walletInfo(): Promise<WalletInfo> {
+    return this.tick(() => {
+      const s = this.token ? this.st.sessions?.[this.token] : undefined;
+      if (!s) throw apiError('unauthorized', 'Sign in first.', 401);
+      const open = this.config.coinsOpen !== false;
+      return { accountId: s.account, coinsOpen: open, tokenId: this.config.tokenId, tokenRegistered: open && (this.st.registered ?? []).includes(s.account), storageDeposit: open ? '1250000000000000000000' : '0' };
+    });
+  }
+
+  reportDeposit(txHash: string): Promise<{ me: Me; bonusTx?: string }> {
+    return this.tick(() => {
+      const s = this.token ? this.st.sessions?.[this.token] : undefined;
+      if (!s) throw apiError('unauthorized', 'Sign in first.', 401);
+      const who = this.st.deposits?.[txHash];
+      if (!who) throw apiError('tx_unknown', 'That deposit is not on chain yet.', 409);
+      if (who !== s.account) throw apiError('not_your_tx', 'That deposit belongs to another account.', 403);
+      const u = this.user(s.account);
+      let bonusTx: string | undefined;
+      if (u.lockedBonus > 0) {
+        u.balance = c4(u.balance + u.lockedBonus);
+        u.lockedBonus = 0;
+        bonusTx = fakeTx(this.r);
+      }
+      delete this.st.deposits![txHash];
+      this.save();
+      const me = this.meOf(s.account);
+      this.emit({ t: 'me', me }, s.account);
+      return { me, bonusTx };
+    });
+  }
+
+  faucetToWallet(coins = 100): Promise<{ tx: string }> {
+    return this.tick(() => {
+      const s = this.token ? this.st.sessions?.[this.token] : undefined;
+      if (!s) throw apiError('unauthorized', 'Sign in first.', 401);
+      const w = (this.st.walletCoins ??= {});
+      w[s.account] = (w[s.account] ?? 0) + coins;
+      const reg = (this.st.registered ??= []);
+      if (!reg.includes(s.account)) reg.push(s.account);
+      this.save();
+      return { tx: fakeTx(this.r) };
+    });
+  }
+
+  /** Coins in a wallet, outside the game (tests). */
+  walletCoinsOf(account: string): number {
+    return this.st.walletCoins?.[account] ?? 0;
+  }
+
+  // ----- the mock chain the mock wallet talks to (MockLedger) -----
+
+  ledgerAddKey(account: string, publicKey: string, permission: KeyPermission): void {
+    const keys = (this.st.keys ??= {});
+    (keys[account] ??= {})[publicKey] = { permission, nonce: 0 };
+    this.save();
+  }
+
+  ledgerWalletTx(account: string, tx: WalletTx): string {
+    const a = tx.actions[0];
+    if (!a || a.type !== 'FunctionCall' || tx.actions.length !== 1) throw new Error('The mock wallet sends one function call per transaction.');
+    const args = a.params.args as Record<string, unknown>;
+    const hash = fakeTx(this.r);
+    const coinsOf = (v: unknown) => Number(BigInt(String(v ?? '0')) * 10_000n / COIN_UNIT) / 10_000;
+    if (tx.receiverId === this.config.tokenId && a.params.methodName === 'ft_transfer_call') {
+      if (this.config.coinsOpen === false) throw new Error('The game has no coin yet.');
+      if (args.receiver_id !== this.config.contractId) throw new Error('Deposits go to the game contract.');
+      const n = coinsOf(args.amount);
+      const w = (this.st.walletCoins ??= {});
+      if ((w[account] ?? 0) + 1e-9 < n) throw new Error(`Your wallet has ${w[account] ?? 0} ${this.config.tokenSymbol}.`);
+      w[account] = c4((w[account] ?? 0) - n);
+      const u = this.user(account);
+      u.balance = c4(u.balance + n);
+      (this.st.deposits ??= {})[hash] = account;
+      this.emitMe(account);
+    } else if (tx.receiverId === this.config.contractId && a.params.methodName === 'withdraw') {
+      const n = coinsOf(args.amount);
+      const u = this.user(account);
+      if (u.balance + 1e-9 < n) throw new Error('Not enough coins in the game.');
+      if (!(this.st.registered ?? []).includes(account)) throw new Error('Your account is not registered on the coin yet; the coins stay in the game.');
+      u.balance = c4(u.balance - n);
+      const w = (this.st.walletCoins ??= {});
+      w[account] = c4((w[account] ?? 0) + n);
+      this.emitMe(account);
+    } else if (tx.receiverId === this.config.tokenId && a.params.methodName === 'storage_deposit') {
+      const reg = (this.st.registered ??= []);
+      const who = String(args.account_id ?? account);
+      if (!reg.includes(who)) reg.push(who);
+    } else throw new Error(`The mock wallet does not send ${tx.receiverId}.${a.params.methodName}.`);
+    this.save();
+    return hash;
+  }
+
+  // ----- sign_tx: the browser signs this play or call with its play key -----
+
+  private requestSign(c: ChatRec, purpose: 'play' | 'call', args: Record<string, unknown>, done: (ok: boolean, info: string) => void): void {
+    const s = this.sessionOf(c.viewer);
+    const key = s?.playKey;
+    const k = key ? this.st.keys?.[c.viewer]?.[key.publicKey] : undefined;
+    if (!key || !k) {
+      done(false, 'No play key in this browser: enable coins first.');
+      return;
+    }
+    const reqId = 'sr' + randHex(this.r, 12);
+    const tx: SignRequestTx = {
+      signerId: c.viewer, publicKey: key.publicKey, nonce: String(k.nonce + 1), receiverId: this.config.contractId, blockHash: MOCK_BLOCK_HASH,
+      actions: [{ type: 'FunctionCall', methodName: purpose, args: JSON.stringify(args), gas: '30000000000000', deposit: '0' }],
+    };
+    const ms = this.o.signTimeoutMs ?? 20_000;
+    const p: PendingSign = {
+      reqId, chatId: c.chatId, viewer: c.viewer, purpose, tx,
+      timer: this.later(ms, () => {
+        this.signs.delete(reqId);
+        done(false, 'Your browser did not sign in time.');
+      }),
+      done: (ok: boolean, info: string) => {
+        clearTimeout(p.timer);
+        this.timers.delete(p.timer);
+        this.signs.delete(reqId);
+        done(ok, info);
+      },
+    };
+    this.signs.set(reqId, p);
+    this.emit({ t: 'sign_tx', reqId, chatId: c.chatId, purpose, tx, expiresAt: this.now() + ms }, c.viewer);
+  }
+
+  /** The same checks as the relay (relay/src/auth/tx.ts): exactly the requested transaction, validly signed. */
+  private onSigned(viewer: string, reqId: string, signedTx: string): void {
+    const p = this.signs.get(reqId);
+    if (!p || p.viewer !== viewer) return this.err('unknown_sign_request', 'No such signature request.', viewer);
+    let why: string | null = null;
+    let hash = '';
+    try {
+      const bytes = base64Decode(signedTx);
+      const d = decodeSignedTransaction(bytes);
+      const a = p.tx.actions[0];
+      if (d.tx.signerId !== p.tx.signerId) why = 'wrong signer';
+      else if (publicKeyString(d.tx.publicKey) !== p.tx.publicKey) why = 'wrong key';
+      else if (d.tx.receiverId !== p.tx.receiverId) why = 'wrong receiver';
+      else if (d.tx.methodName !== a.methodName) why = 'wrong method';
+      else if (new TextDecoder().decode(d.tx.args) !== a.args) why = 'wrong arguments';
+      else if (d.tx.deposit !== 0n || d.tx.gas !== BigInt(a.gas)) why = 'wrong gas or deposit';
+      else if (d.tx.nonce !== BigInt(p.tx.nonce) || base58Encode(d.tx.blockHash) !== p.tx.blockHash) why = 'wrong nonce or block';
+      else if (!verifySignedTransaction(bytes)) why = 'bad signature';
+      hash = d.hash;
+    } catch (e) {
+      why = `not a signed transaction (${(e as Error).message})`;
+    }
+    if (why) {
+      this.err('bad_signed_tx', why, viewer);
+      p.done(false, `The signed ${p.purpose} was refused: ${why}.`);
+      return;
+    }
+    const k = this.st.keys?.[viewer]?.[p.tx.publicKey];
+    if (k) k.nonce = Number(p.tx.nonce);
+    p.done(true, hash);
+  }
+
   listTestUsers(): Promise<TestUser[]> {
+    if (this.o.wallet) return this.tick(() => []);
     return this.tick(() =>
       TEST_USERS.map((t) => {
         const u = this.user(t.accountId);
@@ -578,6 +894,7 @@ export class MockGameClient implements GameClient {
 
   faucet(accountId: string, coins = 100): Promise<{ tx: string; me: Me }> {
     return this.tick(() => {
+      if (this.o.wallet) throw apiError('not_test_mode', 'The faucet is test mode only.', 403);
       const u = this.user(accountId);
       if (!(coins > 0) || coins > 10_000) throw new Error('The faucet gives between 1 and 10000 test coins.');
       u.balance = c4(u.balance + coins + u.lockedBonus);
@@ -671,6 +988,7 @@ export class MockGameClient implements GameClient {
   }
 
   async devEndRound(): Promise<void> {
+    if (this.o.wallet) throw apiError('not_test_mode', 'Test tools are off on this relay.', 403);
     await this.tick(() => this.endRound('dev'));
   }
 
@@ -683,9 +1001,11 @@ export class MockGameClient implements GameClient {
     this.setStatus('connecting');
     this.later(this.d(120), () => {
       if (this.account !== accountId) return;
-      if (!this.st.users[accountId]) {
+      // wallet accounts need this client's session (the real relay asks for a ticket); test users only in test mode
+      const allowed = this.isWallet(accountId) ? !!this.sessionOf(accountId) : !this.o.wallet && !!this.st.users[accountId];
+      if (!allowed) {
         this.setStatus('open');
-        this.err('unknown_account', `${accountId} is not a test user.`);
+        this.err('unknown_account', this.isWallet(accountId) ? 'Sign in again.' : `${accountId} is not a test user.`);
         this.later(20, () => this.disconnect());
         return;
       }
@@ -693,6 +1013,8 @@ export class MockGameClient implements GameClient {
       const u = this.user(accountId);
       u.payout[String(this.st.current)] ??= u.balance > 0 ? 'self' : 'promo';
       this.emit({ t: 'welcome', me: this.meOf(accountId), round: this.roundState(), config: { ...this.config }, activeChat: this.activeChatOf(accountId) });
+      // a reload while a play or call waited for this browser's signature: ask again
+      for (const p of this.signs.values()) if (p.viewer === accountId) this.emit({ t: 'sign_tx', reqId: p.reqId, chatId: p.chatId, purpose: p.purpose, tx: p.tx, expiresAt: this.now() + 5000 }, accountId);
       const q = this.inbox;
       this.inbox = [];
       for (const m of q) this.handle(accountId, m);
@@ -761,9 +1083,17 @@ export class MockGameClient implements GameClient {
       case 'call':
         return this.call(viewer, m.chatId, m.human);
       case 'dev_end_chat': {
+        if (this.o.wallet) return this.err('not_test_mode', 'Test tools are off.', viewer);
         const c = this.st.chats.find((x) => x.chatId === m.chatId && x.viewer === viewer);
         if (!c) return this.err('no_chat', 'No such chat.', viewer);
         this.endChat(c.chatId, 'dev');
+        return;
+      }
+      case 'signed_tx':
+        return this.onSigned(viewer, m.reqId, m.signedTx);
+      case 'sign_declined': {
+        const p = this.signs.get(m.reqId);
+        if (p && p.viewer === viewer) p.done(false, `Your browser did not sign it: ${m.reason}`);
         return;
       }
     }
@@ -783,6 +1113,12 @@ export class MockGameClient implements GameClient {
     if (seat.state !== 'open') return this.err('seat_taken', 'You already met this character this round.', viewer);
     let n = 0;
     if (mode === 'paid') {
+      if (this.config.coinsOpen === false) return this.err('coins_closed', 'Coins open when REAL launches. Play free for now.', viewer);
+      if (this.isWallet(viewer)) {
+        const key = this.sessionOf(viewer)?.playKey;
+        if (!key) return this.err('play_key_missing', 'Enable coins first: one wallet approval lets this browser send your plays and calls.', viewer);
+        if (key.status !== 'active') return this.err('play_key_exhausted', "This browser's play key is out of gas allowance. Enable coins again.", viewer);
+      }
       n = Math.floor(Number(coins));
       if (!Number.isFinite(n) || n < this.config.minCoins || n > this.config.maxCoins)
         return this.err('bad_coins', `Choose between ${this.config.minCoins} and ${this.config.maxCoins} coins.`, viewer);
@@ -863,18 +1199,23 @@ export class MockGameClient implements GameClient {
     this.emitSeat(viewer, level, seatIndex);
     if (s.mode === 'paid') {
       this.emit({ t: 'placing', chatId: c.chatId }, viewer);
-      this.chatLater(c.chatId, this.r.range(this.d(800), this.d(1500)), () => {
-        const fail = this.o.forcePlayFailed || flag('realsies:mock:playfail') || this.r.chance(this.o.playFailChance ?? 1 / 30);
+      // a wallet account's browser signs the play with its play key first (sign_tx); a test user's play the relay signs
+      const sign = (go: (fail: string | null, tx?: string) => void) => {
+        if (!this.isWallet(viewer)) return go(null);
+        this.requestSign(c, 'play', { round_id: roundId, handle, coins: c.coins }, (ok, info) => go(ok ? null : info, ok ? info : undefined));
+      };
+      this.chatLater(c.chatId, this.r.range(this.d(800), this.d(1500)), () => sign((signFail, signedTx) => {
+        const fail = this.o.forcePlayFailed || flag('realsies:mock:playfail') || !!signFail || (!signedTx && this.r.chance(this.o.playFailChance ?? 1 / 30));
         const u = this.user(viewer);
         if (fail || u.balance + 1e-9 < c.coins) {
-          c.playFailed = fail ? 'The play transaction failed on chain. This chat continues free.' : 'Not enough coins. This chat continues free.';
+          c.playFailed = signFail ? `${signFail} This chat continues free.` : fail ? 'The play transaction failed on chain. This chat continues free.' : 'Not enough coins. This chat continues free.';
           c.mode = 'free';
           c.coins = 0;
           this.emit({ t: 'play_failed', chatId: c.chatId, reason: c.playFailed }, viewer);
         } else {
           c.played = c.coins;
           c.locked = c4(c.coins * (1 - this.config.feeBps / 10_000));
-          c.playTx = fakeTx(this.r);
+          c.playTx = signedTx ?? fakeTx(this.r);
           u.balance = c4(u.balance - c.coins);
           u.locked = c4(u.locked + c.locked);
           round.paidPlays++;
@@ -882,7 +1223,7 @@ export class MockGameClient implements GameClient {
           this.emitMe(viewer);
         }
         this.chatLater(c.chatId, this.d(300), () => this.startChat(c));
-      });
+      }));
     } else {
       c.phase = 'placing';
       this.chatLater(c.chatId, this.d(400), () => this.startChat(c));
@@ -1119,9 +1460,20 @@ export class MockGameClient implements GameClient {
     this.clearChatTimers(chatId);
     c.myCall = !!human;
     c.phase = 'called';
+    if (c.roundId === this.st.current) this.emitSeat(viewer, c.level, c.seatIndex);
+    if (c.played > 0 && this.isWallet(viewer)) {
+      // the browser signs the call with its play key; the call is on chain once that lands
+      this.requestSign(c, 'call', { round_id: c.roundId, handle: c.handle, human: c.myCall }, (ok, info) => {
+        if (ok) c.callTx = info;
+        this.emit({ t: 'call_recorded', chatId, human: !!c.myCall, tx: c.callTx }, viewer);
+        if (!ok) this.err('call_failed', `The call did not reach the chain: ${info}`, viewer);
+        this.save();
+      });
+      this.save();
+      return;
+    }
     if (c.played > 0) c.callTx = fakeTx(this.r);
     this.emit({ t: 'call_recorded', chatId, human: c.myCall, tx: c.callTx }, viewer);
-    if (c.roundId === this.st.current) this.emitSeat(viewer, c.level, c.seatIndex);
     this.save();
   }
 

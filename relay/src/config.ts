@@ -99,6 +99,22 @@ export interface Config {
   nearAiBudgetUsd: number;
   /** a key marked out of credits is retried with a one-token completion this often */
   nearAiRecheckSeconds: number;
+  // ---------- wallet sign-in (protocol v1.3) ----------
+  /** NEP-413 recipient every sign-in message must name (the site's domain) */
+  authRecipient: string;
+  /** a session lives this long after sign-in */
+  sessionDays: number;
+  /** "Buy REAL" link: the meme.cooking page before the launch finalizes, the Rhea swap after; unset = no link */
+  buyUrl?: string;
+  /** gas allowance of the play key a browser asks its wallet to add, in NEAR */
+  playKeyAllowanceNear: number;
+  /**
+   * prepaid gas of each player-signed play and call, in Tgas. Only burnt gas is charged, to the account and to the
+   * key's allowance (measured on testnet: a play burns about 3 Tgas, a call 2.5), so headroom costs nothing
+   */
+  playGasTgas: number;
+  /** seconds a browser has to sign a play or call before the play goes free (or the call is not on chain) */
+  signTimeoutSeconds: number;
 }
 
 function num(name: string, def: number): number {
@@ -156,6 +172,12 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     agentRequestsPerHour: num('AGENT_REQUESTS_PER_HOUR', 5),
     nearAiBudgetUsd: num('NEAR_AI_BUDGET_USD', 10),
     nearAiRecheckSeconds: num('NEAR_AI_RECHECK_SECONDS', 180),
+    authRecipient: (env.AUTH_RECIPIENT || 'realsies.lol').trim(),
+    sessionDays: num('SESSION_DAYS', 30),
+    buyUrl: env.BUY_URL || undefined,
+    playKeyAllowanceNear: num('PLAY_KEY_ALLOWANCE_NEAR', 0.25),
+    playGasTgas: num('PLAY_GAS_TGAS', 30),
+    signTimeoutSeconds: num('SIGN_TIMEOUT_SECONDS', 20),
     ...overrides,
   };
   if (!['auto', 'near', 'mock'].includes(cfg.chain)) throw new Error(`CHAIN must be auto, near or mock`);
@@ -166,5 +188,11 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (cfg.notifyEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.notifyEmail)) throw new Error('AGENT_NOTIFY_EMAIL must be an email address');
   if (!(cfg.nearAiBudgetUsd >= 0)) throw new Error('NEAR_AI_BUDGET_USD must be 0 or more');
   if (!(cfg.nearAiRecheckSeconds > 0)) throw new Error('NEAR_AI_RECHECK_SECONDS must be more than 0');
+  if (!/^[a-z0-9.-]{3,100}$/i.test(cfg.authRecipient)) throw new Error('AUTH_RECIPIENT must be a domain such as realsies.lol');
+  if (!(cfg.sessionDays > 0 && cfg.sessionDays <= 365)) throw new Error('SESSION_DAYS must be from 1 to 365');
+  if (cfg.buyUrl && !/^https:\/\//.test(cfg.buyUrl)) throw new Error('BUY_URL must be an https URL');
+  if (!(cfg.playKeyAllowanceNear > 0 && cfg.playKeyAllowanceNear <= 5)) throw new Error('PLAY_KEY_ALLOWANCE_NEAR must be more than 0 and at most 5');
+  if (!(cfg.playGasTgas >= 5 && cfg.playGasTgas <= 100)) throw new Error('PLAY_GAS_TGAS must be from 5 to 100');
+  if (!(cfg.signTimeoutSeconds >= 3 && cfg.signTimeoutSeconds <= 120)) throw new Error('SIGN_TIMEOUT_SECONDS must be from 3 to 120');
   return cfg;
 }

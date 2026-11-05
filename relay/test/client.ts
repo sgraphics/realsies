@@ -46,13 +46,26 @@ export class WsClient {
   }
 
   static connect(base: string, account: string): Promise<WsClient> {
-    const url = base.replace(/^http/, 'ws') + `/ws?account=${encodeURIComponent(account)}`;
+    return WsClient.connectQuery(base, `account=${encodeURIComponent(account)}`, account);
+  }
+
+  /** A wallet session's socket: `/ws?ticket=` with a one-time ticket from POST /api/session/ticket. */
+  static connectTicket(base: string, ticket: string, account: string): Promise<WsClient> {
+    return WsClient.connectQuery(base, `ticket=${encodeURIComponent(ticket)}`, account);
+  }
+
+  private static connectQuery(base: string, query: string, account: string): Promise<WsClient> {
+    const url = base.replace(/^http/, 'ws') + `/ws?${query}`;
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
       const c = new WsClient(account, ws);
       ws.addEventListener('open', () => resolve(c), { once: true });
       ws.addEventListener('error', () => reject(new Error(`ws connect failed for ${account}`)), { once: true });
     });
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   send(m: ClientMsg): void {

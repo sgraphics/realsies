@@ -1,0 +1,50 @@
+/* Wallet sign-in (protocol v1.3): the sign-in panel, "Enable coins", the wallet coins dialog, and the
+   "waiting for your wallet" line shared by all three. Same pixel kit: panels, buttons, plates. */
+
+/* ---------- sign-in ---------- */
+.signin-slot { padding: 6px; }
+.signin-panel { width: min(100%, 470px); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.signin-btn { width: 100%; min-height: 52px; font-size: clamp(11px, calc(var(--px) * 3.4), 17px); white-space: normal; text-align: center; line-height: 1.45; }
+@media (max-width: 480px) { .signin-btn { font-size: 12px; padding-left: 8px; padding-right: 8px; } }
+.signin-points { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.signin-points li { display: flex; gap: 8px; align-items: flex-start; font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.6), 18px); line-height: 1.3; }
+.signin-points .px-icon { margin-top: 0.15em; }
+.signin-foot { font-family: var(--font-body); font-size: clamp(13px, calc(var(--px) * 3.2), 16px); }
+.signin-foot .px-icon { width: 0.9em; height: 0.9em; }
+@media (max-height: 520px) and (orientation: landscape) {
+  .signin-panel { gap: 6px; }
+  .signin-points li { font-size: 13px; }
+  .signin-btn { min-height: 40px; }
+}
+
+/* test mode: "or Sign in with a NEAR wallet" in the title bar */
+.who-wallet { min-height: 28px; }
+.who-error { flex-basis: 100%; margin: 0; font-family: var(--font-body); font-size: 14px; display: inline-flex; gap: 6px; align-items: center; }
+
+/* ---------- a wallet step in progress ---------- */
+.flow-line { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: rgba(24, 20, 37, 0.42); border: var(--b) solid var(--edge); font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.8), 19px); line-height: 1.3; }
+.flow-dots { display: inline-flex; gap: 4px; flex: none; }
+.flow-dots i { width: 7px; height: 7px; background: var(--accent); box-shadow: 2px 2px 0 var(--edge); animation: flow-dot 0.9s steps(2) infinite; }
+.flow-dots i:nth-child(2) { animation-delay: 0.3s; }
+.flow-dots i:nth-child(3) { animation-delay: 0.6s; }
+@keyframes flow-dot { 50% { transform: translateY(-3px); opacity: 0.55; } }
+.flow-error { font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.6), 18px); line-height: 1.3; }
+
+/* ---------- enable coins ---------- */
+.key-facts { list-style: none; margin: 0; display: flex; flex-direction: column; gap: 7px; }
+.key-facts li { display: flex; gap: 8px; align-items: flex-start; font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.6), 18px); line-height: 1.3; }
+.key-facts .px-icon { margin-top: 0.15em; }
+.key-facts b { font-weight: 600; }
+.key-acct { overflow-wrap: anywhere; }
+.key-facts li > span:not(.px-icon), .signin-points li > span:not(.px-icon) { flex: 1 1 auto; min-width: 0; }
+.key-dialog .px-note { font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.6), 18px); }
+
+/* ---------- wallet coins ---------- */
+.wallet-dialog .custom-row .px-input { width: 6.5em; flex: none; }
+.wallet-dialog .custom-row .px-btn { flex: 1 1 auto; min-width: 0; white-space: normal; line-height: 1.35; }
+.wallet-rate { margin: 0; font-family: var(--font-body); font-size: clamp(13px, calc(var(--px) * 3.2), 16px); }
+.wallet-rate .px-icon { width: 0.9em; height: 0.9em; }
+.wallet-tools { gap: 8px; }
+.key-status .px-row { gap: 8px; }
+.key-status .px-sub { flex: 1 1 200px; font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.6), 18px); line-height: 1.3; }
+.buy-link { align-self: flex-start; text-decoration: none; }
