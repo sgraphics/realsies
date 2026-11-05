@@ -132,7 +132,7 @@ export const SHOTS: Shot[] = [
   {
     id: 's15', kind: 'end', start: T.end, end: T.out, key: beat(24.4), fadeOut: 0.5,
     title: 'End card: the smug three',
-    notes: 'Low-angle hero shot. The curved REALSIES logo drops in big across the top and a glint sweeps its letters, with sparkles. Below it three characters rise into frame, waist up and cropped by the bottom edge, looming over a low horizon (a planet\'s limb with the sun coming up behind them, rays fanning up the sky, a rim of backlight on each silhouette): the guest in the middle, arms crossed, with a slow nod; Coconut843 pushing his sunglasses up with one finger (ting); Pebble242 raising one eyebrow. All half-lidded, all smirking. "Come and guess if she\'s for realsies." under the logo, realsies.lol on a dark foot band. The shine sweeps again and the final chime rings out.',
+    notes: 'Low-angle hero shot. The curved REALSIES logo drops in big across the top and a glint sweeps its letters, with sparkles. Below it three characters rise into frame, waist up and cropped by the bottom edge, looming over a low horizon (a planet\'s limb with the sun coming up behind them, rays fanning up the sky, a rim of backlight on each silhouette): the guest in the middle, arms crossed, with a slow nod; Coconut843 pushing his sunglasses up with one finger (ting); Pebble242 raising one eyebrow. All half-lidded, all smirking. "Come and guess if she\'s for realsies. Win big." types on under the logo, "Win big." in yellow; realsies.lol pops in on a dark foot band as the shine sweeps again, and the final chime rings out.',
   },
 ];
 
@@ -142,6 +142,9 @@ export const CLOSE_UPS = T.cui;
 
 // ---------------------------------------------------------------- dialogue
 
+/** The tagline's closing words, drawn in yellow on the end card. */
+export const TAGLINE_ACCENT = 'Win big.';
+
 export const LINES: Line[] = [
   { id: 'human-being', speaker: 'guest', text: "I'm engaging with you as a human being.", at: 8.2, cps: 17, lead: 0.75 },
   { id: 'deceive', speaker: 'guest', text: 'Why would I deceive you.', at: 15.55, cps: 15, lead: 0.7 },
@@ -149,7 +152,7 @@ export const LINES: Line[] = [
   { id: 'for-realsies', speaker: 'host', text: "you're for realsies?", at: 24.05, cps: 11, lead: 0.85 },
   { id: 'always', speaker: 'guest', text: "I'm always for realsies", at: 28.0, cps: 15, lead: 0.7 },
   { id: 'can-you-tell', speaker: 'card', text: 'Can you tell?', at: 35.0, cps: 14 },
-  { id: 'tagline', speaker: 'tagline', text: "Come and guess if she's for realsies.", at: beat(17.5), cps: 30 },
+  { id: 'tagline', speaker: 'tagline', text: `Come and guess if she's for realsies. ${TAGLINE_ACCENT}`, at: beat(17.5), cps: 30 },
 ];
 
 /** Chat lines (the interview's bubbles), in order. */
@@ -221,7 +224,7 @@ export const CUE: MontageCues & { logo: number; url: number; chime: number } = {
   hoverNo: 14.05,
   hoverYes2: 15.1,
   logo: 16,
-  url: 20.5,
+  url: 22, // after the tagline has typed (by beat 21), on the second shine sweep
   chime: 24,
 };
 /** First beats of the montage's chat and call shots (the chat clock, the fuse, the call timer). */

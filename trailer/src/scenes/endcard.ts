@@ -6,13 +6,15 @@
 
 import { type Rgba, type Color, type Look, createBuffer, px, get, PAL, TRANSPARENT, lighter, hash01, drawLogo, LOGO_W, LOGO_H } from '../art.ts';
 import { blitK, rectOut, OUT_W, OUT_H } from '../engine/camera.ts';
-import { drawCentered } from '../engine/font.ts';
+import { drawCentered, drawString, measure, advanceTo, type TextStyle } from '../engine/font.ts';
 import { SmugActor, type SmugState } from '../engine/expressions.ts';
 import { typedCount, lineShown, type Line } from '../engine/timeline.ts';
 
 export interface HeroEndCardConfig {
   /** The line typed under the logo, and the URL that pops in at the bottom. */
   tagline: Line;
+  /** The tagline's closing words, drawn in yellow (must end the line), e.g. "Win big." */
+  accent?: string;
   url: string;
   /** Who stands where: rig seeds or looks. Left pushes up sunglasses, middle crosses her arms and nods, right raises an eyebrow. */
   trio: { left: string | Look; mid: string | Look; right: string | Look };
@@ -206,10 +208,17 @@ export class HeroEndCard {
     if (still) sparkPh = 0.45;
     if (sparkPh >= 0)
       SPARK_AT.forEach(([lx, ly, c], i) => sparkle(out, LOGO_X + lx * LOGO_K, LOGO_Y + dy + ly * LOGO_K, Math.min(0.999, Math.max(0, sparkPh - i * 0.12)), c));
-    // tagline under the logo, typed on
+    // tagline under the logo, typed on, one line; its closing words (the accent) in yellow
     const tag = cfg.tagline;
     const n = still ? Infinity : typedCount(tag, t);
-    drawCentered(out, lineShown(tag), OUT_W / 2, TAG_Y, { color: P.white, scale: 6, outline: P.black }, n);
+    const shown = lineShown(tag);
+    const accent = cfg.accent && shown.endsWith(cfg.accent) ? cfg.accent : '';
+    const head = shown.slice(0, shown.length - accent.length);
+    const headLen = [...head].length;
+    const TAG: TextStyle = { color: P.white, scale: 6, outline: P.black };
+    const tx = Math.round((OUT_W / 2 - (measure(shown) * TAG.scale) / 2) / TAG.scale) * TAG.scale;
+    drawString(out, head, tx, TAG_Y, TAG, n);
+    if (accent) drawString(out, accent, tx + advanceTo(shown, headLen) * TAG.scale, TAG_Y, { ...TAG, color: P.yellow }, n - headLen);
     // the URL pops in on the foot band
     const ua = still ? 10 : t - beat(CUE.url);
     if (ua >= 0) {

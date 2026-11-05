@@ -59,6 +59,7 @@ function scenes() {
     }),
     end: new HeroEndCard({
       tagline: S.TAGLINE,
+      accent: S.TAGLINE_ACCENT,
       url: S.URL_TEXT,
       trio: { left: seeds[END_SEATS.left], mid: castLook(CAST.guest), right: seeds[END_SEATS.right] },
       beat: S.beat,
