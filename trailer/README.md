@@ -78,8 +78,8 @@ frames, audio and MP4, so a refactor can be checked against an earlier render wi
 
 ## Recording your voice
 
-The dialogue has no synthesised voice and no typing sounds: a line is silent until it has a
-recording. Each render's `script.md` lists every line id with its start time and how long it is
+The dialogue has no synthesised voice: a line is silent until it has a recording (the quiet
+key ticks under the typing dots play either way). Each render's `script.md` lists every line id with its start time and how long it is
 up on screen.
 
 - Naming: one file per line, named after its line id, in `variants/<name>/voice/`, for example

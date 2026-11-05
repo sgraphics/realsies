@@ -76,12 +76,12 @@ export function lowSwell(m: Mix, o: { from: number; peak: number; to: number }):
 // ---------------------------------------------------------------- voices and typing
 
 /** Soft keyboard ticks under a chat line's typing dots, on the speaker's side. */
-export function typingTicks(m: Mix, l: Line): void {
+export function typingTicks(m: Mix, l: Line, gain = 0.1): void {
   const from = l.at - (l.lead ?? 0.7);
   const pan = l.speaker === 'host' ? -0.4 : 0.4;
   for (let k = 0, t = from + 0.06; t < l.at - 0.05; k++, t += 0.11 + ((k * 37) % 5) * 0.012) {
     const bp = Biquad.make('bp', 3200 + (k % 3) * 500, 2);
-    m.add(t, 0.02, pan, (_n, u) => bp.next(white()) * ad(u, 0.0005, 0.02, 6) * 0.1);
+    m.add(t, 0.02, pan, (_n, u) => bp.next(white()) * ad(u, 0.0005, 0.02, 6) * gain);
   }
 }
 

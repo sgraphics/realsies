@@ -5,7 +5,12 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { writeWav, limit, peakOf, type Stereo } from './audio/dsp.ts';
 
-export const LOUDNESS = { I: -14, TP: -1.5, LRA: 20 };
+/**
+ * Target loudness and true-peak ceiling. LRA is not a processing target: loudnorm only stays linear
+ * (no compression, the quiet parts stay quiet) while the measured loudness range is under it, so it
+ * is set above any range a trailer here spans (a quiet interview against a loud montage is ~22 LU).
+ */
+export const LOUDNESS = { I: -14, TP: -1.5, LRA: 30 };
 
 export function ff(argv: string[], what: string): string {
   const r = spawnSync('ffmpeg', ['-hide_banner', '-nostdin', ...argv], { encoding: 'utf8', maxBuffer: 1 << 26 });

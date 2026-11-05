@@ -15,7 +15,7 @@ export const THEME: ThemeId = 'space';
 
 export const BPM = 136;
 /** Downbeat of the chiptune (bar 1, beat 1): the montage's first frame. */
-export const MUSIC_AT = 37.4;
+export const MUSIC_AT = 31.9;
 const grid = beatGrid(BPM, MUSIC_AT);
 export const BEAT = grid.beatLen;
 /** Absolute time of a beat counted from the music's first downbeat (negative = pickup). */
@@ -24,76 +24,72 @@ export const beat = grid.beat;
 // ---------------------------------------------------------------- shots
 
 const T = {
-  wide: 2.5,
-  ms1: 6.5,
-  mi: 11.6,
-  ms2: 14.4,
-  mci: 18.0,
-  cui: 22.6,
-  cus: 26.8,
-  push: 30.4,
-  card: 34.4,
+  wide: 0, // the first frame is the room, no fade: one second of it
+  ms1: 1.0,
+  mi: 6.1,
+  ms2: 8.9,
+  mci: 12.5,
+  cui: 17.1,
+  cus: 21.3,
+  push: 24.9,
+  card: 28.9,
   lobby: MUSIC_AT,
   countdown: beat(3),
   chat: beat(7),
   call: beat(12),
   end: beat(16),
-  out: 50.0,
+  out: 44.5,
 };
 
 /** Her close-up, and the extreme close-up of her eyes the camera pushes into. */
 const CUS: Framing = { cx: 209, cy: 87, k: 40, lens: 'tight' };
 const EYES_ECU: Framing = { cx: 212, cy: 86.5, k: 112, lens: 'tight' };
 /** The push: slow, in even zoom steps, then a held beat on her eyes before the glitch. */
-export const PUSH: Push = { from: CUS, to: EYES_ECU, t0: 30.45, t1: 33.25 };
+export const PUSH: Push = { from: CUS, to: EYES_ECU, t0: 24.95, t1: 27.75 };
 
-/** The two consecutive glitch frames, in her eyes at the end of the held beat (frames 816, 817). */
-export const GLITCH_FRAME = 816;
+/** The two consecutive glitch frames, in her eyes at the end of the held beat (frames 684, 685). */
+export const GLITCH_FRAME = 684;
 export const GLITCH = [GLITCH_FRAME / FPS, (GLITCH_FRAME + 1) / FPS];
 
 export const SHOTS: Shot[] = [
   {
-    id: 's01', kind: 'black', start: 0, end: T.wide, key: 1.2,
-    title: 'Black', notes: 'Black. Faint room tone fades up.',
-  },
-  {
-    id: 's02', kind: 'set', start: T.wide, end: T.ms1, key: 5.6, fadeIn: 0.6,
+    id: 's02', kind: 'set', start: T.wide, end: T.ms1, key: 0.5,
     title: 'Wide: the interview set',
-    notes: 'Wide of the dim set: two green leather chairs angled toward each other, a side table with two glasses of water (his half drunk, hers untouched), a softbox glowing at the left, a fig, a warm floor lamp, a boom mic dipping in, the cinema camera on its tripod as a foreground silhouette with its tally light blinking. Interviewer at left, guest at right. Silence. He glances at the lens, then back.',
+    notes: 'Wide of the dim set: two green leather chairs angled toward each other, a side table with two glasses of water (his half drunk, hers untouched), a softbox glowing at the left, a fig, a warm floor lamp, a boom mic dipping in, the cinema camera on its tripod as a foreground silhouette with its tally light blinking. Interviewer at left, guest at right. One second of it, straight in with no fade; he glances at the lens, then back.',
     framing: { cx: 160, cy: 84, k: 6, lens: 'wide' },
   },
   {
-    id: 's03', kind: 'set', start: T.ms1, end: T.mi, key: 10.9,
+    id: 's03', kind: 'set', start: T.ms1, end: T.mi, key: 5.4,
     title: 'Medium: guest',
     notes: 'Medium on the guest, centred, her big blue eyes on him. A blink. Her typing dots, then her first bubble types in: "I\'m engaging with you as a human being."',
     framing: { cx: 213, cy: 90, k: 24, lens: 'tight' },
   },
   {
-    id: 's04', kind: 'set', start: T.mi, end: T.ms2, key: 13.8,
+    id: 's04', kind: 'set', start: T.mi, end: T.ms2, key: 8.3,
     title: 'Medium: interviewer',
     notes: 'Medium on the interviewer, framed left. He says nothing. One blink. Her bubble hangs there.',
     framing: { cx: 121, cy: 90, k: 24, lens: 'tight' },
   },
   {
-    id: 's05', kind: 'set', start: T.ms2, end: T.mci, key: 17.7,
+    id: 's05', kind: 'set', start: T.ms2, end: T.mci, key: 12.2,
     title: 'Medium: guest again',
     notes: 'Back on her. Typing dots. "Why would I deceive you." The chat scrolls up. A small smile.',
     framing: { cx: 213, cy: 90, k: 24, lens: 'tight' },
   },
   {
-    id: 's06', kind: 'set', start: T.mci, end: T.cui, key: 22.3,
+    id: 's06', kind: 'set', start: T.mci, end: T.cui, key: 16.8,
     title: 'Medium close: interviewer',
     notes: 'Tighter on him. His typing dots run long. "Ohkay," a beat, "OK good chat". Pause. A slight head tilt.',
     framing: { cx: 118, cy: 88.5, k: 30, lens: 'tight' },
   },
   {
-    id: 's07', kind: 'set', start: T.cui, end: T.cus, key: 26.3,
+    id: 's07', kind: 'set', start: T.cui, end: T.cus, key: 20.8,
     title: 'Close-up: interviewer',
     notes: 'Close-up, held. Typing dots. The key line, slowly: "you\'re for realsies?"',
     framing: { cx: 110, cy: 87.5, k: 40, lens: 'tight' },
   },
   {
-    id: 's08', kind: 'set', start: T.cus, end: T.push, key: 30.0,
+    id: 's08', kind: 'set', start: T.cus, end: T.push, key: 24.5,
     title: 'Close-up: guest',
     notes: 'Close-up on her large blue eyes, highlights and all. She does not blink. Typing dots. "I\'m always for realsies". Her eyes slide to the lens.',
     framing: CUS,
@@ -105,7 +101,7 @@ export const SHOTS: Shot[] = [
     push: PUSH,
   },
   {
-    id: 's10', kind: 'card', start: T.card, end: T.lobby, key: 36.3,
+    id: 's10', kind: 'card', start: T.card, end: T.lobby, key: 30.8,
     title: 'Card: "Can you tell?"',
     notes: 'Black. "Can you tell?" types on in white pixel text with a blinking cursor. A snare fill.',
   },
@@ -146,19 +142,19 @@ export const CLOSE_UPS = T.cui;
 export const TAGLINE_ACCENT = 'Win big.';
 
 export const LINES: Line[] = [
-  { id: 'human-being', speaker: 'guest', text: "I'm engaging with you as a human being.", at: 8.2, cps: 17, lead: 0.75 },
-  { id: 'deceive', speaker: 'guest', text: 'Why would I deceive you.', at: 15.55, cps: 15, lead: 0.7 },
-  { id: 'good-chat', speaker: 'host', text: 'Ohkay,| OK good chat', at: 19.6, cps: 12, lead: 1.05 },
-  { id: 'for-realsies', speaker: 'host', text: "you're for realsies?", at: 24.05, cps: 11, lead: 0.85 },
-  { id: 'always', speaker: 'guest', text: "I'm always for realsies", at: 28.0, cps: 15, lead: 0.7 },
-  { id: 'can-you-tell', speaker: 'card', text: 'Can you tell?', at: 35.0, cps: 14 },
+  { id: 'human-being', speaker: 'guest', text: "I'm engaging with you as a human being.", at: 2.7, cps: 17, lead: 0.75 },
+  { id: 'deceive', speaker: 'guest', text: 'Why would I deceive you.', at: 10.05, cps: 15, lead: 0.7 },
+  { id: 'good-chat', speaker: 'host', text: 'Ohkay,| OK good chat', at: 14.1, cps: 12, lead: 1.05 },
+  { id: 'for-realsies', speaker: 'host', text: "you're for realsies?", at: 18.55, cps: 11, lead: 0.85 },
+  { id: 'always', speaker: 'guest', text: "I'm always for realsies", at: 22.5, cps: 15, lead: 0.7 },
+  { id: 'can-you-tell', speaker: 'card', text: 'Can you tell?', at: 29.5, cps: 14 },
   { id: 'tagline', speaker: 'tagline', text: `Come and guess if she's for realsies. ${TAGLINE_ACCENT}`, at: beat(17.5), cps: 30 },
 ];
 
 /** Chat lines (the interview's bubbles), in order. */
 export const CHAT = LINES.filter((l) => l.speaker === 'host' || l.speaker === 'guest');
 /** The chat slides away as the push-in begins. */
-export const CHAT_AWAY = 30.3;
+export const CHAT_AWAY = 24.8;
 /**
  * Chat bubble size, the same in the interview and in the montage's chat: 8 output px per bubble
  * and font pixel (56-px capitals at 1080p), wrapped at these widths in font px.
@@ -176,27 +172,27 @@ export const DIRECTION: Record<Speaker, ActorDirection> = {
     base: { look: 1 },
     keys: [
       // in the wide he glances at the lens, then back at her
-      { t: 4.4, set: { look: 0 } },
-      { t: 5.25, set: { look: 1 } },
+      { t: 0.3, set: { look: 0 } },
+      { t: 0.75, set: { look: 1 } },
       // "OK good chat". Pause. The head tilt, held through the cut
-      { t: 21.95, set: { tilt: 1, tiltDir: 1 } },
-      { t: 22.05, set: { tilt: 2, tiltDir: 1 } },
-      { t: 22.15, set: { tilt: 3, tiltDir: 1 } },
+      { t: 16.45, set: { tilt: 1, tiltDir: 1 } },
+      { t: 16.55, set: { tilt: 2, tiltDir: 1 } },
+      { t: 16.65, set: { tilt: 3, tiltDir: 1 } },
       { t: T.cui, set: { tilt: 0 } },
     ],
-    blinks: [3.4, 12.9, 18.6, 26.0],
+    blinks: [7.4, 13.1, 20.5],
     breathPeriod: 3.6,
     breathOff: [[T.cui, T.cus]],
   },
   guest: {
     base: { look: -1 },
     keys: [
-      { t: 17.35, set: { smile: true } },
+      { t: 11.85, set: { smile: true } },
       // after her last line her eyes slide to the lens, and stay there through the push-in
-      { t: 29.95, set: { look: 0 } },
+      { t: 24.45, set: { look: 0 } },
     ],
-    // she blinks like a person in the wide and the mediums; from her close-up on, never
-    blinks: [3.9, 7.0, 15.0],
+    // she blinks like a person in the mediums; from her close-up on, never
+    blinks: [1.5, 9.5],
     breathPeriod: 4.1,
     breathOff: [[T.cus, T.card]],
   },
@@ -205,7 +201,7 @@ export const DIRECTION: Record<Speaker, ActorDirection> = {
 // ---------------------------------------------------------------- effects and cues
 
 /** Drone: fades in with the wide, cut dead by the glitch. A low swell rides the push-in. */
-export const DRONE = { from: 2.5, to: GLITCH[0] };
+export const DRONE = { from: 0, to: GLITCH[0] };
 export const SWELL = { from: PUSH.t0 - 0.2, to: GLITCH[0] };
 
 /** Montage beats (in beats from MUSIC_AT). */
