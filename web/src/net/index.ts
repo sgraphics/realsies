@@ -22,6 +22,7 @@ export function createClient(search?: string): GameClient {
       longNames: q.get('longnames') === '1',
       ...(round > 1 ? { startRoundId: round } : {}),
       ...(searchMs > 0 ? { searchMs: [searchMs, searchMs] as [number, number] } : {}),
+      ...(q.get('nobots') === '1' ? { noBots: true } : {}), // the bots are napping: no new chats (bots_unavailable)
     });
     (globalThis as { realsiesMock?: MockGameClient }).realsiesMock = client; // console access in mock mode
     return client;

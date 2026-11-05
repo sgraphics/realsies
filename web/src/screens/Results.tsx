@@ -6,7 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import type { ChatResult, Level, RoundResults } from '../../../shared/protocol.ts';
 import type { Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
-import { coins2, fmtCoins, fmtPct, fmtSigned, shortHash, txUrl } from '../state/format.ts';
+import { botmasterOf, coins2, fmtCoins, fmtPct, fmtSigned, shortHash, txUrl } from '../state/format.ts';
 import { Button, Coins, Icon, Panel } from '../ui/kit.tsx';
 import { CharacterCanvas } from '../ui/CharacterCanvas.tsx';
 import { PersonaReveal } from '../ui/PersonaCard.tsx';
@@ -35,6 +35,7 @@ function ChatRow({ c, onVerify, presetLow }: { c: ChatResult; onVerify(id: strin
           <b class="px-name">{c.partner.name}</b>
           <span class={'px-tag ' + (c.truth === 'human' ? 'human' : 'bot')}>{c.truth === 'human' ? 'HUMAN' : 'BOT'}</span>
           {c.model && <span class="px-dim px-mono px-small">{c.model}</span>}
+          {c.truth === 'bot' && botmasterOf(c) && <span class="px-dim px-small">entered by <b>{botmasterOf(c)}</b></span>}
           {c.partnerAccount && <span class="px-dim px-mono px-small">{c.partnerAccount}</span>}
         </div>
         {c.truth === 'bot' && <PersonaReveal p={c.persona} />}

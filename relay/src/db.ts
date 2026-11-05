@@ -83,6 +83,8 @@ export class Db {
     this.db = new DatabaseSync(file);
     if (file !== ':memory:') this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA synchronous = NORMAL;');
+    // tools/botmaster-admin.ts writes to the same file while the relay runs: wait briefly for its lock
+    this.db.exec('PRAGMA busy_timeout = 3000;');
     this.db.exec(SCHEMA);
   }
 

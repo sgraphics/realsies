@@ -47,6 +47,39 @@ export interface MockOptions {
   /** QA: give every seat the longest possible gamertag (an 8-letter word plus 3 digits, 11 characters). */
   longNames?: boolean;
   startRoundId?: number;
+  /**
+   * The bots are out of NEAR AI credits (also: localStorage['realsies:mock:nobots'] = '1'). Like the relay,
+   * no new chats start at all, human to human included: every pick gets bots_unavailable at once and the
+   * seat goes back. Chats already running finish as normal.
+   */
+  noBots?: boolean;
+}
+
+/** The relay's words for bots_unavailable on a search (the web shows its own calm note instead). */
+const BOTS_UNAVAILABLE = 'The bots are out of NEAR AI credits: no new chats for a few minutes.';
+
+/** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds'> = {}): PublicConfig {
+  return {
+    testMode: true,
+    network: 'testnet',
+    contractId: 'game.realsies.testnet',
+    tokenId: 'real.realsies.testnet',
+    tokenSymbol: 'tREAL',
+    coinUnit: '1000000000000000000',
+    usdPerCoin: 0.01,
+    presets: { 1: [5, 10, 25], 2: [25, 50, 100], 3: [100, 250, 500] },
+    minCoins: 5,
+    maxCoins: 500,
+    chatSeconds: opts.chatSeconds ?? 120,
+    callSeconds: opts.callSeconds ?? 20,
+    roundMinutes: opts.roundMinutes ?? 10,
+    feeBps: 500,
+    freeChatsPerDay: 0,
+    countdownSeconds: opts.countdownSeconds ?? 3,
+    explorerTx: 'https://testnet.nearblocks.io/txns/{hash}',
+    explorerAccount: 'https://testnet.nearblocks.io/address/{account}',
+  };
 }
 
 const TEST_USERS: { accountId: string; label: string; balance: number; rating: number; chats: number; right: number }[] = [
@@ -215,26 +248,7 @@ export class MockGameClient implements GameClient {
     this.r = makeRand(opts.random);
     this.loadEvidence = opts.loadEvidence ?? viteEvidenceLoader;
     this.key = opts.storageKey === undefined ? 'realsies:mock:v1' : opts.storageKey;
-    this.config = {
-      testMode: true,
-      network: 'testnet',
-      contractId: 'game.realsies.testnet',
-      tokenId: 'real.realsies.testnet',
-      tokenSymbol: 'tREAL',
-      coinUnit: '1000000000000000000',
-      usdPerCoin: 0.01,
-      presets: { 1: [5, 10, 25], 2: [25, 50, 100], 3: [100, 250, 500] },
-      minCoins: 5,
-      maxCoins: 500,
-      chatSeconds: opts.chatSeconds ?? 120,
-      callSeconds: opts.callSeconds ?? 20,
-      roundMinutes: opts.roundMinutes ?? 10,
-      feeBps: 500,
-      freeChatsPerDay: 0,
-      countdownSeconds: opts.countdownSeconds ?? 3,
-      explorerTx: 'https://testnet.nearblocks.io/txns/{hash}',
-      explorerAccount: 'https://testnet.nearblocks.io/address/{account}',
-    };
+    this.config = mockConfig(opts);
     this.st = this.load() ?? this.fresh();
     this.resume();
   }
@@ -774,6 +788,12 @@ export class MockGameClient implements GameClient {
         return this.err('bad_coins', `Choose between ${this.config.minCoins} and ${this.config.maxCoins} coins.`, viewer);
       if (this.user(viewer).balance + 1e-9 < n) return this.err('insufficient_coins', 'Not enough coins. Deposit to play coins, or play free.', viewer);
     }
+    // the bots are napping: no new chats at all, so the pick is refused at once and the seat goes back
+    if (this.botsNapping()) {
+      this.err('bots_unavailable', BOTS_UNAVAILABLE, viewer);
+      this.emitSeat(viewer, level, seatIndex);
+      return;
+    }
     const s: SearchRec = { viewer, roundId: cur.roundId, level, seatIndex, mode, coins: n };
     this.search = s;
     this.emit({ t: 'searching', level, seatIndex }, viewer);
@@ -786,10 +806,21 @@ export class MockGameClient implements GameClient {
     });
   }
 
+  /** The bots are out of NEAR AI credits: the relay starts no new chats, human to human included. */
+  private botsNapping(): boolean {
+    return !!this.o.noBots || flag('realsies:mock:nobots');
+  }
+
   private match(s: SearchRec): void {
     const { viewer, level, seatIndex } = s;
     const roundId = this.st.current;
     if (roundId !== s.roundId) return;
+    // the bots ran out of credits during the search: nobody is matched, the seat goes back
+    if (this.botsNapping()) {
+      this.err('bots_unavailable', BOTS_UNAVAILABLE, viewer);
+      this.emitSeat(viewer, level, seatIndex);
+      return;
+    }
     const mine = this.st.chats.filter((c) => c.viewer === viewer && c.roundId === roundId);
     const humanFlag = this.o.forceHuman || flag('realsies:mock:human');
     const humanChance = humanFlag ? 1 : this.o.noHuman ? 0 : s.mode === 'free' ? 0.4 : 0.25;

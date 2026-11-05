@@ -13,6 +13,7 @@
 //   &menu=1                        open the HUD menu
 //   &consent=1                     the 18+ / terms box already ticked (who are you)
 //   &longnames=1                   every seat gets an 11-character gamertag
+//   &nobots=1                      the bots are napping: every pick gets bots_unavailable (no new chats)
 // Only active together with ?mock=1.
 
 import type { Level } from '../../shared/protocol.ts';

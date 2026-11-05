@@ -48,6 +48,12 @@ export function accountUrl(cfg: PublicConfig | undefined, account: string | unde
   return cfg.explorerAccount.replace('{account}', encodeURIComponent(account));
 }
 
+/** The AI builder who entered a bot (relay extra on ChatResult and VerifyBundle, shown after settlement). */
+export function botmasterOf(x: unknown): string | null {
+  const v = (x as { botmaster?: unknown } | null)?.botmaster;
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
 export function shortHash(h: string, n = 8): string {
   if (!h) return '';
   return h.length > 2 * n + 1 ? `${h.slice(0, n)}…${h.slice(-n)}` : h;

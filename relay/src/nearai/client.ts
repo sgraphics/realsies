@@ -5,6 +5,7 @@ import { checkAttestation, type AttestationCheck } from './verify.js';
 import type { SignaturePayload } from '../../../shared/protocol.js';
 import { addressOfPrivateKey, sha256Hex, signEip191 } from '../crypto.js';
 import { sleep, randomId, uniform, errMsg } from '../util.js';
+import { MODELS } from '../models.js';
 import { logger } from '../log.js';
 
 const log = logger('nearai');
@@ -27,6 +28,12 @@ export interface CompletionResult {
   error?: string;
 }
 
+/** One entry of GET /v1/models (public, no key needed). Enclave models are the ones owned by `nearai`. */
+export interface ModelListing {
+  id: string;
+  owned_by: string;
+}
+
 export interface NearAi {
   readonly kind: 'real' | 'mock';
   attest(model: string, nonce: string): Promise<AttestationResult>;
@@ -34,6 +41,16 @@ export interface NearAi {
   complete(model: string, request: string): Promise<CompletionResult>;
   /** GET the ECDSA signature with retries for up to maxMs. */
   signature(completionId: string, maxMs: number): Promise<SignaturePayload | null>;
+  /** GET /v1/models: every model the gateway serves, with its owner. Throws when the list cannot be read. */
+  models?(): Promise<ModelListing[]>;
+}
+
+function parseModels(j: any): ModelListing[] {
+  const data = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : null;
+  if (!data) throw new Error('unexpected /v1/models response');
+  return data
+    .filter((m: any) => m && typeof m.id === 'string')
+    .map((m: any) => ({ id: m.id, owned_by: typeof m.owned_by === 'string' ? m.owned_by : '' }));
 }
 
 function parseCompletion(status: number, response: string, latencyMs: number): CompletionResult {
@@ -104,6 +121,12 @@ export class RealNearAi implements NearAi {
     }
   }
 
+  async models(): Promise<ModelListing[]> {
+    const r = await fetch(`${this.base}/models`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) throw new Error(`models: http ${r.status}`);
+    return parseModels(await r.json());
+  }
+
   async signature(completionId: string, maxMs: number): Promise<SignaturePayload | null> {
     const until = Date.now() + maxMs;
     let attempt = 0;
@@ -167,6 +190,12 @@ export class MockNearAi implements NearAi {
   /** Test hooks */
   failNext = 0;
   latencyMs: [number, number] = [150, 500];
+  /** every completion fails the way NEAR AI reports an exhausted balance (HTTP 402), until set back */
+  creditFail = false;
+  /** every completion fails with HTTP 401, as with a revoked or mistyped key */
+  authFail = false;
+  /** completions made (successful or not), for tests that check which key a chat used */
+  calls = 0;
 
   async attest(model: string, nonce: string): Promise<AttestationResult> {
     const rd = (a: string) => a.replace(/^0x/, '') + '0'.repeat(24) + nonce;
@@ -182,9 +211,19 @@ export class MockNearAi implements NearAi {
     return { ...check, note: `MOCK enclave (local throwaway key); ${check.note}`, fetchedAt: Date.now(), rawGzip: gzipSync(bytes) };
   }
 
+  async models(): Promise<ModelListing[]> {
+    return [...Object.keys(MODELS).map((id) => ({ id, owned_by: 'nearai' })), { id: 'openai/gpt-5.5', owned_by: 'openai' }];
+  }
+
   async complete(model: string, request: string): Promise<CompletionResult> {
     const t0 = Date.now();
     await sleep(uniform(this.latencyMs[0], this.latencyMs[1]));
+    this.calls++;
+    if (this.creditFail) {
+      const response = '{"error":{"message":"Insufficient credits: your balance is $0.00. Add credits to continue.","type":"insufficient_balance","code":"payment_required"}}';
+      return parseCompletion(402, response, Date.now() - t0);
+    }
+    if (this.authFail) return parseCompletion(401, '{"error":{"message":"Invalid API key","type":"authentication_error"}}', Date.now() - t0);
     if (this.failNext > 0) {
       this.failNext--;
       return { ok: false, status: 503, response: '{"error":{"message":"mock failure"}}', content: null, latencyMs: Date.now() - t0, error: 'mock failure' };

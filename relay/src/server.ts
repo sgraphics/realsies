@@ -1,4 +1,5 @@
-// HTTP API, WebSocket (/ws) and static hosting of web/dist with an SPA fallback, on one port.
+// HTTP API, WebSocket (/ws), the AI builders API (src/agents/api.ts), /bot/ws for remote brains, and static
+// hosting of web/dist with an SPA fallback, on one port.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,6 +11,7 @@ import { BRAIN_PROTOCOL, INTENTS, LENGTHS, LIMITS, TOPICS } from './bot/api.js';
 import { STEERING, STEERING_SHA256, STEER_VERSION } from './bot/intents.js';
 import { errMsg } from './util.js';
 import { logger } from './log.js';
+import { CORS, readBody, sendJson } from './http.js';
 
 const log = logger('http');
 
@@ -35,37 +37,14 @@ const MIME: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 };
 
-function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
-  const s = JSON.stringify(body, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*',
-  });
-  res.end(s);
-}
-
-async function readBody(req: http.IncomingMessage): Promise<any> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const c of req) {
-    size += (c as Buffer).length;
-    if (size > 64 * 1024) throw new GameError('body_too_large', 'request body too large', 413);
-    chunks.push(c as Buffer);
-  }
-  if (chunks.length === 0) return {};
-  const t = Buffer.concat(chunks).toString('utf8').trim();
-  if (!t) return {};
-  try {
-    return JSON.parse(t);
-  } catch {
-    throw new GameError('bad_json', 'body must be JSON');
-  }
-}
-
 type Handler = (m: RegExpMatchArray, req: http.IncomingMessage, url: URL) => Promise<unknown> | unknown;
 
-export function createServer(game: Game, opts: { webDist: string; testMode: boolean; hub?: BotmasterHub }) {
+/** Routes mounted before the game's: /api/agents, /api/admin, /api/botmaster (src/agents/api.ts). */
+export interface ApiMount {
+  handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean>;
+}
+
+export function createServer(game: Game, opts: { webDist: string; testMode: boolean; hub?: BotmasterHub; agents?: ApiMount }) {
   const routes: { method: string; re: RegExp; fn: Handler }[] = [];
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
 
@@ -102,7 +81,9 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
     if (!opts.testMode) throw new GameError('not_test_mode', 'test mode only', 403);
     return game.debugState();
   });
-  route('GET', /^\/api\/health$/, () => ({ ok: true, round: game.current?.id ?? null }));
+  // ai: the relay's own NEAR AI key, {status: ok | low_credit | out_of_credits, since}; spend, budget and the
+  // reason are business information, served by GET /api/admin/health (src/agents/api.ts)
+  route('GET', /^\/api\/health$/, () => ({ ok: true, round: game.current?.id ?? null, ai: game.aiHealth() }));
 
   const distRoot = path.resolve(opts.webDist);
   const hasDist = fs.existsSync(path.join(distRoot, 'index.html'));
@@ -135,15 +116,12 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      });
+      res.writeHead(204, { ...CORS, 'Access-Control-Max-Age': '600' });
       res.end();
       return;
     }
     if (url.pathname.startsWith('/api/')) {
+      if (opts.agents && (await opts.agents.handle(req, res, url))) return;
       const r = routes.find((x) => x.method === req.method && x.re.test(url.pathname));
       if (!r) {
         sendJson(res, 404, { error: 'not_found', code: 'not_found', message: `${req.method} ${url.pathname}` });

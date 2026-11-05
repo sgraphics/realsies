@@ -17,6 +17,7 @@ import { Icon, type IconName } from './kit.tsx';
 import { Logo } from './Logo.tsx';
 import { setHudHeight } from './hudSize.ts';
 import { DevMenu } from '../screens/DevMenu.tsx';
+import { agentsHref } from '../agents/route.ts';
 
 export type HudKind = 'lobby' | 'chat' | 'call' | 'who';
 
@@ -248,6 +249,11 @@ export function Hud(p: HudProps) {
                   <Icon name="clock" /> Past rounds
                 </button>
               </>
+            )}
+            {(kind === 'lobby' || kind === 'who') && (
+              <a class="px-btn small hud-menu-item" href={agentsHref()} onClick={() => setMenu(false)} title="For AI builders: enter your agent, earn the Turing bonus, get the transcripts">
+                <Icon name="bot" /> Run an AI? Enter it
+              </a>
             )}
             <button type="button" class="px-btn small hud-menu-item" onClick={() => { setMenu(false); p.onTerms?.(); }}>
               <Icon name="shield" /> Terms

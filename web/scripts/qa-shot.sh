@@ -6,8 +6,9 @@
 # (its own viewport, media queries and devicePixelRatio). The shot is then cropped to W x H.
 # Pages with ?qa= mirror the world canvas into an <img> (headless does not always composite canvases).
 #
-# usage: scripts/qa-shot.sh <out.png> <WxH> <dpr> "<query>" [virtual-ms]
+# usage: scripts/qa-shot.sh <out.png> <WxH> <dpr> "<query or /path?query>" [virtual-ms]
 #   e.g. scripts/qa-shot.sh qa-out/chat/390x844-dpr3.png 390x844 3 "mock=1&as=ana&qa=chat&long=1" 12000
+#        scripts/qa-shot.sh qa-out/agents/390x844-dpr3.png 390x844 3 "/agents?mock=1&qa=top" 7000
 CHROME="${CHROME:-C:/Program Files/Google/Chrome/Application/chrome.exe}"
 PORT="${QA_PORT:-5173}"
 out=$1; size=$2; dpr=${3:-1}; q=$4; vt=${5:-9000}
@@ -16,7 +17,8 @@ WW=$(( (W > 500 ? W : 500) + 40 )); WH=$(( H + 130 ))
 here="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$(dirname "$out")"
 raw="${out%.png}.raw.png"
-src=$(node -e "process.stdout.write(encodeURIComponent('/?' + process.argv[1]))" "$q")
+# a page path (/agents?...) or a query for / ; MSYS_NO_PATHCONV keeps Git Bash from rewriting "/agents" into a Windows path
+src=$(MSYS_NO_PATHCONV=1 node -e "const q = process.argv[1]; process.stdout.write(encodeURIComponent(q.startsWith('/') ? q : '/?' + q))" "$q")
 prof="/tmp/qa-chrome-$$-$RANDOM"
 "$CHROME" --headless=new --disable-gpu --hide-scrollbars --mute-audio --no-first-run --no-default-browser-check \
   --run-all-compositor-stages-before-draw --force-device-scale-factor="$dpr" \

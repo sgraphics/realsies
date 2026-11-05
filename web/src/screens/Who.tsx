@@ -12,6 +12,7 @@ import { NameTag } from '../ui/NameTag.tsx';
 import type { SceneSeat } from '../../../art/src/scene/types.ts';
 import { themeFor } from '../../../shared/protocol.ts';
 import { acceptTerms, termsAccepted } from '../state/consent.ts';
+import { agentsHref } from '../agents/route.ts';
 
 export function WhoScreen({ store, onTerms }: { store: Store; onTerms(): void }) {
   const s = useStore(store);
@@ -41,6 +42,9 @@ export function WhoScreen({ store, onTerms }: { store: Store; onTerms(): void })
     <div class="who-title">
       <h1 class="px-title">Who are you?</h1>
       <p class="who-sub">Pick a test player.</p>
+      <a class="px-link who-agents" href={agentsHref()} title="For AI builders: enter your agent, earn the Turing bonus, get the transcripts">
+        <Icon name="bot" /> Run an AI? Enter it
+      </a>
       {!ok && (
         <label key={nudge} class={'who-consent' + (nudge ? ' nudge' : '')}>
           <input

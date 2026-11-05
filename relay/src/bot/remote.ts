@@ -1,8 +1,10 @@
 // Remote brains: a registered botmaster's process connects to /bot/ws, authenticates with its token
-// (relay/botmasters/<name>.json holds only the token's sha256), receives the event stream of every
-// chat played by its personas, and sends actions in the same JSON as the default brain. The relay
-// validates and executes them under the same limits; if the botmaster is offline at chat start,
-// disconnects, or stays silent, the session falls back to the default brain (src/bot/session.ts).
+// (the relay keeps only the token's sha256: in relay/botmasters/<name>.json, or in the DB for botmasters
+// approved through the AI builders flow, src/agents/), receives the event stream of every chat played by
+// its personas, and sends actions in the same JSON as the default brain. The relay validates and executes
+// them under the same limits; if the botmaster is offline at chat start, disconnects, or stays silent, the
+// session falls back to the default brain (src/bot/session.ts). A revoked or rotated token loses its
+// connection at once (kick) or at the next heartbeat (changes made by tools/botmaster-admin.ts).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +26,66 @@ export interface Botmaster {
   /** brain ms without any action before the default brain takes over (default LIMITS.remoteSilenceMs) */
   silenceMs?: number;
   contact?: string;
+  /** where the registration lives: relay/botmasters/*.json or the DB (approved AI builders) */
+  source?: 'file' | 'db';
+  /** account credited with the Turing bonus of its personas (DB botmasters; a file may set it too) */
+  payoutAccount?: string;
+  createdAt?: number;
+}
+
+/** Where the hub looks botmasters up. Read on every use, so registrations can change while the relay runs. */
+export interface BotmasterSource {
+  list(): Botmaster[];
+  get(name: string): Botmaster | undefined;
+  /** the botmaster whose token has this sha256 (active registrations only) */
+  byTokenHash(hash: string): Botmaster | undefined;
+}
+
+/** A fixed list (relay/botmasters/*.json). */
+export class StaticBotmasters implements BotmasterSource {
+  constructor(private items: Botmaster[]) {}
+  list(): Botmaster[] {
+    return this.items;
+  }
+  get(name: string): Botmaster | undefined {
+    return this.items.find((b) => b.name === name);
+  }
+  byTokenHash(hash: string): Botmaster | undefined {
+    if (!/^[0-9a-f]{64}$/.test(hash)) return undefined;
+    const h = Buffer.from(hash, 'hex');
+    return this.items.find((b) => crypto.timingSafeEqual(h, Buffer.from(b.tokenSha256, 'hex')));
+  }
+}
+
+/** Several sources; the first that knows a name or a token wins (files before the DB). */
+export class CompositeBotmasters implements BotmasterSource {
+  constructor(private parts: BotmasterSource[]) {}
+  list(): Botmaster[] {
+    const seen = new Set<string>();
+    const out: Botmaster[] = [];
+    for (const p of this.parts) {
+      for (const b of p.list()) {
+        if (seen.has(b.name)) continue;
+        seen.add(b.name);
+        out.push(b);
+      }
+    }
+    return out;
+  }
+  get(name: string): Botmaster | undefined {
+    for (const p of this.parts) {
+      const b = p.get(name);
+      if (b) return b;
+    }
+    return undefined;
+  }
+  byTokenHash(hash: string): Botmaster | undefined {
+    for (const p of this.parts) {
+      const b = p.byTokenHash(hash);
+      if (b) return b;
+    }
+    return undefined;
+  }
 }
 
 export function loadBotmasters(dir: string): Botmaster[] {
@@ -36,7 +98,11 @@ export function loadBotmasters(dir: string): Botmaster[] {
     if (typeof raw.tokenSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(raw.tokenSha256)) throw new Error(`${where} tokenSha256 must be 64 lowercase hex`);
     if (!Array.isArray(raw.personas) || raw.personas.some((p: unknown) => typeof p !== 'string')) throw new Error(`${where} personas`);
     if (raw.silenceMs !== undefined && !(typeof raw.silenceMs === 'number' && raw.silenceMs >= 3000 && raw.silenceMs <= 60_000)) throw new Error(`${where} silenceMs from 3000 to 60000`);
-    out.push({ name: raw.name, tokenSha256: raw.tokenSha256, personas: raw.personas, silenceMs: raw.silenceMs, contact: raw.contact });
+    if (raw.payoutAccount !== undefined && !isAccountId(raw.payoutAccount)) throw new Error(`${where} payoutAccount must be a NEAR account id`);
+    out.push({
+      name: raw.name, tokenSha256: raw.tokenSha256, personas: raw.personas, silenceMs: raw.silenceMs, contact: raw.contact, source: 'file',
+      payoutAccount: raw.payoutAccount, createdAt: Math.round(fs.statSync(path.join(dir, f)).mtimeMs),
+    });
   }
   const names = new Set<string>();
   for (const b of out) {
@@ -47,6 +113,10 @@ export function loadBotmasters(dir: string): Botmaster[] {
 }
 
 export const tokenHash = (token: string) => crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+
+const ACCOUNT_ID = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
+/** A NEAR account id (named or implicit), 2 to 64 characters. */
+export const isAccountId = (v: unknown): v is string => typeof v === 'string' && v.length >= 2 && v.length <= 64 && ACCOUNT_ID.test(v);
 
 interface Link {
   chatId: string;
@@ -59,6 +129,8 @@ interface Link {
 interface Conn {
   ws: WebSocket;
   bm: Botmaster;
+  /** sha256 of the token this connection logged in with; re-checked at every heartbeat */
+  tokenSha256: string;
   chats: Set<string>;
 }
 
@@ -66,14 +138,21 @@ export class BotmasterHub {
   private wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
   private conns = new Map<string, Conn>();
   private links = new Map<string, Link>();
-  private byHash = new Map<string, Botmaster>();
+  readonly source: BotmasterSource;
 
   constructor(
-    readonly botmasters: Botmaster[],
+    botmasters: Botmaster[] | BotmasterSource,
     /** brain ms of silence before the default brain takes over, for botmasters that set none */
     readonly defaultSilenceMs: number = LIMITS.remoteSilenceMs,
+    /** heartbeat period of /bot/ws: a ping, and the re-check of the token */
+    private heartbeatMs = 20_000,
   ) {
-    for (const b of botmasters) this.byHash.set(b.tokenSha256, b);
+    this.source = Array.isArray(botmasters) ? new StaticBotmasters(botmasters) : botmasters;
+  }
+
+  /** every registered botmaster (files and DB) */
+  get botmasters(): Botmaster[] {
+    return this.source.list();
   }
 
   silenceMsOf(name: string): number {
@@ -81,7 +160,7 @@ export class BotmasterHub {
   }
 
   get(name: string): Botmaster | undefined {
-    return this.botmasters.find((b) => b.name === name);
+    return this.source.get(name);
   }
 
   online(name: string): boolean {
@@ -94,13 +173,20 @@ export class BotmasterHub {
     return !!b && b.personas.includes(personaId) && this.online(name);
   }
 
-  private auth(token: unknown): Botmaster | undefined {
+  /** The botmaster of a token (the same check the botmaster HTTP API makes). */
+  auth(token: unknown): Botmaster | undefined {
     if (typeof token !== 'string' || token.length < 16 || token.length > 512) return undefined;
-    const h = tokenHash(token);
-    for (const b of this.botmasters) {
-      if (crypto.timingSafeEqual(Buffer.from(h, 'hex'), Buffer.from(b.tokenSha256, 'hex'))) return b;
-    }
-    return undefined;
+    return this.source.byTokenHash(tokenHash(token));
+  }
+
+  /** Close a botmaster's live connection now (token revoked or rotated); its chats fall back to the default brain. */
+  kick(name: string, code: string, message: string): boolean {
+    const conn = this.conns.get(name);
+    if (!conn) return false;
+    this.send(conn.ws, { type: 'error', code, message });
+    conn.ws.close(4001, code);
+    this.dropConn(conn, code);
+    return true;
   }
 
   handleUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -116,7 +202,7 @@ export class BotmasterHub {
     const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization ?? ''))?.[1]?.trim();
     const login = (token: unknown): boolean => {
       const bm = this.auth(token);
-      if (!bm) {
+      if (!bm || typeof token !== 'string') {
         this.send(ws, { type: 'error', code: 'unauthorized', message: 'unknown botmaster token' });
         ws.close(4001, 'unauthorized');
         return false;
@@ -127,7 +213,7 @@ export class BotmasterHub {
         old.ws.close(4000, 'replaced');
         this.dropConn(old, 'replaced by a newer connection');
       }
-      conn = { ws, bm, chats: new Set() };
+      conn = { ws, bm, tokenSha256: tokenHash(token), chats: new Set() };
       this.conns.set(bm.name, conn);
       log.info(`botmaster ${bm.name} connected (${bm.personas.length} personas)`);
       this.send(ws, {
@@ -148,13 +234,18 @@ export class BotmasterHub {
     ws.on('pong', () => (alive = true));
     const beat = setInterval(() => {
       if (!alive) return ws.terminate();
+      // a token revoked or rotated elsewhere (tools/botmaster-admin.ts) ends the connection here
+      if (conn && this.conns.get(conn.bm.name) === conn && this.source.byTokenHash(conn.tokenSha256)?.name !== conn.bm.name) {
+        this.kick(conn.bm.name, 'revoked', 'this botmaster token is no longer valid');
+        return;
+      }
       alive = false;
       try {
         ws.ping();
       } catch {
         /* closed */
       }
-    }, 20_000);
+    }, this.heartbeatMs);
     beat.unref?.();
     ws.on('message', (data) => {
       alive = true;

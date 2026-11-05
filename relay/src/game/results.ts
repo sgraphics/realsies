@@ -5,6 +5,7 @@ import type { ChainPlay } from '../chain/types.js';
 import { settleCharacter, type SettleParams, DEFAULT_PARAMS, isRight } from '../settlement.js';
 import { applyRating, pRight, ratingDelta, wouldHaveCoins, applyOutcome } from '../scoring.js';
 import { unitsToCoins } from '../util.js';
+import { ownerOf } from '../personas.js';
 import type { CharacterRec, ChatSide, RoundRec, UserRec } from './types.js';
 
 export interface ResultsInput {
@@ -47,7 +48,7 @@ export function computeResults(inp: ResultsInput): ResultsOutput {
   const stat = new Map<string, CharStat>();
   for (const c of inp.characters) {
     const truthHuman = c.kind === 'human';
-    const paid = inp.sides.filter((s) => s.characterId === c.id && s.playStatus === 'placed');
+    const paid = inp.sides.filter((s) => s.characterId === c.id && s.playStatus === 'placed' && !s.aborted);
     const coinsTotal = paid.reduce((n, s) => n + s.coins, 0);
     const humanCoins = paid.filter((s) => s.myCall === true).reduce((n, s) => n + s.coins, 0);
     const assigned = inp.chainPlays.filter((pl) => pl.characterId === c.id);
@@ -101,7 +102,8 @@ export function computeResults(inp: ResultsInput): ResultsOutput {
       const called = isCall(s.myCall);
       const right = called ? s.myCall === truthHuman : null;
       let delta = 0;
-      const counts = paid || called;
+      // a bot chat that never started (its NEAR AI key ran out first) moves no rating
+      const counts = !s.aborted && (paid || called);
       if (counts) {
         const r = right === true; // a missed paid call counts as wrong
         const proposed = ratingDelta(r, st?.p ?? 0.5);
@@ -113,7 +115,7 @@ export function computeResults(inp: ResultsInput): ResultsOutput {
         calledTotal++;
         if (r) calledRight++;
       }
-      stats.chats++;
+      if (!s.aborted) stats.chats++;
       let cd = 0;
       if (paid) {
         const pl = playByHandle.get(s.handle);
@@ -145,7 +147,9 @@ export function computeResults(inp: ResultsInput): ResultsOutput {
         verifiable: s.partnerKind === 'bot' && inp.verifiable.has(s.chatId),
         // who the demo bot was: computed only here, at settlement, so it never shows during the round
         persona: s.partnerKind === 'bot' && ch?.card ? { ...ch.card } : undefined,
-      });
+        // extra: the botmaster (AI builder) whose agent this was, revealed with the rest after settlement
+        ...(s.partnerKind === 'bot' && ownerOf(ch?.persona) ? { botmaster: ownerOf(ch?.persona) } : {}),
+      } as ChatResult);
     }
 
     // the account's own human character: Turing bonus (own payout) or locked bonus (promo payout)

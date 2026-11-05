@@ -86,6 +86,12 @@ export interface ChatSide {
   playTx?: string;
   playStatus: PlayStatus;
   playError?: string;
+  /**
+   * a matched chat that never started: new chats were paused (no bot could talk) or its bot's NEAR AI key ran
+   * out between the match and the start (bots_unavailable; a placed play is in no opening, so it is refunded at
+   * settlement; no rating change)
+   */
+  aborted?: 'bots_unavailable';
   /** messages from this viewer's perspective; also stored row by row */
   messages: ChatMessage[];
 }

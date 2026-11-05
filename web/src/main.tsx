@@ -14,19 +14,34 @@ import { installKeyboardInset } from './world/viewport.ts';
 import { applyUiScale } from './ui/theme.ts';
 import { chooseScale } from '../../art/src/scene/layout.ts';
 import { hudHeight } from './ui/hudSize.ts';
+import { routeOf } from './agents/route.ts';
 
-const store = createStore(createClient());
 if (/[?&]qa=|[?&]as=/.test(location.search)) document.documentElement.classList.add('qa');
-installKeyboardInset();
-const ui = () => {
-  const s = chooseScale(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1, hudHeight());
-  document.documentElement.style.setProperty('--px', s.cssPx + 'px');
-  applyUiScale(s.cssPx, window.devicePixelRatio || 1);
-};
-ui();
-window.addEventListener('resize', ui);
+const route = routeOf(location.pathname);
+const root = document.getElementById('app')!;
 
-render(<App store={store} />, document.getElementById('app')!);
+if (route === 'game') {
+  const store = createStore(createClient());
+  installKeyboardInset();
+  const ui = () => {
+    const s = chooseScale(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1, hudHeight());
+    document.documentElement.style.setProperty('--px', s.cssPx + 'px');
+    applyUiScale(s.cssPx, window.devicePixelRatio || 1);
+  };
+  ui();
+  window.addEventListener('resize', ui);
 
-// handy in the console
-(window as unknown as { realsies: unknown }).realsies = { store };
+  render(<App store={store} />, root);
+
+  // handy in the console
+  (window as unknown as { realsies: unknown }).realsies = { store };
+} else {
+  // /agents and /agents/dashboard: the pages for AI builders, in their own chunk
+  document.documentElement.classList.add('ag-doc');
+  import('./agents/index.tsx')
+    .then((m) => m.start(route, root))
+    .catch((e) => {
+      console.error(e);
+      root.textContent = 'This page did not load. Please reload.';
+    });
+}

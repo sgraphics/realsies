@@ -468,4 +468,6 @@ console.log(`\n${passes} passed, ${failures} failed`);
 // ---------- 5. screens smoke render (own process: it installs a fake DOM) ----------
 const { spawnSync } = await import('node:child_process');
 const smoke = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'screens-smoke.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
-process.exit(failures || smoke.status !== 0 ? 1 : 0);
+// ---------- 6. the AI-builder side (own process) ----------
+const agents = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'agents.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
+process.exit(failures || smoke.status !== 0 || agents.status !== 0 ? 1 : 0);

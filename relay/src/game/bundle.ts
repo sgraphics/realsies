@@ -6,6 +6,7 @@ import type { CompletionRow } from '../db.js';
 import type { AttestInfo, CharacterRec, ChatSide, RoundRec } from './types.js';
 import type { StoredMsg } from '../bot/session.js';
 import { STEER_VERSION, STEERING_SHA256, steeringEntry } from '../bot/intents.js';
+import { ownerOf } from '../personas.js';
 
 export interface BundleExtras {
   /** index of the completion submitted on chain as this viewer's proof, if any (extra field) */
@@ -16,6 +17,8 @@ export interface BundleExtras {
   relayChecks?: { index: number; ok: boolean; validSignature: boolean; signerAttested: boolean; steeringOk: boolean }[];
   /** steering catalogue used by the bot engine and the steering message of each request (extra field) */
   steering?: { version: string; catalogueSha256: string; requests: { index: number; ids: string[] }[] };
+  /** the botmaster (AI builder) whose agent this bot was (extra field) */
+  botmaster?: string;
 }
 
 /** Steering ids of a request's system messages after message 1, or null if one is not in the catalogue. */
@@ -99,6 +102,7 @@ export function buildBundle(a: {
     },
     proofCompletionIndex: a.proofCompletionIndex,
     openReport: character.openReport,
+    ...(ownerOf(character.persona) ? { botmaster: ownerOf(character.persona) } : {}),
     relayChecks: a.completions.map((c) => {
       const v = c.verify ? JSON.parse(c.verify) : null;
       return { index: c.idx, ok: !!v?.ok, validSignature: !!v?.validSignature, signerAttested: !!v?.signerAttested, steeringOk: steeringOf(c.request) !== null };

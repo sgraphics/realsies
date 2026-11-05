@@ -178,7 +178,8 @@ characters a second of reading).
    history so far, the player's lines not yet in any kept request (one `user` message each), and the
    intent's steering note as a `system` message. Key order and options as in `src/models.ts`
    (`max_tokens` 120, reasoning off).
-3. Call NEAR AI (two attempts); keep the exact request and response bytes.
+3. Call NEAR AI (two attempts) with the persona's key: the relay's, or its botmaster's own key when one is
+   stored (`docs/agents.md` section 4); keep the exact request and response bytes.
 4. Fetch the enclave signature and verify it locally (`text = model:sha256(request):sha256(response)`,
    EIP-191 recovery). Nothing is shown before this passes.
 5. Plan the bubbles (section 6) and wait. A `cancel`, the chat ending, or a failure up to here drops
@@ -266,7 +267,15 @@ Policy knobs (`DEFAULT_POLICY`): `probeShare` 0.5, `directShare` 0.7, `balance` 
 
 ## 10. Registering a persona
 
-`relay/personas/<id>.json`. A persona driven by a remote brain may bring its own prompt:
+**AI builders** (LLM operators, chat and voice vendors) register personas over HTTP: an approved botmaster
+sends `POST /api/botmaster/personas` (`docs/agents.md` section 4) with the same fields as below (`model`,
+`prompt`, `levels`, `brain` `"default"` or `"remote"`, `traits`, `languages`, `interests`, `typing`), and the
+operator approves it (admin API or `relay/tools/botmaster-admin.ts`). The relay keeps it in its DB, under
+the id `<botmaster>-<id>`. From the next round it plays every round at each of its levels, and its `payout`
+is the botmaster's payout account. Nothing needs a file or a restart.
+
+The operator can still add a persona by hand as `relay/personas/<id>.json`. A persona driven by a remote
+brain may bring its own prompt:
 
 ```json
 {
@@ -296,22 +305,35 @@ block, and may not carry `prompt`, `typing`, `traits` or `interests`: all of tho
 
 ## 11. Remote brains
 
-**Register.** A botmaster gets a long random token and the relay operator adds
-`relay/botmasters/<name>.json` (path `BOTMASTERS`):
+**Register.** A botmaster applies with `POST /api/agents/request` (`docs/agents.md` section 3). On approval
+the operator's admin API (`POST /api/admin/requests/{id}/approve`) or `relay/tools/botmaster-admin.ts
+approve <id>` creates the botmaster in the relay's DB and hands over a long random token once. The relay
+stores only its sha256. The botmaster's remote-brain personas are those it submitted with `"brain":
+"remote"` and the operator approved (section 10). The same token opens the botmaster HTTP API
+(`GET /api/botmaster/me`, stats, transcripts).
+
+The operator can also register a botmaster by hand as `relay/botmasters/<name>.json` (path `BOTMASTERS`).
+Files keep working next to the DB, and a file wins on a name clash:
 
 ```json
-{ "name": "acme", "tokenSha256": "<sha256 hex of the token>", "personas": ["mia-leeds"], "silenceMs": 20000, "contact": "ops@acme.example" }
+{ "name": "acme", "tokenSha256": "<sha256 hex of the token>", "personas": ["mia-leeds"], "silenceMs": 20000, "contact": "ops@acme.example", "payoutAccount": "acme.testnet" }
 ```
 
-The persona must also say `"brain": {"remote": "acme"}`. `node relay/examples/remote-brain.mjs --hash <token>`
-prints the sha256. The relay stores only the hash.
+A file persona must also say `"brain": {"remote": "acme"}`. `node relay/examples/remote-brain.mjs --hash <token>`
+prints the sha256. `payoutAccount` (optional) is what `GET /api/botmaster/me` reports. A file persona's own
+`payout` is what the contract pays.
+
+**Revocation.** The operator can rotate a token (a new one, the old one stops at once) or revoke the
+botmaster. A live connection on the old token gets `{"type":"error","code":"rotated"}` or `"revoked"` and
+close code 4001: at once from the admin API, at the next 20 s heartbeat from the command line. Its chats fall
+back to the default brain.
 
 **Connect.** WebSocket `wss://<relay>/bot/ws`, JSON text frames. Authenticate with an
 `Authorization: Bearer <token>` header or, as the first frame within 5 s, `{"type":"hello","token":"..."}`.
 The relay answers `{"type":"welcome","protocol":"realsies-brain/1","botmaster":"acme","personas":[...],"steerVersion":"steer-v1","intents":[...],"topics":[...],"limits":{...},"silenceMs":20000}`;
 `silenceMs` is how often you must send some action per chat (`wait` counts).
-A bad token gets `{"type":"error","code":"unauthorized"}` and close code 4001. A newer connection for
-the same botmaster replaces the older one (close code 4000).
+A bad token, or a revoked one, gets `{"type":"error","code":"unauthorized"}` and close code 4001. A newer
+connection for the same botmaster replaces the older one (close code 4000).
 
 **Play.** For every chat of your personas you receive `{"type":"event","chatId":"...","personaId":"mia-leeds","event":{...}}`
 (section 3) and send `{"type":"action","chatId":"...","action":{...}}` (section 4). Rejections come
@@ -341,7 +363,8 @@ virtual clock, `relay/test/steering.test.ts` for a hostile brain the limits cont
 `relay/tools/mcp-botmaster.mjs` is a minimal stdio MCP server (no relay, chain or model access) with two
 tools: `bot_api_docs` (this document, whole or one section) and `request_persona` (validates a persona
 and writes a pending request to `relay/botmasters/requests/`, or `REALSIES_REQUESTS_DIR`, for the
-operator to review; it refuses raw tokens and takes only `tokenSha256`).
+operator to install by hand; it refuses raw tokens and takes only `tokenSha256`). An approved botmaster
+submits personas to the relay directly instead: `POST /api/botmaster/personas` (`docs/agents.md`).
 
 ```
 claude mcp add realsies-botmaster -- node relay/tools/mcp-botmaster.mjs
@@ -349,7 +372,8 @@ claude mcp add realsies-botmaster -- node relay/tools/mcp-botmaster.mjs
 
 ## 13. Versions
 
-`realsies-brain/1` covers sections 3, 4, 6 and 11. `steer-v1` is the catalogue in section 5. Additions are
+`realsies-brain/1` covers sections 3, 4, 6 and 11 (DB-registered botmasters, rotation and revocation, 2026-11-05,
+change nothing on the wire beyond the `rotated` and `revoked` error codes). `steer-v1` is the catalogue in section 5. Additions are
 backward compatible and keep the versions: new optional event or card fields (`lang`, `languages`) and new
 intents whose notes are appended to the catalogue (its sha256 changes, every earlier note stays byte for
 byte). A changed or removed note, or a changed limit, gets a new version. The relay announces the intents

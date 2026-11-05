@@ -4,7 +4,9 @@ Node service for the Realsies E2E test variant: HTTP API and WebSocket on one po
 round scheduler, matchmaking, two-minute chats, bots on NEAR AI Cloud enclave models with every
 completion's exact bytes and signature kept, chain integration on NEAR testnet (operator, faucet,
 promo and test-user keys), scoring and rating, verification bundles, persistence, and static
-hosting of `../web/dist`. Spec: `docs/spec.md` sections 2 to 4 (v1.1). Protocol: `shared/protocol.ts`.
+hosting of `../web/dist`, and the AI builders API (access requests, botmasters, their agents' stats and
+transcripts, their own NEAR AI keys; `docs/agents.md`). Spec: `docs/spec.md` sections 2 to 4 (v1.1).
+Protocol: `shared/protocol.ts`.
 
 ## Run
 
@@ -17,6 +19,7 @@ npm start            # node dist/index.js
 npm test             # unit + integration tests (mock chain, mock NEAR AI signer; no credits, no testnet)
 npm run e2e          # the scenario against testnet; spawns a relay if none answers on RELAY_URL
 npm run typecheck
+npm run botmaster-admin -- requests   # AI builders: access requests, botmasters, personas (tools/botmaster-admin.ts)
 ```
 
 With `relay/.secrets/testnet.json` present the relay talks to `game.realsies.testnet`; without it,
@@ -46,7 +49,13 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `USD_PER_COIN` | 0.01 | display constant |
 | `WEB_DIST` | web/dist | static app; SPA fallback to index.html |
 | `PERSONAS` | relay/personas | demo personas as attribute sets (`person` block); remote-brain personas may bring a prompt |
-| `BOTMASTERS` | relay/botmasters | remote-brain registrations (`<name>.json`: name, tokenSha256, personas); none by default |
+| `BOTMASTERS` | relay/botmasters | remote-brain registrations by hand (`<name>.json`: name, tokenSha256, personas, payoutAccount?); none by default. Approved AI builders live in the DB (`docs/agents.md`) |
+| `ADMIN_TOKEN` | | Bearer token of `/api/admin/*` (16+ characters); unset = admin endpoints answer `403 admin_disabled` |
+| `RELAY_ENCRYPTION_KEY` | | 32 bytes, 64 hex or base64 (`openssl rand -hex 32`): seals botmasters' own NEAR AI keys (AES-256-GCM); unset = own keys refused (`503 byok_disabled`) |
+| `AGENT_REQUEST_WEBHOOK` | | every access request is POSTed here as JSON (with Slack `text` and Discord `content`) |
+| `AGENT_REQUESTS_PER_HOUR` | 5 | access requests per IP per hour |
+| `NEAR_AI_BUDGET_USD` | 10 | the relay's own key: 80% of the estimated spend warns in the log, `/api/health` `ai.status` `low_credit` (spend in `GET /api/admin/health`) |
+| `NEAR_AI_RECHECK_SECONDS` | 180 | a key out of credits is retried with a one-token completion this often; any success recovers it |
 | `REMOTE_SILENCE_SECONDS` | 20 | a remote brain silent this long is replaced by the default brain |
 | `PRUNE_DELAY_SECONDS` | 300 | `prune_round` a settled round this long after its results, ratings and bundles are stored |
 | `IDLE_MINUTES` | 10 | no human connected this long: no new round (no `start_round`, no commits) until one connects; 0 = never idle |
@@ -58,7 +67,10 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | File | Role |
 |---|---|
 | `src/index.ts`, `src/app.ts` | entry point and wiring |
-| `src/server.ts` | HTTP routes, `/ws` upgrade (test users only), `/bot/ws` (remote brains), heartbeat, static files |
+| `src/server.ts`, `src/http.ts` | HTTP routes, `/ws` upgrade (test users only), `/bot/ws` (remote brains), heartbeat, static files; JSON, body, bearer and client-IP helpers |
+| `src/agents/` | AI builders (`docs/agents.md`): `store.ts` the tables (access requests, DB botmasters with token sha256 only, personas, sealed keys, settled chat records), `api.ts` the HTTP API (`/api/agents`, `/api/admin`, `/api/botmaster`), `admin.ts` operator actions shared with `tools/botmaster-admin.ts`, `validate.ts` input checks and the model check against `/v1/models`, `stats.ts` the settled chat records (anonymised players, the chat's share of the Turing bonus from chain plays) and scorecards, `byok.ts` botmasters' own NEAR AI keys, `persona.ts` an approved persona as a round persona |
+| `src/nearai/credits.ts` | spend per key from `usage` times price, the house budget, credit-failure detection (402; 400 or 403 about credits, balance, quota or billing; 401; never 429 or 5xx), keys out of credits, one-token rechecks, recovery; `TrackedAi` wraps a client |
+| `src/secretbox.ts` | AES-256-GCM sealing with RELAY_ENCRYPTION_KEY, bound to the owner |
 | `src/game/game.ts` | the engine: rounds, characters, commits, matchmaking, chats, calls, settlement, results, views |
 | `src/bot/api.ts` | the bot engine's public API (`realsies-brain/1`): events, actions, intents, limits, remote wire format; docs in `docs/bot-api.md` |
 | `src/bot/intents.ts` | steering catalogue `steer-v1`: 39 fixed strings, append-only (the first 37 are the 2026-11-04 ones, byte for byte), one appended per say; parsing of intents from untrusted JSON |
@@ -66,7 +78,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `src/bot/brain.ts` | the default brain: RxJS over a pure reducer, tick-driven; 50/50 probe vs answer, 70/30 direct vs out of order, reading pauses, silence, double texts, fake typing, cancels; `foreign` for a line in a language the persona does not read |
 | `src/bot/session.ts` | one bot side: runs a brain, enforces the limits, typing at 4 to 6 cps with the model call hidden inside, signature verified before display, history in generation order, drafts, flush at the end, the seal for paid chats, fallback from a remote brain |
 | `src/bot/typing.ts`, `rng.ts`, `clock.ts` | human timing (typing, reading, bubble schedule), seeded randomness, real and virtual clocks |
-| `src/bot/remote.ts` | botmaster registry, `/bot/ws` auth (token sha256), per-chat event routing, disconnect signalling |
+| `src/bot/remote.ts` | botmaster registry (files and DB, read on every use), `/bot/ws` auth (token sha256), per-chat event routing, disconnect signalling, kick on rotate or revoke, token re-check at every heartbeat |
 | `src/game/results.ts` | ratings, coins deltas from chain plays, would-have, Turing and locked bonuses |
 | `src/game/bundle.ts` | `VerifyBundle` per bot chat; the proof is the chat's last signed completion |
 | `src/chain/near.ts` | near-api-js 7.4 adapter; one serial queue per key; signs once and resends the same bytes on 429 or network errors; re-signs on expiry or nonce errors; RPC failover |
@@ -78,13 +90,14 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `src/persona/prompt.ts` | the persona prompt (message 0) composed from the attributes plus the shared base rules, with the local time and scene of the round's start |
 | `src/persona/languages.ts` | language codes and names, the languages paragraph of the prompt (the list, then: only these; anything else is not understood, translated, answered or written; English unless the partner writes in one of the others) |
 | `src/persona/cast.ts` | a round's cast: a country per character from `COUNTRY_WEIGHTS` (US 33%, UK 12%, Canada, Australia, Ireland, New Zealand 14, Western and Northern Europe 25, Latin America 6, the rest 10), a free hand-written persona of that country half the time, else a generated one |
-| `src/persona/generate.ts`, `data.ts` | the seeded generator of each round's fresh personas (deterministic per seed, index, country and start time) and its pools: the country weights, places and time zones, cultures (laughter, slang, natural slips, names, food), the languages people know by culture, place, age and schooling, jobs by age, scenes by time of day |
+| `src/persona/generate.ts`, `data.ts` | the seeded generator of each round's fresh personas (deterministic per seed, index, country and start time) and its data: the country weights, places and time zones, cultures (laughter, slang, natural slips, names, food), the languages people know by culture, place, age and schooling, jobs by age, scenes by time of day |
 | `src/personas.ts` | loads `personas/*.json`: attribute personas (demo bots, prompt composed per round) and prompt personas (remote brains) |
 | `personas/*.json` | 15 hand-written demo personas as attribute sets with explicit `languages`; prompt, `typing.cps`, `traits` and `interests` are derived |
 | `tools/persona-preview.ts` | prints generated people (or the folder, or `--cast` a full round cast) with cards, languages, dials, typing speed and a full prompt; `--mix N` the nationality mix over N rounds; no network |
 | `tools/gen-steering.ts` | writes `shared/steering.ts` from the catalogue (`--check` only compares) |
 | `examples/remote-brain.mjs` | a minimal remote brain (Node 22+, no dependencies) |
 | `tools/mcp-botmaster.mjs` | stdio MCP server for botmasters: the bot API docs and a request-a-persona tool that files a pending request |
+| `tools/botmaster-admin.ts` | the operator's command line on the DB: requests, approve or reject, botmasters, create, rotate, revoke, personas, approve, reject or disable; a token is printed once |
 
 Round lifecycle: start (secret, cast seed, `start_round`, attestation per model of the round's cast, `CAST_SIZE` demo bot
 characters, one level each, plus remote-brain personas at each of their levels, each storing the persona it plays, `commit_characters` FINAL) -> humans committed on first connect (batched) ->
@@ -136,8 +149,21 @@ Reasoning off (measured with `tools/probe-nearai.mjs`): GLM 5.3 Flash `reasoning
 (0 to 6 reasoning tokens, about 1 s), DeepSeek V4.1 Flash `chat_template_kwargs.enable_thinking:
 false` (0 tokens, 1 to 2 s). Qwen 3.8 and 3.6 reject a second system message, so no persona uses them.
 
+AI builders (`docs/agents.md`): an approved botmaster's personas play every round at each of their levels
+like the remote-brain personas, the prompt committed by sha256 and the payout to the botmaster's account; at
+settlement one record per chat of theirs is stored (`agent_chats`) with the player anonymised and the chat's
+share of the bonus computed from `get_round_plays` before pruning. Matching skips characters of revoked
+botmasters and disabled personas, and every bot whose NEAR AI key is out of credits (the relay's key, or the
+botmaster's own). No bots, no new chats (`Game.chatsPaused`): while the relay's key is out, or no bot at a
+level can talk, no new chat starts there, human to human included, since such a match would be known to be
+human; `pick_seat` gets `bots_unavailable` at once ("The bots are napping..."), a search under way ends the
+same way, chats already running finish, and matching resumes when the key recovers. A chat matched before the
+pause (or a bot chat whose key died) but not started yet never starts (`bots_unavailable`, `chat_ended`,
+`call_missed` to every side; its play is in no opening, so it is refunded; no rating change). `GET /api/health`
+carries `ai: {status, since}` for the relay's key; spend, budget and the reason are in `GET /api/admin/health`.
+
 Extra fields beyond `shared/protocol.ts` (optional, backward compatible): `PersonaCard` carries `name` and
-`mood`; `VerifyBundle` carries
+`mood`; `ChatResult` and `VerifyBundle` carry `botmaster` for an AI builder's agent; `VerifyBundle` carries
 `proofCompletionIndex`, `openReport`, `relayChecks` (with `steeringOk`) and `steering`; HTTP error bodies are `{error, code, message}`;
 a fresh `room` is pushed to each connection's last entered level when a new round starts;
 `GET /api/dev/state`, `GET /api/dev/bot-trace/:chatId?account=` (test mode, the viewer, after the round settles) and `GET /api/health` exist for
@@ -162,6 +188,19 @@ in-process relay runs on the mock chain (the full scenario; natural round end wi
 as the proof and silent model failures; typing before every bot line at human speed; partner_left,
 reload resume, input errors; the countdown, for human and bot chats alike; persona cards in results and
 bundles only after settlement).
+
+AI builders and credits (`test/agents-unit.test.ts`, `test/agents.test.ts`): sealing (round trip, wrong key,
+another owner, a changed byte), credit-failure detection, the credit monitor (spend, 80% budget, out, rechecks,
+recovery, restarts), input validation and the model check, the scorecard and the bonus split against the
+contract's settlement, anonymous ids; then in-process relays: access requests (receipt, webhook, per-IP limit),
+admin off without `ADMIN_TOKEN`, approval over HTTP and on the command line with the relay running, tokens shown
+once and stored as sha256, rotate and revoke cutting `/bot/ws`, a persona from submission (enclave models only)
+to approval, its characters committed with the botmaster's payout, chats on its own key only, settled chats with
+anonymous players, stats, the export, the bonus on chain, its key out of credits taking only its personas out;
+the relay's key at HTTP 402: `bots_unavailable` at once, no human-to-human match either, running chats finish,
+chats matched before the pause never start (human and bot, plays refunded, no rating change), recovery by the
+recheck resumes matching; a level whose only bot is on an empty key paused on its own; a 429 saying "quota
+exceeded" never marks a key out; public health without spend, admin health with it.
 
 Also covered: `prune_round` in the mock chain with the contract's rules, the relay pruning a settled
 round while results and bundles stay served, and idle mode (no `start_round` or commits while nobody

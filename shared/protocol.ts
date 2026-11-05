@@ -168,6 +168,7 @@ export interface ChatResult {
   roomSplit: { paidCalls: number; paidHumanShare: number | null }; // coin-weighted share of paid calls that said human
   verifiable: boolean; // bot chat with stored signatures
   persona?: PersonaCard; // bots, after settlement
+  botmaster?: string; // bots entered by an AI builder: the botmaster's name
 }
 
 export interface RoundResults {
@@ -253,6 +254,7 @@ export interface VerifyBundle {
   transcript: VerifyMessage[];
   roundSecret: string; // revealed; lets anyone recompute handles
   persona?: PersonaCard;
+  botmaster?: string; // set when an AI builder entered this bot
   viewer: string;
   handle: string;
   chain: { revealTx?: string; openTx?: string; settleTx?: string; playTx?: string; callTx?: string };

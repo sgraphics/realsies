@@ -7,6 +7,7 @@ import type {
 } from '../../../shared/protocol.ts';
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
 import { countdownFor, isCounting } from './countdown.ts';
+import { BOTS_NAPPING } from './notices.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -59,6 +60,8 @@ export interface AppState {
   /** Round ids whose results arrived and have not been opened yet. */
   resultsReady: number[];
   lastError?: { code: string; message: string; at: number };
+  /** A friendly note for the room that is not an error (the bots are napping). */
+  notice?: { code: string; message: string; at: number };
   /** True once the welcome for the current account arrived. */
   welcomed: boolean;
 }
@@ -81,6 +84,7 @@ export interface StoreActions {
   refreshMe(): Promise<Me | undefined>;
   clearChat(): void;
   clearError(): void;
+  clearNotice(): void;
   markResultsSeen(roundId: number): void;
   getResults(roundId: number): Promise<RoundResults>;
   getVerify(chatId: string): Promise<VerifyBundle>;
@@ -263,6 +267,14 @@ export function createStore(client: GameClient): Store {
         return;
       }
       case 'error': {
+        const running = state.chat && (state.chat.phase === 'searching' || state.chat.phase === 'placing' || state.chat.phase === 'chatting');
+        if (m.code === 'bots_unavailable' && !running) {
+          // the bots are out of credits, so no new chats start for now: the search ends, the seat goes back
+          // and the room gets one calm note. (With a chat running, the code means that matched chat could not
+          // start; the relay's own message is shown below as before.)
+          set({ search: undefined, notice: { code: m.code, message: BOTS_NAPPING, at: Date.now() } });
+          return;
+        }
         const searchErrors = ['room_empty', 'round_closing', 'round_closed', 'busy', 'seat_taken', 'bad_coins', 'insufficient_coins', 'insufficient_balance', 'round_ended', 'level_locked', 'bad_seat', 'bad_level', 'bad_mode', 'free_limit', 'already_searching', 'no_round'];
         const sayErrors = ['rate_limited', 'too_long', 'message_too_long', 'not_chatting', 'chat_not_active', 'empty_message'];
         const c = state.chat;
@@ -337,14 +349,14 @@ export function createStore(client: GameClient): Store {
       welcomeWaiters = [];
       if (countdownTimer) clearTimeout(countdownTimer);
       countdownTimer = null;
-      set({ accountId: undefined, me: undefined, round: undefined, rooms: {}, chat: undefined, search: undefined, status: 'idle', welcomed: false, resultsReady: [], lastError: undefined });
+      set({ accountId: undefined, me: undefined, round: undefined, rooms: {}, chat: undefined, search: undefined, status: 'idle', welcomed: false, resultsReady: [], lastError: undefined, notice: undefined });
     },
     enterRoom(level) {
       set({ level });
       client.send({ t: 'enter_room', level });
     },
     pickSeat(level, seatIndex, mode, coins) {
-      set({ search: { level, seatIndex, mode, coins: mode === 'paid' ? coins ?? 0 : 0, startedAt: Date.now() }, lastError: undefined });
+      set({ search: { level, seatIndex, mode, coins: mode === 'paid' ? coins ?? 0 : 0, startedAt: Date.now() }, lastError: undefined, notice: undefined });
       client.send(mode === 'paid' ? { t: 'pick_seat', level, seatIndex, mode, coins } : { t: 'pick_seat', level, seatIndex, mode });
     },
     cancelSearch() {
@@ -401,6 +413,9 @@ export function createStore(client: GameClient): Store {
     },
     clearError() {
       set({ lastError: undefined });
+    },
+    clearNotice() {
+      set({ notice: undefined });
     },
     markResultsSeen(roundId) {
       const list = state.resultsReady.filter((r) => r !== roundId);

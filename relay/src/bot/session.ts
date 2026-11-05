@@ -93,6 +93,8 @@ export interface SessionOptions {
   brain?: BrainChoice;
   clock?: Clock;
   seed?: string;
+  /** the NEAR AI client of this chat (a botmaster's own key); default the host's */
+  ai?: NearAi;
 }
 
 interface SayRun {
@@ -189,6 +191,7 @@ export class BotSession {
     kinds: { probe: 0, direct: 0, aside: 0 } as Record<IntentKind, number>,
   };
   private clock: Clock;
+  private ai: NearAi;
   private rng: Rng;
   private scale: number;
   private choice: BrainChoice;
@@ -235,6 +238,7 @@ export class BotSession {
     opts: SessionOptions = {},
   ) {
     this.clock = opts.clock ?? realClock;
+    this.ai = opts.ai ?? host.ai;
     this.rng = createRng(opts.seed);
     this.scale = host.botTimeScale > 0 ? host.botTimeScale : 1;
     this.choice = opts.brain ?? { brain: defaultBrain({ seed: opts.seed }), kind: 'default' };
@@ -539,7 +543,7 @@ export class BotSession {
 
   private async completeTwice(request: string): Promise<CompletionResult | null> {
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const res = await this.host.ai.complete(this.persona.model, request);
+      const res = await this.ai.complete(this.persona.model, request);
       if (res.ok && res.completionId) return res;
       log.warn(`${this.side.chatId} ${this.persona.model} attempt ${attempt} failed: ${res.status} ${res.error?.slice(0, 160)}`);
       if (attempt === 1) await sleepOn(this.clock, 400);
@@ -615,7 +619,7 @@ export class BotSession {
       if (res && !drop) {
         // never show text before its enclave signature verifies; keep typing while it arrives
         const left = this.realMs(this.chatMs - this.bnow());
-        const sigP = this.host.ai.signature(res.completionId!, LIMITS.signatureWaitMs).then((sig) => ({
+        const sigP = this.ai.signature(res.completionId!, LIMITS.signatureWaitMs).then((sig) => ({
           sig, check: checkSignature(this.persona.model, request, res!.response, sig, this.attestedSigners),
         }));
         v = await this.raceRun(sigP, r, Math.min(LIMITS.signatureWaitMs, left));
@@ -746,7 +750,7 @@ export class BotSession {
       const request = buildRequest(this.persona.model, [...this.base(), ...this.history, ...this.pendingPlayer.map((m) => ({ role: 'user' as const, content: m.text }))]);
       const res = await this.completeTwice(request);
       if (!res) return;
-      const sig = await this.host.ai.signature(res.completionId!, 60_000);
+      const sig = await this.ai.signature(res.completionId!, 60_000);
       const check = checkSignature(this.persona.model, request, res.response, sig, this.attestedSigners);
       const idx = this.nextIdx++;
       this.host.db.saveCompletion({

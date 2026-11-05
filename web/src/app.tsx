@@ -16,7 +16,7 @@ import { ResultsScreen } from './screens/Results.tsx';
 import { VerifyDrawer } from './screens/Verify.tsx';
 import { PastRounds } from './screens/PastRounds.tsx';
 import { TermsScreen } from './screens/Terms.tsx';
-import { Button, Icon } from './ui/kit.tsx';
+import { Button, Icon, type IconName } from './ui/kit.tsx';
 import { applyTheme } from './ui/theme.ts';
 import { runQa } from './qa.ts';
 
@@ -32,7 +32,7 @@ export function App({ store }: { store: Store }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [verify, setVerify] = useState<string | null>(null);
   const [terms, setTerms] = useState(false);
-  const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info'; at: number } | null>(null);
+  const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info'; at: number; icon?: IconName; results?: boolean; ms?: number } | null>(null);
   const gated = useRef(new Set<string>());
   const lastReady = useRef(0);
 
@@ -76,13 +76,21 @@ export function App({ store }: { store: Store }) {
   useEffect(() => {
     const newest = s.resultsReady.length ? Math.max(...s.resultsReady) : 0;
     if (newest > lastReady.current) {
-      if (lastReady.current) setToast({ text: `Round ${newest} results are in!`, kind: 'info', at: Date.now() });
+      if (lastReady.current) setToast({ text: `Round ${newest} results are in!`, kind: 'info', at: Date.now(), results: true });
       lastReady.current = newest;
     }
   }, [s.resultsReady.join()]);
+  // friendly notes (the bots are napping) as calm toasts, never red
+  useEffect(() => {
+    if (!s.notice) return;
+    // two sentences: a little longer on screen than an error
+    setToast({ text: s.notice.message, kind: 'info', at: Date.now(), icon: s.notice.code === 'bots_unavailable' ? 'bot' : 'chat', ms: 7000 });
+    const t = setTimeout(() => store.actions.clearNotice(), 7000);
+    return () => clearTimeout(t);
+  }, [s.notice?.at]);
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 4500);
+    const t = setTimeout(() => setToast(null), toast.ms ?? 4500);
     return () => clearTimeout(t);
   }, [toast?.at]);
 
@@ -164,8 +172,8 @@ export function App({ store }: { store: Store }) {
         <div class="toast-stack" role="status">
           <div class={'px-panel tight toast sheet-enter ' + toast.kind}>
             <span class="px-row nowrap">
-              <Icon name={toast.kind === 'error' ? 'cross' : 'trophy'} /> <span class="px-body" style={{ fontSize: '15px' }}>{toast.text}</span>
-              {toast.kind === 'info' && s.resultsReady.length > 0 && (
+              <Icon name={toast.icon ?? (toast.kind === 'error' ? 'cross' : 'trophy')} /> <span class="px-body" style={{ fontSize: '15px' }}>{toast.text}</span>
+              {toast.results && s.resultsReady.length > 0 && (
                 <Button small kind="primary" onClick={() => { const r = Math.max(...s.resultsReady); setOverlay({ kind: 'results', roundId: r }); store.actions.markResultsSeen(r); setToast(null); }}>Open</Button>
               )}
             </span>

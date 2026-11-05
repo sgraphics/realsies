@@ -122,6 +122,9 @@ const consent = await import('../src/state/consent.ts');
 const { Countdown, countdownHold } = await import('../src/screens/Countdown.tsx');
 const { isCounting } = await import('../src/state/countdown.ts');
 const { EVIDENCE_CHAT_ID } = await import('../src/net/mock/evidence.ts');
+const { AgentsPage } = await import('../src/agents/AgentsPage.tsx');
+const { Dashboard } = await import('../src/agents/Dashboard.tsx');
+const { MockBuilderClient } = await import('../src/net/mock/builders.ts');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EV = join(here, '..', '..', 'experiments', 'near-ai', 'evidence', '2026-11-04');
@@ -225,6 +228,27 @@ try {
   ok(!consent.termsAccepted(), 'terms not accepted on first entry');
   consent.acceptTerms();
   ok(consent.termsAccepted(), 'terms acceptance remembered');
+
+  // the pages for AI builders, on the mock builder API
+  const builders = new MockBuilderClient({ storageKey: null, delayMs: [0, 0] });
+  render(h(AgentsPage, { client: builders }), root as unknown as Element);
+  await sleep(80);
+  const ta = root.textContent;
+  ok(/Your agent vs\./.test(ta) && /real people\./.test(ta) && /Earn the Turing bonus/.test(ta) && /20%/.test(ta) && /scorecard/.test(ta), '/agents: headline, money and data');
+  ok(/How it works/.test(ta) && /Why it is provable/.test(ta) && /Which models can I enter\?/.test(ta) && /Text only for now/.test(ta) && /Bring your own NEAR AI key/.test(ta) && /anonymised/.test(ta), '/agents: steps, proof and the FAQ');
+  ok(/Request access/.test(ta) && /Work email/.test(ta) && /Voice agent vendor/.test(ta) && /NEAR account for payouts/.test(ta) && /builder terms/.test(ta) && /Send request/.test(ta), '/agents: the request form with every field');
+  g.sessionStorage = new MemStorage();
+  (g.sessionStorage as MemStorage).setItem('realsies:mock:botmaster:token', 'demo');
+  render(h(Dashboard, { client: builders }), root as unknown as Element);
+  await sleep(250);
+  const td = root.textContent;
+  ok(/Acme Voice/.test(td) && /Called human/.test(td) && /Turing bonus/.test(td) && /Export JSONL/.test(td), 'dashboard: profile and totals with a stored token: ' + td.slice(0, 80).replace(/\s+/g, ' '));
+  ok(/Scorecard by persona/.test(td) && /acme-zed/.test(td) && /By round/.test(td) && /Round 42/.test(td) && /Chats/.test(td) && /vs/.test(td), 'dashboard: by persona, by round and the chats');
+  ok(/Your personas/.test(td) && /Pending review/.test(td) && /Request a new persona/.test(td) && /NEAR AI key/.test(td) && /Game credits/.test(td), 'dashboard: personas, persona request and the own-key form');
+  (g.sessionStorage as MemStorage).clear();
+  render(h(Dashboard, { client: builders, key: 'fresh' }), root as unknown as Element);
+  await sleep(50);
+  ok(/Paste your botmaster token/.test(root.textContent) && /any token works/.test(root.textContent), 'dashboard without a token: the token screen');
   render(null, root as unknown as Element);
 } catch (e) {
   failures++;

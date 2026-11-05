@@ -49,6 +49,11 @@ export interface Persona {
   brain: BrainRef;
   /** payout account for this persona's characters; undefined = the configured bots account */
   payout?: string;
+  /**
+   * the botmaster an AI builder's persona belongs to (src/agents/): its settled chats feed that botmaster's
+   * stats and transcripts, and it runs on that botmaster's own NEAR AI key when one is stored
+   */
+  owner?: string;
   /** "attributes": hand-written person block; "generated": this round's generator; "prompt": a hand-written prompt (remote brains) */
   source: 'attributes' | 'generated' | 'prompt';
   /** demo bots: who they are, how they write, and the card revealed after settlement */
@@ -83,6 +88,12 @@ export function fromPerson(base: { id: string; levels: Level[]; model: string; b
     style,
     card: cardOf(person, style),
   };
+}
+
+/** The botmaster a persona belongs to: an AI builder's persona, or a folder persona driven by a remote brain. */
+export function ownerOf(p: Pick<Persona, 'owner' | 'brain'> | undefined): string | undefined {
+  if (!p) return undefined;
+  return p.owner ?? (p.brain?.kind === 'remote' ? p.brain.botmaster : undefined);
 }
 
 /** This round's version of a persona: attribute personas get the prompt for the round's start time. */

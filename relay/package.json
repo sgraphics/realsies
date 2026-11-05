@@ -14,7 +14,8 @@
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test \"test/*.test.ts\"",
-    "e2e": "tsx test/e2e.ts"
+    "e2e": "tsx test/e2e.ts",
+    "botmaster-admin": "tsx tools/botmaster-admin.ts"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",

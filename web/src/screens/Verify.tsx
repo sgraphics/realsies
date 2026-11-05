@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { VerifyBundle } from '../../../shared/protocol.ts';
 import type { Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
-import { accountUrl, fmtDateTime, shortHash, txUrl } from '../state/format.ts';
+import { accountUrl, botmasterOf, fmtDateTime, shortHash, txUrl } from '../state/format.ts';
 import { loadTranscript } from '../net/transcript.ts';
 import { type CheckGroup, type CheckStatus, analyzeCompletion, runChecks, summarize } from '../verify/checks.ts';
 import { sha256Hex } from '../verify/crypto.ts';
@@ -108,6 +108,7 @@ export function VerifyDrawer(p: VerifyProps) {
             <div class="px-row px-wrap">
               <span class="px-tag bot">BOT</span>
               <span class="px-mono">{bundle.model}</span>
+              {botmasterOf(bundle) && <span class="px-dim">entered by <b>{botmasterOf(bundle)}</b></span>}
             </div>
             <PersonaReveal p={bundle.persona} />
           </section>
@@ -137,6 +138,7 @@ export function VerifyDrawer(p: VerifyProps) {
             <section class="px-verify-section">
               <h3>Model and enclave</h3>
               <KV k="Model">{bundle.model}</KV>
+              {botmasterOf(bundle) && <KV k="Entered by">{botmasterOf(bundle)}</KV>}
               {bundle.attestation.signers.map((s) => (
                 <KV key={s.address} k="Enclave signer">
                   {s.address}

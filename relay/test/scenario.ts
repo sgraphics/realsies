@@ -94,6 +94,9 @@ export function cardProblem(p: PersonaCard | undefined): string | null {
 
 const cardLine = (p: PersonaCard) => `${p.age}, ${p.gender}, ${p.mbti}, ${p.temperament}, ${p.home}, ${p.job}; ${p.style}`;
 
+/** An AI builder's agent (docs/agents.md): results and bundles name its botmaster and carry no demo persona card. */
+const botmasterOf = (x: unknown): string | undefined => (x as { botmaster?: string } | undefined)?.botmaster;
+
 /** Verify a bundle with independent code. Returns the number of completions checked. */
 export function verifyBundleIndependently(b: VerifyBundle, chainCommitment: string | null, check: Check): number {
   check.eq(sha(b.roundSecret), b.attestation.nonce, 'bundle: sha256(round secret) is the attestation nonce');
@@ -362,8 +365,10 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     check.eq(playC.credited, playC.locked, 'chain: C refunded its locked coins (nobody wrong)');
     check.near(paidC.coinsDelta, toCoins(playC.credited! - playC.amount), 'C coinsDelta equals chain credited minus played');
     check.eq([freeC.truth, freeC.myCall, freeC.right, freeC.wouldHaveCoins], ['bot', true, false, -5], 'C free bot chat: called human, wrong, would have lost 5');
-    check.eq(cardProblem(paidC.persona), null, `C paid bot chat reveals who the bot was: ${paidC.persona ? cardLine(paidC.persona) : '-'}`);
-    check.eq(cardProblem(freeC.persona), null, `C free bot chat reveals who the bot was: ${freeC.persona ? cardLine(freeC.persona) : '-'}`);
+    for (const [label, x] of [['paid', paidC], ['free', freeC]] as const) {
+      if (botmasterOf(x)) check.ok(true, `C ${label} bot chat was an agent of AI builder ${botmasterOf(x)} (no demo persona card)`);
+      else check.eq(cardProblem(x.persona), null, `C ${label} bot chat reveals who the bot was: ${x.persona ? cardLine(x.persona) : '-'}`);
+    }
     check.ok(cA.persona === undefined && cB.persona === undefined, 'human-human chats carry no persona card');
 
     for (const u of o.users) {
@@ -385,7 +390,8 @@ export async function runScenario(o: ScenarioOpts): Promise<ScenarioReport> {
     check.ok(onChainChar?.opened && onChainChar.kind === 'bot', 'chain: the bot character is opened as a bot');
     const n = verifyBundleIndependently(bundle, onChainChar?.commitment ?? null, check);
     check.eq(bundle.persona, paidC.persona, 'bundle: the persona card equals the one in the results');
-    check.ok(!!bundle.persona && bundle.personaPrompt.includes(`${bundle.persona.age}-year-old`) && bundle.personaPrompt.includes(bundle.persona.home), 'bundle: the card describes the committed persona prompt');
+    if (botmasterOf(bundle)) check.eq(botmasterOf(bundle), botmasterOf(paidC), 'bundle: names the same AI builder as the results');
+    else check.ok(!!bundle.persona && bundle.personaPrompt.includes(`${bundle.persona.age}-year-old`) && bundle.personaPrompt.includes(bundle.persona.home), 'bundle: the card describes the committed persona prompt');
     check.ok(n >= 2, `bundle has ${n} signed completions`);
     let forbidden = false;
     try {

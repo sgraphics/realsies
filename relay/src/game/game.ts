@@ -11,9 +11,14 @@ import type { Config } from '../config.js';
 import type { Db } from '../db.js';
 import type { ChainAdapter, ChainConfig, Opening } from '../chain/types.js';
 import type { NearAi } from '../nearai/client.js';
-import { atRound, type Persona } from '../personas.js';
+import { CreditMonitor, type AiHealth } from '../nearai/credits.js';
+import { atRound, ownerOf, type Persona } from '../personas.js';
+import type { AgentStore } from '../agents/store.js';
+import type { ByokKeys } from '../agents/byok.js';
+import { personaOfAgent } from '../agents/persona.js';
+import { agentChatsOf } from '../agents/stats.js';
 import { buildCast } from '../persona/cast.js';
-import { chatCostUsd } from '../models.js';
+import { MODELS, chatCostUsd } from '../models.js';
 import {
   avatarSeed, botPreimage, chatTag, commitmentOf, handleOf, humanPreimage, newCharacterId, newSalt, newSecret,
   normalizeSigners, seatSeed, secretHash, skinMessage,
@@ -35,6 +40,19 @@ const log = logger('game');
 export const PRESETS: Record<Level, [number, number, number]> = { 1: [5, 10, 25], 2: [25, 50, 100], 3: [100, 250, 500] };
 const MAX_SAY = 280;
 const SAY_INTERVAL_MS = 600;
+/**
+ * error bots_unavailable: no bot can talk (the house key is out of credits, or every bot at the level is on an
+ * empty key), so no new chat starts. Neutral on purpose: it never hints that a human may still come.
+ */
+export const BOTS_UNAVAILABLE = 'The bots are napping. New chats are paused for a few minutes; chats already running finish as normal.';
+const BOT_CHAT_ABORTED = 'The bots are napping, so this chat could not start. New chats are paused for a few minutes; if you played coins, your locked coins come back when the round settles.';
+
+/** AI builders and NEAR AI credit tracking (src/agents/, src/nearai/credits.ts); all optional. */
+export interface GameExtras {
+  agents?: AgentStore;
+  credits?: CreditMonitor;
+  byok?: ByokKeys;
+}
 
 export interface Conn {
   account: string;
@@ -109,17 +127,28 @@ export class Game implements BotHost {
   stopped = false;
   /** In-process tools only (tools/smoke-bots.ts): choose the bot character for a search instead of at random. */
   botPicker?: (account: string, candidates: CharacterRec[]) => CharacterRec | undefined;
+  /** AI builders: their botmasters, personas and settled chat records */
+  readonly agents?: AgentStore;
+  /** spend and credit state of every NEAR AI key the bots use */
+  readonly credits: CreditMonitor;
+  /** botmasters' own NEAR AI keys */
+  readonly byok?: ByokKeys;
 
   constructor(
     readonly cfg: Config,
     readonly db: Db,
     readonly chain: ChainAdapter,
+    /** the relay's own NEAR AI client (the house key; src/app.ts wraps it to track spend and credits) */
     readonly ai: NearAi,
     readonly personas: Persona[],
     /** remote brains of registered botmasters (/bot/ws) */
     readonly hub?: BotmasterHub,
+    ext: GameExtras = {},
   ) {
     this.botTimeScale = cfg.botTimeScale;
+    this.agents = ext.agents;
+    this.byok = ext.byok;
+    this.credits = ext.credits ?? new CreditMonitor(db, { budgetUsd: cfg.nearAiBudgetUsd, recheckMs: cfg.nearAiRecheckSeconds * 1000 });
   }
 
   // =====================================================================================
@@ -535,10 +564,34 @@ export class Game implements BotHost {
    */
   castOf(r: RoundRec): Persona[] {
     const folder = this.personas.map((p) => atRound(p, r.startedAt));
-    if (!r.castSeed || this.cfg.castSize <= 0) return folder;
+    const agents = this.agentPersonas();
+    if (!r.castSeed || this.cfg.castSize <= 0) return [...folder, ...agents];
     const remote = folder.filter((p) => p.brain.kind === 'remote');
     const demo = this.personas.filter((p) => p.brain.kind === 'default' && p.person);
-    return [...remote, ...buildCast({ seed: r.castSeed, size: this.cfg.castSize, at: r.startedAt, hand: demo, pins: this.cfg.castPins })];
+    return [...remote, ...agents, ...buildCast({ seed: r.castSeed, size: this.cfg.castSize, at: r.startedAt, hand: demo, pins: this.cfg.castPins })];
+  }
+
+  /**
+   * AI builders' approved personas of active botmasters (docs/agents.md): like the remote-brain personas,
+   * each plays every round at each of its levels, its own prompt committed by sha256, its Turing bonus paid
+   * to its botmaster's payout account.
+   */
+  agentPersonas(): Persona[] {
+    if (!this.agents) return [];
+    const taken = new Set(this.personas.map((p) => p.id));
+    const out: Persona[] = [];
+    for (const { persona, botmaster } of this.agents.activePersonas()) {
+      if (taken.has(persona.id)) {
+        log.warn(`persona ${persona.id} of ${botmaster.name} has the id of a folder persona; skipped`);
+        continue;
+      }
+      if (!MODELS[persona.model]?.multiSystem) {
+        log.warn(`persona ${persona.id} of ${botmaster.name}: model ${persona.model} is not one the relay runs; skipped`);
+        continue;
+      }
+      out.push(personaOfAgent(persona, botmaster));
+    }
+    return out;
   }
 
   /** The persona a bot character plays: its committed snapshot, else (older rounds) the personas folder. */
@@ -823,7 +876,8 @@ export class Game implements BotHost {
   }
 
   private buildOpening(r: RoundRec, c: CharacterRec, proofIdx: Map<string, number>): Opening {
-    const paidSides = this.roundSides(r.id).filter((s) => s.characterId === c.id && s.playStatus === 'placed');
+    // a chat that never started (aborted) is in no opening: its play stays unassigned and is refunded
+    const paidSides = this.roundSides(r.id).filter((s) => s.characterId === c.id && s.playStatus === 'placed' && !s.aborted);
     if (c.kind === 'bot') {
       const proofs = [];
       for (const s of paidSides) {
@@ -911,9 +965,14 @@ export class Game implements BotHost {
       promo: this.chain.accounts.promo, verifiable,
     });
     const proofIdx = new Map<string, number>(JSON.parse(this.db.getKv(`proofs:${r.id}`) ?? '[]'));
+    // AI builders: every settled chat of their personas, players anonymised, the chat's share of the Turing bonus
+    const agentChats = this.agents
+      ? agentChatsOf({ round: r, characters, sides, chainPlays, coinUnit: this.coinUnit, anonSecret: this.agents.anonSecret() })
+      : [];
     const sql = this.db.sql;
     sql.exec('BEGIN');
     try {
+      for (const a of agentChats) this.agents!.saveChat(a);
       for (const [account, res] of out.results) this.db.saveResult(r.id, account, res);
       for (const row of out.ratingRows) this.db.addRating(r.id, row.account, row.chatId, row.before, row.after, row.at);
       for (const [account, u] of out.users) {
@@ -1178,6 +1237,12 @@ export class Game implements BotHost {
     if (busy) throw new GameError('busy', 'finish your current chat first');
     const seat = this.seatOf(r.id, account, level, seatIndex);
     if (seat.state !== 'open') throw new GameError('seat_taken', `seat is ${seat.state}`);
+    // no bots, no new chats: nobody is matched while no bot could talk, humans included
+    if (this.chatsPaused(r, level)) {
+      this.sendTo(account, { t: 'error', code: 'bots_unavailable', message: BOTS_UNAVAILABLE });
+      this.pushSeat(account, r.id, level, seatIndex);
+      return;
+    }
     let c = 0;
     if (mode === 'paid') {
       c = Number(coins);
@@ -1240,11 +1305,18 @@ export class Game implements BotHost {
       this.sendTo(account, { t: 'error', code: 'round_closed', message: 'the round closed' });
       return;
     }
+    if (this.chatsPaused(r, s.level)) {
+      // the pause began during the search: it ends here, like one refused at pick_seat
+      this.cancelSearch(account, false);
+      this.sendTo(account, { t: 'error', code: 'bots_unavailable', message: BOTS_UNAVAILABLE });
+      this.pushSeat(account, r.id, s.level, s.seatIndex);
+      return;
+    }
     const pendingHuman = (a: string) => {
       const c = this.humanChar(r, a);
       return !!c && (c.commitStatus === 'pending' || c.commitStatus === 'sending');
     };
-    const others = [...this.searches.values()].filter((o) => o.account !== account && o.roundId === s.roundId);
+    const others = [...this.searches.values()].filter((o) => o.account !== account && o.roundId === s.roundId && !this.chatsPaused(r, o.level));
     const waiting = !r.ready || pendingHuman(account) || others.some((o) => pendingHuman(o.account));
     if (waiting && Date.now() < s.deadline + 20_000) {
       s.timer = setTimeout(() => void this.resolveSearch(account), 500);
@@ -1265,9 +1337,11 @@ export class Game implements BotHost {
       this.pairHumans(r, s, other);
       return;
     }
-    let bots = [...(this.chars.get(r.id)?.values() ?? [])].filter(
-      (c) => c.kind === 'bot' && c.level === s.level && c.commitStatus === 'committed' && !this.viewerChatted(r.id, account, c.id),
+    const eligible = [...(this.chars.get(r.id)?.values() ?? [])].filter(
+      (c) => c.kind === 'bot' && c.level === s.level && c.commitStatus === 'committed' && !this.viewerChatted(r.id, account, c.id) && this.ownerActive(c),
     );
+    // never a bot whose NEAR AI key is out of credits: it could not say a word
+    let bots = eligible.filter((c) => this.botUsable(c));
     if (s.mode === 'free' && bots.length) {
       const cheapest = Math.min(...bots.map((c) => chatCostUsd(c.model!)));
       bots = bots.filter((c) => chatCostUsd(c.model!) === cheapest);
@@ -1452,6 +1526,31 @@ export class Game implements BotHost {
     if (conv.started || conv.ended) return;
     const ss = conv.sides.map((id) => this.sides.get(id)!);
     if (ss.some((s) => s.playStatus === 'pending' || s.phase !== 'placing')) return;
+    // no bots, no new chats: a chat matched before the pause began (while a play was placed) does not start
+    // either, human or bot alike, so a chat that starts never tells who is behind it
+    const round = this.rounds.get(ss[0].roundId);
+    if (round && ss.some((s) => this.chatsPaused(round, s.level))) {
+      this.abortConv(conv, ss, 'new chats are paused');
+      return;
+    }
+    // a bot chat runs on its persona's NEAR AI key; one that ran out since the match never starts, so no
+    // player sits through a silent bot
+    let key: { keyId: string; ai: NearAi } | null = null;
+    if (conv.kind === 'bot') {
+      const c = this.chars.get(ss[0].roundId)?.get(ss[0].characterId);
+      const persona = c ? this.personaOf(c) : undefined;
+      if (persona) {
+        key = this.keyFor(persona);
+        if (!key && ownerOf(persona) && this.credits.usable('house')) {
+          log.warn(`bot chat ${ss[0].chatId}: the own NEAR AI key of ${ownerOf(persona)} is unusable since the match; this chat runs on the relay's key`);
+          key = { keyId: 'house', ai: this.ai };
+        }
+        if (!key) {
+          this.abortConv(conv, ss, 'its NEAR AI key is out of credits');
+          return;
+        }
+      }
+    }
     conv.started = true;
     // both sides see the same full-screen countdown; nobody, bot or human, can write before startedAt,
     // so the timing never tells who is expected to speak first. Human and bot chats are identical here.
@@ -1477,10 +1576,81 @@ export class Game implements BotHost {
       }
       const session = new BotSession(this, side, persona, side.skinMessage!, r.attest[persona.model]?.attested ?? [], {
         brain: this.brainFor(persona, side.chatId),
+        ai: key?.ai,
       });
       this.bots.set(side.chatId, session);
       session.start();
     }
+  }
+
+  /**
+   * A matched chat that cannot start (new chats are paused, or its bot's NEAR AI key ran out between the match
+   * and now): every side gets the same bots_unavailable, chat_ended and call_missed, human or bot alike. A placed
+   * play is refunded at settlement (it is in no opening), and no rating moves.
+   */
+  private abortConv(conv: Conv, sides: ChatSide[], why: string): void {
+    conv.started = true;
+    conv.ended = true;
+    const now = Date.now();
+    for (const side of sides) {
+      side.phase = 'missed';
+      side.myCall = null;
+      side.aborted = 'bots_unavailable';
+      side.endedAt = now;
+      side.endReason = 'round_end';
+      side.callDeadline = now;
+      this.saveSide(side);
+      log.warn(`${conv.kind} chat ${side.chatId} of ${side.viewer} did not start: ${why}${side.playStatus === 'placed' ? '; the play is refunded at settlement' : ''}`);
+      this.sendTo(side.viewer, { t: 'error', code: 'bots_unavailable', message: BOT_CHAT_ABORTED });
+      this.sendTo(side.viewer, { t: 'chat_ended', chatId: side.chatId, callDeadline: now, reason: 'round_end' });
+      this.sendTo(side.viewer, { t: 'call_missed', chatId: side.chatId });
+      this.pushSeat(side.viewer, side.roundId, side.level, side.seatIndex);
+    }
+  }
+
+  /**
+   * No bots, no new chats. While the house key is out of credits, or while no bot at this level of the round
+   * can talk (every one on an empty or unusable key), no new chat starts there, human to human included: a
+   * match made then would be known to be a human. Chats already running finish as normal; matching resumes by
+   * itself when a key recovers. A level with no bots at all (not committed yet) is not paused.
+   */
+  chatsPaused(r: RoundRec, level: Level): boolean {
+    if (!this.credits.usable('house')) return true;
+    const bots = [...(this.chars.get(r.id)?.values() ?? [])].filter((c) => c.kind === 'bot' && c.level === level && c.commitStatus === 'committed' && this.ownerActive(c));
+    return bots.length > 0 && !bots.some((c) => this.botUsable(c));
+  }
+
+  /**
+   * The NEAR AI client and key id a persona's chats use now: its botmaster's own key when one is stored,
+   * else the relay's. null: that key is out of credits (or a stored own key cannot be opened).
+   */
+  keyFor(p: Persona): { keyId: string; ai: NearAi } | null {
+    const owner = ownerOf(p);
+    if (owner && this.byok?.has(owner)) {
+      const ai = this.byok.client(owner);
+      const keyId = this.byok.keyIdOf(owner);
+      return ai && this.credits.usable(keyId) ? { keyId, ai } : null;
+    }
+    return this.credits.usable('house') ? { keyId: 'house', ai: this.ai } : null;
+  }
+
+  /** A bot character may be matched: its key has credits. */
+  botUsable(c: CharacterRec): boolean {
+    const p = this.personaOf(c);
+    return !!p && this.keyFor(p) !== null;
+  }
+
+  /** An AI builder's character plays only while its botmaster is active and its persona approved. */
+  private ownerActive(c: CharacterRec): boolean {
+    const owner = c.persona?.owner;
+    if (!owner || !this.agents) return true;
+    if (this.agents.getBotmaster(owner)?.status !== 'active') return false;
+    return this.agents.getPersona(c.personaId ?? '')?.status === 'approved';
+  }
+
+  /** The relay's own NEAR AI key as anyone may see it (GET /api/health): status and since; spend is the operator's. */
+  aiHealth(): Pick<AiHealth, 'status' | 'since'> {
+    return this.credits.publicHealth('house');
   }
 
   /** The persona's remote brain when its botmaster drives it and is connected, else the default brain. */
@@ -1871,6 +2041,7 @@ export class Game implements BotHost {
       lastHumanAt: this.lastHumanAt,
       queues: this.chain.queueDepth(),
       ai: this.ai.kind,
+      aiHealth: this.aiHealth(),
       chain: this.chain.kind,
       completions: this.db.completionStats(),
     };

@@ -67,6 +67,17 @@ What is not proven: that a human seat is a human. That rests on the account's ra
 
 Evidence from 2026-11-04: model z-ai/glm-5.3-flash, attested signer 0x3b753b4406613c5e70ae640508632b600424fa0c, completion id c6bba1f4dd0243f89c77ed4045e3d056, both quotes UpToDate under dcap-qvl, signature recovered to the attested signer. Artifacts in `experiments/near-ai/runs/`.
 
+## For AI builders
+
+The room has two sides. Players read characters; LLM operators, chat and voice agent vendors and researchers enter agents for players to catch.
+
+- **Money.** The Turing bonus: 20% of the coins of every paid player who calls your agent human, 90% when no paid player calls it right, paid on chain by the game contract to your NEAR account.
+- **Data.** Every settled transcript of your agents with the player's call, players anonymised, and a scorecard of how often real people believed your agent was human, by persona and round, plain and weighted by coins. Export as JSONL.
+- **How.** Apply at https://realsies.lol/agents. On approval you get a token, register personas (a system prompt committed every round, a NEAR AI enclave model, levels, timing dials) and follow them at /agents/dashboard. Use the relay's conversation brain or drive timing and intents with your own over WebSocket. Bring your own NEAR AI key to run on your own credits.
+- **Rules.** Every word is a signed enclave completion. Brains choose intents and timing, never text, so nobody can ghost-write a bot, its builder included. Prompts are committed by sha256 before each round and public after it.
+
+Docs: `docs/agents.md` (apply, enter, scorecard, API) and `docs/bot-api.md` (the brain protocol).
+
 ## Economy
 
 Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every depositor, half the supply plus all deposited NEAR locked in a Ref pool for 69 years, a 20% team allocation with a 7-day cliff and 21-day vesting. One coin is a fixed number of REAL chosen at launch so that a coin is about one cent. Presets run from 5 coins at Level 1 to 500 at Level 3. Coins are held in the game contract per account; deposit and withdraw are one call each.

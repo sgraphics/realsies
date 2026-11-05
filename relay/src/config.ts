@@ -79,6 +79,20 @@ export interface Config {
   /** Seconds of call window when the round is force-ended in test mode. */
   devCallSeconds: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  // ---------- AI builders (docs/agents.md) ----------
+  /** Bearer token of the admin endpoints (/api/admin/*); unset (or shorter than 16 characters) = admin endpoints off */
+  adminToken?: string;
+  /** 32 bytes (64 hex or base64) sealing botmasters' own NEAR AI keys with AES-256-GCM; unset = BYOK refused */
+  encryptionKey?: string;
+  /** POSTed (JSON, with Slack and Discord friendly text) for every new access request */
+  agentRequestWebhook?: string;
+  /** access requests stored per IP per hour */
+  agentRequestsPerHour: number;
+  // ---------- NEAR AI credits ----------
+  /** house key budget in USD: crossing 80% of the estimated spend warns in the log (health: low_credit) */
+  nearAiBudgetUsd: number;
+  /** a key marked out of credits is retried with a one-token completion this often */
+  nearAiRecheckSeconds: number;
 }
 
 function num(name: string, def: number): number {
@@ -127,11 +141,20 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     partnerLeftSeconds: num('PARTNER_LEFT_SECONDS', 15),
     devCallSeconds: num('DEV_CALL_SECONDS', 10),
     logLevel: (env.LOG_LEVEL as Config['logLevel']) || 'info',
+    adminToken: env.ADMIN_TOKEN || undefined,
+    encryptionKey: env.RELAY_ENCRYPTION_KEY || undefined,
+    agentRequestWebhook: env.AGENT_REQUEST_WEBHOOK || undefined,
+    agentRequestsPerHour: num('AGENT_REQUESTS_PER_HOUR', 5),
+    nearAiBudgetUsd: num('NEAR_AI_BUDGET_USD', 10),
+    nearAiRecheckSeconds: num('NEAR_AI_RECHECK_SECONDS', 180),
     ...overrides,
   };
   if (!['auto', 'near', 'mock'].includes(cfg.chain)) throw new Error(`CHAIN must be auto, near or mock`);
   if (!['auto', 'real', 'mock'].includes(cfg.nearAi)) throw new Error(`NEAR_AI must be auto, real or mock`);
   if (!(cfg.countdownSeconds >= 0 && cfg.countdownSeconds <= 30)) throw new Error('COUNTDOWN_SECONDS must be from 0 to 30');
   if (!(Number.isInteger(cfg.castSize) && cfg.castSize >= 0 && cfg.castSize <= 60)) throw new Error('CAST_SIZE must be a whole number from 0 to 60');
+  if (cfg.agentRequestWebhook && !/^https?:\/\//.test(cfg.agentRequestWebhook)) throw new Error('AGENT_REQUEST_WEBHOOK must be an http or https URL');
+  if (!(cfg.nearAiBudgetUsd >= 0)) throw new Error('NEAR_AI_BUDGET_USD must be 0 or more');
+  if (!(cfg.nearAiRecheckSeconds > 0)) throw new Error('NEAR_AI_RECHECK_SECONDS must be more than 0');
   return cfg;
 }

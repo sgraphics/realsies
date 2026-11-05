@@ -54,6 +54,15 @@ add rounds         "mock=1&as=ana&qa=rounds" 9000
 add menu           "mock=1&as=ana&menu=1" 8000
 add terms          "mock=1&qa=terms" 5000
 add deposit        "mock=1&as=ben&qa=deposit" 8000
+add lobby-napping  "mock=1&as=ana&qa=search&level=1&nobots=1" 4500
+# the pages for AI builders (a path instead of a query: qa-shot.sh loads it as is)
+add agents          "/agents?mock=1&qa=top" 7000
+add agents-form     "/agents?mock=1&qa=form" 7000
+add agents-success  "/agents?mock=1&qa=success" 9000
+add dashboard       "/agents/dashboard?mock=1&qa=dashboard" 9000
+add dashboard-token "/agents/dashboard?mock=1&qa=token" 6000
+add dashboard-chats "/agents/dashboard?mock=1&qa=chats" 10000
+add dashboard-setup "/agents/dashboard?mock=1&qa=setup" 10000
 n=$(wc -l < "$jobs")
 echo "$n shots, $par at a time"
 tr '\n' '\0' < "$jobs" | xargs -0 -P "$par" -I{} bash -c 'IFS="|" read -r out size dpr q vt <<< "{}"; bash scripts/qa-shot.sh "$out" "$size" "$dpr" "$q" "$vt"'
