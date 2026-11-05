@@ -4,9 +4,9 @@
 // small LED backlight, and a cinema camera on a tripod as a foreground silhouette. One world in
 // game pixels; every shot is a window into it at an integer zoom.
 
-import { type Rgba, createBuffer, px, get, rect, line, ellipse, blit } from '../../src/core/buffer.ts';
-import { type Color, PAL, TRANSPARENT, darker, lighter, nearest } from '../../src/core/palette.ts';
-import { hash01 } from '../../src/core/rng.ts';
+import { type Rgba, createBuffer, px, get, rect, line, ellipse, blit } from '../../art.ts';
+import { type Color, PAL, TRANSPARENT, darker, lighter, nearest } from '../../art.ts';
+import { hash01 } from '../../art.ts';
 
 const P = PAL;
 export const WORLD_W = 320;

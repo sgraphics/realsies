@@ -2,8 +2,8 @@
 // neighbour blits at any integer scale, letterbox bars and palette-step fades. Every block edge
 // lands on an even output pixel so 4:2:0 chroma never straddles a game pixel.
 
-import { type Rgba, createBuffer } from '../../src/core/buffer.ts';
-import { type Color, darker } from '../../src/core/palette.ts';
+import { type Rgba, createBuffer } from '../art.ts';
+import { type Color, darker } from '../art.ts';
 
 export const OUT_W = 1920;
 export const OUT_H = 1080;

@@ -1,13 +1,12 @@
-// keyframes.png: one frame per shot (at its storyboard key time), box-downscaled to 480x270, with
-// the shot number, timecode and title under each.
+// The contact sheet: one frame per shot (at its key time), box-downscaled to 480x270, with the
+// shot number, timecode and title under each.
 
-import { type Rgba, createBuffer } from '../../src/core/buffer.ts';
-import { PAL } from '../../src/core/palette.ts';
-import { Renderer } from './render.ts';
+import { type Rgba, createBuffer, PAL } from '../art.ts';
 import { rectOut, fillOut } from './camera.ts';
 import { drawString, measure } from './font.ts';
-import { SHOTS, TITLE, DURATION } from './storyboard.ts';
+import { frameRenderer } from './frames.ts';
 import { tc } from './scriptmd.ts';
+import type { TrailerDef } from './types.ts';
 
 const TW = 480, TH = 270, COLS = 4, M = 16, LAB = 34, HEAD = 64;
 
@@ -34,15 +33,17 @@ function thumb(src: Rgba): Rgba {
   return out;
 }
 
-export function keyframeSheet(r = new Renderer()): Rgba {
-  const rows = Math.ceil(SHOTS.length / COLS);
+export function keyframeSheet(def: TrailerDef): Rgba {
+  const frame = frameRenderer(def);
+  const shots = def.shots;
+  const rows = Math.ceil(shots.length / COLS);
   const W = M + COLS * (TW + M), H = HEAD + rows * (TH + LAB + M) + M;
   const sheet = createBuffer(W, H);
   fillOut(sheet, PAL.navyDark);
-  drawString(sheet, `${TITLE}  -  ${DURATION.toFixed(1)} s, 1920x1080, 24 fps  -  one frame per shot`, M, 20, { color: PAL.white, scale: 3 });
-  SHOTS.forEach((s, i) => {
+  drawString(sheet, `${def.title}  -  ${def.duration.toFixed(1)} s, 1920x1080, ${def.fps} fps  -  one frame per shot`, M, 20, { color: PAL.white, scale: 3 });
+  shots.forEach((s, i) => {
     const x = M + (i % COLS) * (TW + M), y = HEAD + Math.floor(i / COLS) * (TH + LAB + M);
-    const f = r.frame(s.key);
+    const f = frame(s.key);
     const t = thumb(f);
     rectOut(sheet, x - 2, y - 2, TW + 4, TH + 4, PAL.black);
     for (let yy = 0; yy < TH; yy++) sheet.data.set(t.data.subarray(yy * TW * 4, (yy + 1) * TW * 4), ((y + yy) * W + x) * 4);

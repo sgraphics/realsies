@@ -2,15 +2,10 @@
 // shot can script every blink, glance, mouth flap, breath and head tilt, and so the characters can
 // sit. Standing frames still come from the stock Rig (lobby, chat, call, countdown).
 
-import { type Rgba, createBuffer, blit, get, px } from '../../src/core/buffer.ts';
-import { type Color, PAL, RAMPS, type Ramp, darker, lighter, TRANSPARENT } from '../../src/core/palette.ts';
-import { lookFromSeed, type Look } from '../../src/rig/look.ts';
-import { buildSprites, type LayerSprites } from '../../src/rig/build.ts';
-import { torsoSpan } from '../../src/rig/parts/body.ts';
-import { EYES, MOUTHS } from '../../src/rig/parts/head.ts';
-import { HAIRS } from '../../src/rig/parts/hair.ts';
-import { FRONTS } from '../../src/rig/parts/items.ts';
+import { type Rgba, type Color, type Ramp, type Look, type LayerSprites, createBuffer, blit, get, px, PAL, RAMPS, darker, lighter, TRANSPARENT } from '../art.ts';
+import { lookFromSeed, buildSprites, torsoSpan, MOUTHS, HAIRS } from '../art.ts';
 
+/** One seated character: a rig seed plus the parts a variant pins for the role. */
 export interface CastMember {
   id: 'host' | 'guest';
   /** Rig seed; the look comes from lookFromSeed, then a few parts are pinned for the role. */
@@ -20,36 +15,8 @@ export interface CastMember {
   smile: string;
 }
 
-const idx = <T extends { id: string }>(arr: T[], id: string) => Math.max(0, arr.findIndex((x) => x.id === id));
-
-export const CAST: Record<'host' | 'guest', CastMember> = {
-  // bald, glasses, moustache, red sweater, a notebook in hand: deadpan, and nobody real
-  host: {
-    id: 'host',
-    seed: 'host-4843',
-    pin: (l) => {
-      l.eyes = idx(EYES, 'glasses');
-      l.ramps.glasses = 'black';
-      l.mouth = idx(MOUTHS, 'moustache');
-      l.front = idx(FRONTS, 'book');
-      l.ramps.item = 'royal';
-    },
-    smile: 'moustache',
-  },
-  // dark wavy hair, teal blazer over a white shirt: polished, media-trained, possibly a bot
-  guest: {
-    id: 'guest',
-    seed: 'guest-17375',
-    pin: (l) => {
-      l.mouth = idx(MOUTHS, 'line');
-      l.hair = idx(HAIRS, 'wavy');
-      l.ramps.hair = 'rust';
-      l.ramps.skin = 'skin2';
-      l.front = -1;
-    },
-    smile: 'smile',
-  },
-};
+/** Index of a rig part by id (for pinning parts in a variant's cast). */
+export const idx = <T extends { id: string }>(arr: T[], id: string) => Math.max(0, arr.findIndex((x) => x.id === id));
 
 export function castLook(c: CastMember, smile = false): Look {
   const l = lookFromSeed(c.seed);
@@ -73,6 +40,17 @@ export interface ActorState {
 }
 
 export const REST: ActorState = { blink: false, look: 0, mouthOpen: false, smile: false, breath: 0, tilt: 0, tiltDir: 1 };
+
+/** A performance over time: a base state, timed changes (held until the next), blinks, breathing. */
+export interface ActorDirection {
+  base: Partial<ActorState>;
+  keys: { t: number; set: Partial<ActorState> }[];
+  /** Blink start times (each lasts the scene's blink length). */
+  blinks: number[];
+  /** Breathing: one 1-px drop per period, off inside these windows. */
+  breathPeriod: number;
+  breathOff: [number, number][];
+}
 
 /** Upper body drop when seated (px). */
 export const SIT = 4;

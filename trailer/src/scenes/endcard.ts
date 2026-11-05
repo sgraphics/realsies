@@ -1,19 +1,25 @@
-// End card, low-angle hero shot: the curved REALSIES logo big across the top with a glint sweeping
-// its letters and a sparkle or two; under it three characters, waist up and cropped by the bottom
-// edge, looming over a low horizon (a planet's limb with the sun coming up behind them, rays
-// fanning up the sky, a rim of backlight on every silhouette). The guest from the interview in the
-// middle, two lobby regulars either side, all three smug. The tagline sits under the logo,
-// realsies.lol on a dark foot band. Also the poster.
+// The hero end card, a low-angle shot: the curved REALSIES logo big across the top with a glint
+// sweeping its letters and a sparkle or two; under it three characters, waist up and cropped by the
+// bottom edge, looming over a low horizon (a planet's limb with the sun coming up behind them, rays
+// fanning up the sky, a rim of backlight on every silhouette), all three smug. A tagline types on
+// under the logo, the URL pops in on a dark foreground crest. Also the poster (`still`).
 
-import { type Rgba, createBuffer, px, get } from '../../src/core/buffer.ts';
-import { type Color, PAL, TRANSPARENT, lighter } from '../../src/core/palette.ts';
-import { hash01 } from '../../src/core/rng.ts';
-import { drawLogo, LOGO_W, LOGO_H } from '../../src/themes/logo.ts';
-import { blitK, rectOut, OUT_W, OUT_H } from './camera.ts';
-import { drawCentered } from './font.ts';
-import { castLook, CAST } from './actor.ts';
-import { SmugActor, type SmugState } from './smug.ts';
-import { CUE, LINES, beat, typedCount, lineShown, lobbySeeds, END_SEATS, END } from './storyboard.ts';
+import { type Rgba, type Color, type Look, createBuffer, px, get, PAL, TRANSPARENT, lighter, hash01, drawLogo, LOGO_W, LOGO_H } from '../art.ts';
+import { blitK, rectOut, OUT_W, OUT_H } from '../engine/camera.ts';
+import { drawCentered } from '../engine/font.ts';
+import { SmugActor, type SmugState } from '../engine/expressions.ts';
+import { typedCount, lineShown, type Line } from '../engine/timeline.ts';
+
+export interface HeroEndCardConfig {
+  /** The line typed under the logo, and the URL that pops in at the bottom. */
+  tagline: Line;
+  url: string;
+  /** Who stands where: rig seeds or looks. Left pushes up sunglasses, middle crosses her arms and nods, right raises an eyebrow. */
+  trio: { left: string | Look; mid: string | Look; right: string | Look };
+  /** Music grid, and the beats (from the downbeat) things land on. */
+  beat: (n: number) => number;
+  beats: { logo: number; url: number; chime: number; glints: number[]; nod: [number, number]; push: [number, number, number, number]; brow: number };
+}
 
 const P = PAL;
 const BG_K = 6; // field pixels
@@ -23,7 +29,6 @@ const LOGO_X = Math.round((OUT_W - LOGO_W * LOGO_K) / 2 / 2) * 2;
 const LOGO_Y = 34;
 const TAG_Y = 386;
 const URL_Y = 992;
-export const URL_TEXT = 'realsies.lol';
 
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const th = (x: number, y: number) => (BAYER[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
@@ -82,16 +87,6 @@ function field(t: number): Rgba {
 
 // ---------------------------------------------------------------- the trio
 
-const seeds = lobbySeeds();
-const trio = {
-  // Coconut843, in his own shades, pushes them up with one finger
-  left: new SmugActor(seeds[END_SEATS.left]),
-  // the guest from the interview, arms crossed
-  mid: new SmugActor(castLook(CAST.guest)),
-  // Pebble242, smug as a cat, raises one eyebrow
-  right: new SmugActor(seeds[END_SEATS.right]),
-};
-
 const MID_K = 17, SIDE_K = 15;
 /** Box positions (top-left, output px): the middle one closer and bigger, cropped at its waist. */
 const AT = {
@@ -100,7 +95,8 @@ const AT = {
   right: { x: 1360 - 16 * SIDE_K, y: OUT_H - 41 * SIDE_K },
 };
 
-function states(t: number, still: boolean): { left: SmugState; mid: SmugState; right: SmugState } {
+function states(cfg: HeroEndCardConfig, t: number, still: boolean): { left: SmugState; mid: SmugState; right: SmugState } {
+  const beat = cfg.beat, END = cfg.beats, CUE = cfg.beats;
   const base: SmugState = { arms: 'crossed', push: 0, shadesUp: 0, lensGlint: false, eyes: 'lids', nod: 0, smirkLeft: false };
   const b = still ? 99 : (t - beat(0)) / ((beat(1) - beat(0)));
   const after = (n: number) => b >= n;
@@ -168,49 +164,57 @@ const SPARK_AT: [number, number, Color][] = [[LOGO_W - 7, 2, P.yellow], [6, 6, P
 
 // ---------------------------------------------------------------- the card
 
-export function renderEndCard(out: Rgba, t: number, still = false): void {
-  const t0 = beat(CUE.logo);
-  const age = still ? 10 : t - t0;
-  blitK(out, field(still ? t0 + 3 : t), 0, 0, BG_K);
-  // the trio: sides first (they stand a step back), then her
-  const st = states(t, still);
-  for (const side of ['left', 'right'] as const) {
-    const a = AT[side];
-    blitK(out, trio[side].frame(st[side]), a.x, a.y + (still ? 0 : rise(age, 2 / 24)), SIDE_K);
+export class HeroEndCard {
+  private trio: { left: SmugActor; mid: SmugActor; right: SmugActor };
+  constructor(private cfg: HeroEndCardConfig) {
+    this.trio = { left: new SmugActor(cfg.trio.left), mid: new SmugActor(cfg.trio.mid), right: new SmugActor(cfg.trio.right) };
   }
-  blitK(out, trio.mid.frame(st.mid), AT.mid.x, AT.mid.y + (still ? 0 : rise(age, 0)), MID_K);
-  // the dark crest in the foreground: the low camera looks up past it, and it cuts the three off
-  // at the waist; its lit lip catches the sunrise
-  for (let bx = 0; bx < BW; bx++) {
-    const top = crestAt(bx);
-    rectOut(out, bx * BG_K, top * BG_K, BG_K, OUT_H - top * BG_K, P.black);
-    const near = Math.abs(bx + 0.5 - BW / 2) < 70;
-    rectOut(out, bx * BG_K, top * BG_K, BG_K, BG_K, near ? P.slate : P.navy);
-    if (hash01(63, bx) < 0.3) rectOut(out, bx * BG_K, (top + 1) * BG_K, BG_K, BG_K, P.navyDark);
-  }
-  // the logo drops in, then the shine sweeps it on the beats
-  const drop = [-460, -300, -150, 14, 30, 10, -4, 0];
-  const fi = Math.floor(age * 24);
-  const dy = still ? 0 : fi < drop.length ? drop[Math.max(0, fi)] : 0;
-  let g: number | null = still ? 44 : null;
-  let sparkPh = -1;
-  for (const gb of END.glints) {
-    const ga = (t - beat(gb)) / 0.5; // sweep in half a second
-    if (!still && ga >= 0 && ga < 1) g = -12 + ga * (LOGO_W + 30);
-    if (!still && ga >= 0.75 && ga < 2.2) sparkPh = (ga - 0.75) / 1.45;
-  }
-  blitK(out, shinyLogo(still ? 0 : t * 1000, g, still), LOGO_X, LOGO_Y + dy, LOGO_K);
-  if (still) sparkPh = 0.45;
-  if (sparkPh >= 0)
-    SPARK_AT.forEach(([lx, ly, c], i) => sparkle(out, LOGO_X + lx * LOGO_K, LOGO_Y + dy + ly * LOGO_K, Math.min(0.999, Math.max(0, sparkPh - i * 0.12)), c));
-  // tagline under the logo, typed on
-  const tag = LINES.find((l) => l.id === 'tagline')!;
-  const n = still ? Infinity : typedCount(tag, t);
-  drawCentered(out, lineShown(tag), OUT_W / 2, TAG_Y, { color: P.white, scale: 6, outline: P.black }, n);
-  // the URL pops in on the foot band
-  const ua = still ? 10 : t - beat(CUE.url);
-  if (ua >= 0) {
-    const k = ua < 1 / 24 ? 11 : ua < 2 / 24 ? 10 : 9;
-    drawCentered(out, URL_TEXT, OUT_W / 2, URL_Y - (k - 9) * 4, { color: P.gold, scale: k, outline: P.black, extrude: P.rust });
+
+  render(out: Rgba, t: number, still = false): void {
+    const cfg = this.cfg, trio = this.trio, beat = cfg.beat, CUE = cfg.beats, END = cfg.beats;
+    const t0 = beat(CUE.logo);
+    const age = still ? 10 : t - t0;
+    blitK(out, field(still ? t0 + 3 : t), 0, 0, BG_K);
+    // the trio: sides first (they stand a step back), then her
+    const st = states(cfg, t, still);
+    for (const side of ['left', 'right'] as const) {
+      const a = AT[side];
+      blitK(out, trio[side].frame(st[side]), a.x, a.y + (still ? 0 : rise(age, 2 / 24)), SIDE_K);
+    }
+    blitK(out, trio.mid.frame(st.mid), AT.mid.x, AT.mid.y + (still ? 0 : rise(age, 0)), MID_K);
+    // the dark crest in the foreground: the low camera looks up past it, and it cuts the three off
+    // at the waist; its lit lip catches the sunrise
+    for (let bx = 0; bx < BW; bx++) {
+      const top = crestAt(bx);
+      rectOut(out, bx * BG_K, top * BG_K, BG_K, OUT_H - top * BG_K, P.black);
+      const near = Math.abs(bx + 0.5 - BW / 2) < 70;
+      rectOut(out, bx * BG_K, top * BG_K, BG_K, BG_K, near ? P.slate : P.navy);
+      if (hash01(63, bx) < 0.3) rectOut(out, bx * BG_K, (top + 1) * BG_K, BG_K, BG_K, P.navyDark);
+    }
+    // the logo drops in, then the shine sweeps it on the beats
+    const drop = [-460, -300, -150, 14, 30, 10, -4, 0];
+    const fi = Math.floor(age * 24);
+    const dy = still ? 0 : fi < drop.length ? drop[Math.max(0, fi)] : 0;
+    let g: number | null = still ? 44 : null;
+    let sparkPh = -1;
+    for (const gb of END.glints) {
+      const ga = (t - beat(gb)) / 0.5; // sweep in half a second
+      if (!still && ga >= 0 && ga < 1) g = -12 + ga * (LOGO_W + 30);
+      if (!still && ga >= 0.75 && ga < 2.2) sparkPh = (ga - 0.75) / 1.45;
+    }
+    blitK(out, shinyLogo(still ? 0 : t * 1000, g, still), LOGO_X, LOGO_Y + dy, LOGO_K);
+    if (still) sparkPh = 0.45;
+    if (sparkPh >= 0)
+      SPARK_AT.forEach(([lx, ly, c], i) => sparkle(out, LOGO_X + lx * LOGO_K, LOGO_Y + dy + ly * LOGO_K, Math.min(0.999, Math.max(0, sparkPh - i * 0.12)), c));
+    // tagline under the logo, typed on
+    const tag = cfg.tagline;
+    const n = still ? Infinity : typedCount(tag, t);
+    drawCentered(out, lineShown(tag), OUT_W / 2, TAG_Y, { color: P.white, scale: 6, outline: P.black }, n);
+    // the URL pops in on the foot band
+    const ua = still ? 10 : t - beat(CUE.url);
+    if (ua >= 0) {
+      const k = ua < 1 / 24 ? 11 : ua < 2 / 24 ? 10 : 9;
+      drawCentered(out, cfg.url, OUT_W / 2, URL_Y - (k - 9) * 4, { color: P.gold, scale: k, outline: P.black, extrude: P.rust });
+    }
   }
 }

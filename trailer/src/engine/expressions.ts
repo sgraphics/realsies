@@ -2,12 +2,12 @@
 // the game's look is untouched: half-lidded eyes, a raised eyebrow, smirks, crossed arms, a finger
 // pushing sunglasses up, a slow nod, and a backlight rim along the top of the silhouette.
 
-import { type Rgba, createBuffer, blit, get, px, outline } from '../../src/core/buffer.ts';
-import { type Color, PAL, RAMPS, type Ramp, TRANSPARENT, lighter } from '../../src/core/palette.ts';
-import { lookFromSeed, type Look } from '../../src/rig/look.ts';
-import { buildSprites, type LayerSprites } from '../../src/rig/build.ts';
-import { torsoSpan, TORSOS } from '../../src/rig/parts/body.ts';
-import { MOUTHS } from '../../src/rig/parts/head.ts';
+import { type Rgba, createBuffer, blit, get, px, outline } from '../art.ts';
+import { type Color, PAL, RAMPS, type Ramp, TRANSPARENT, lighter } from '../art.ts';
+import { lookFromSeed, type Look } from '../art.ts';
+import { buildSprites, type LayerSprites } from '../art.ts';
+import { torsoSpan, TORSOS } from '../art.ts';
+import { MOUTHS } from '../art.ts';
 
 const K = PAL.black;
 const idx = <T extends { id: string }>(arr: T[], id: string) => Math.max(0, arr.findIndex((x) => x.id === id));

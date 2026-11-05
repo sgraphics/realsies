@@ -17,3 +17,6 @@ art/out/
 # rendered trailer videos stay out of git; the dashboard reads them from disk
 .bl0x/topics/near-hackathon/trailer/*.mp4
 .bl0x/topics/near-hackathon/trailer/frames/
+
+# trailer renders (npm run render in trailer/) stay out of git
+trailer/out/

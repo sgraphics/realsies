@@ -3,7 +3,7 @@
 
 import { deflateSync, constants } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
-import type { Rgba } from '../../src/core/buffer.ts';
+import type { Rgba } from '../art.ts';
 
 const CRC = (() => {
   const t = new Uint32Array(256);

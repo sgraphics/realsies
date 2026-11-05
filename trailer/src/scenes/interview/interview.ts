@@ -1,65 +1,84 @@
-// The interview: the set world with two directed seated actors, shot through the storyboard's
-// framings, with the glitch on her face and palette fades. Subtitles are drawn by render.ts.
+// The interview scene: the painted set world with two directed seated actors (host left, guest
+// right), shot through a framing or a push-in, with palette fades and the two-frame bot glitch
+// in the guest's eyes. A shot draws the picture, then an optional overlay (the chat), then the
+// cinema bars.
 
-import { type Rgba, createBuffer, blit, get, px } from '../../src/core/buffer.ts';
-import { PAL, TRANSPARENT, luminance, type Color } from '../../src/core/palette.ts';
-import { hash01 } from '../../src/core/rng.ts';
-import { Actor, CAST, REST, keyLight, type ActorState } from './actor.ts';
+import { type Rgba, type Color, createBuffer, blit, get, px, PAL, TRANSPARENT, luminance, hash01 } from '../../art.ts';
+import { Actor, REST, keyLight, type ActorState, type CastMember, type ActorDirection } from '../../engine/actor.ts';
+import { shoot, fadeBuffer, letterbox, BAR, OUT_H } from '../../engine/camera.ts';
+import { framingAt, lineTimes, type Line, type Shot, type Speaker } from '../../engine/timeline.ts';
+import type { VoiceEnvelopes } from '../../engine/audio/voice.ts';
 import { setLayers, tightBackLayer, drawSetLife, HOST_AT, GUEST_AT, WORLD_W, WORLD_H } from './set.ts';
-import { shoot, fadeBuffer, BAR, OUT_H } from './camera.ts';
-import { BLINK, DIRECTION, GLITCH, GLITCH_FRAME, LINES, FPS, framingAt, lineTimes, type Shot, type Speaker } from './storyboard.ts';
 
-/** Per-line voice envelopes (when a recorded voice replaces the blips). */
-export type VoiceEnvelopes = Map<string, { rate: number; env: Float32Array }>;
+export interface InterviewConfig {
+  cast: { host: CastMember; guest: CastMember };
+  /** Give the guest large blue eyes with highlights. */
+  guestBigEyes: boolean;
+  direction: Record<Speaker, ActorDirection>;
+  /** Blink length (seconds). */
+  blink: number;
+  /** Every line (only host and guest lines move mouths). */
+  lines: Line[];
+  fps: number;
+  /** First frame of the glitch in her eyes, and how many frames it lasts. */
+  glitch: { frame: number; frames: number };
+}
 
 const VOWELS = new Set('aeiouyAEIOUY');
 
-/** Is the speaker's mouth open at time t (typed blips, or the recorded voice's loudness)? */
-export function mouthOpenAt(sp: Speaker, t: number, voice?: VoiceEnvelopes): boolean {
-  for (const l of LINES) {
-    if (l.speaker !== sp) continue;
-    const v = voice?.get(l.id);
-    if (v) {
-      const i = Math.floor((t - l.at) * v.rate);
-      if (i >= 0 && i < v.env.length) return v.env[i] > 0.18;
-      continue;
-    }
-    const { chars, times, end } = lineTimes(l);
-    if (t < l.at || t > end + 0.05) continue;
-    let i = -1;
-    for (let k = 0; k < times.length; k++) if (times[k] <= t) i = k;
-    if (i < 0) return false;
-    const ch = chars[i];
-    // vowels open the mouth for the length of their blip; 'm' and 'h' hum with it shut
-    return VOWELS.has(ch) && t - times[i] < Math.min(0.1, 1 / l.cps);
-  }
-  return false;
+/** Something drawn over the picture before the bars (the chat). */
+export interface Overlay {
+  draw(out: Rgba, t: number): void;
 }
 
-export function actorState(sp: Speaker, t: number, voice?: VoiceEnvelopes): ActorState {
-  const d = DIRECTION[sp];
-  const st: ActorState = { ...REST, ...d.base };
-  for (const k of d.keys) if (t >= k.t) Object.assign(st, k.set);
-  st.blink = d.blinks.some((b) => t >= b && t < b + BLINK);
-  const off = d.breathOff.some(([a, b]) => t >= a && t < b);
-  if (!off) {
-    const ph = (((t + (sp === 'host' ? 0.4 : 1.7)) % d.breathPeriod) + d.breathPeriod) % d.breathPeriod / d.breathPeriod;
-    st.breath = ph > 0.5 && ph < 0.78 ? 1 : 0;
-  }
-  st.mouthOpen = mouthOpenAt(sp, t, voice);
-  return st;
-}
-
-export class Interview {
-  private host = new Actor(CAST.host);
-  private guest = (() => {
-    const a = new Actor(CAST.guest);
-    a.bigEyes = true;
-    return a;
-  })();
+export class InterviewScene {
+  private host: Actor;
+  private guest: Actor;
   private world = createBuffer(WORLD_W, WORLD_H);
   private fh = createBuffer(32, 48);
   private fg = createBuffer(32, 48);
+
+  constructor(private cfg: InterviewConfig) {
+    this.host = new Actor(cfg.cast.host);
+    this.guest = new Actor(cfg.cast.guest);
+    this.guest.bigEyes = cfg.guestBigEyes;
+  }
+
+  /** Is the speaker's mouth open at time t (typed blips, or the recorded voice's loudness)? */
+  mouthOpenAt(sp: Speaker, t: number, voice?: VoiceEnvelopes): boolean {
+    for (const l of this.cfg.lines) {
+      if (l.speaker !== sp) continue;
+      const v = voice?.get(l.id);
+      if (v) {
+        const i = Math.floor((t - l.at) * v.rate);
+        if (i >= 0 && i < v.env.length) return v.env[i] > 0.18;
+        continue;
+      }
+      const { chars, times, end } = lineTimes(l);
+      if (t < l.at || t > end + 0.05) continue;
+      let i = -1;
+      for (let k = 0; k < times.length; k++) if (times[k] <= t) i = k;
+      if (i < 0) return false;
+      const ch = chars[i];
+      // vowels open the mouth for the length of their blip; 'm' and 'h' hum with it shut
+      return VOWELS.has(ch) && t - times[i] < Math.min(0.1, 1 / l.cps);
+    }
+    return false;
+  }
+
+  actorState(sp: Speaker, t: number, voice?: VoiceEnvelopes): ActorState {
+    const d = this.cfg.direction[sp];
+    const st: ActorState = { ...REST, ...d.base };
+    for (const k of d.keys) if (t >= k.t) Object.assign(st, k.set);
+    st.blink = d.blinks.some((b) => t >= b && t < b + this.cfg.blink);
+    const off = d.breathOff.some(([a, b]) => t >= a && t < b);
+    if (!off) {
+      const ph = (((t + (sp === 'host' ? 0.4 : 1.7)) % d.breathPeriod) + d.breathPeriod) % d.breathPeriod / d.breathPeriod;
+      st.breath = ph > 0.5 && ph < 0.78 ? 1 : 0;
+    }
+    st.mouthOpen = this.mouthOpenAt(sp, t, voice);
+    return st;
+  }
 
   /** The set world at time t through a lens (exposed for QA). */
   worldAt(t: number, lens: 'wide' | 'tight', voice?: VoiceEnvelopes): Rgba {
@@ -67,23 +86,32 @@ export class Interview {
     const w = this.world;
     w.data.set((lens === 'tight' ? tightBackLayer() : L.back).data);
     blit(w, L.mid, 0, 0);
-    const a = this.host.seated(this.fh, actorState('host', t, voice));
-    const b = this.guest.seated(this.fg, actorState('guest', t, voice));
+    const a = this.host.seated(this.fh, this.actorState('host', t, voice));
+    const b = this.guest.seated(this.fg, this.actorState('guest', t, voice));
     keyLight(b, { hair: 26 });
     blit(w, a, HOST_AT.x, HOST_AT.y);
     blit(w, b, GUEST_AT.x, GUEST_AT.y);
     if (lens === 'wide') blit(w, L.front, 0, 0);
     drawSetLife(w, t, lens === 'wide');
-    const fr = Math.round(t * FPS);
-    if (Math.abs(t * FPS - fr) < 1e-3 && fr >= GLITCH_FRAME && fr < GLITCH_FRAME + GLITCH.length) glitch(w, fr - GLITCH_FRAME);
+    const g = this.cfg.glitch;
+    const fr = Math.round(t * this.cfg.fps);
+    if (Math.abs(t * this.cfg.fps - fr) < 1e-3 && fr >= g.frame && fr < g.frame + g.frames) glitch(w, fr - g.frame);
     return w;
   }
 
+  /** The picture only (world through the shot's framing or push-in, with its fade-in). */
   render(out: Rgba, shot: Shot, t: number, voice?: VoiceEnvelopes): void {
     const f = framingAt(shot, t);
     const w = this.worldAt(t, f.lens, voice);
     if (shot.fadeIn && t < shot.start + shot.fadeIn) fadeBuffer(w, Math.ceil((1 - (t - shot.start) / shot.fadeIn) * 6));
     shoot(out, w, f, BAR, OUT_H - BAR);
+  }
+
+  /** A whole interview shot: picture, overlay, cinema bars. */
+  drawShot(out: Rgba, shot: Shot, t: number, voice?: VoiceEnvelopes, overlay?: Overlay): void {
+    this.render(out, shot, t, voice);
+    overlay?.draw(out, t);
+    letterbox(out);
   }
 }
 

@@ -1,0 +1,17 @@
+{
+  "name": "@realsies/trailer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Realsies trailers rendered in code: a generic engine, reusable scenes and one folder per trailer variant. Draws with the pixel engine in ../art/src.",
+  "type": "module",
+  "scripts": {
+    "render": "tsx scripts/render.ts",
+    "new": "tsx scripts/new.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

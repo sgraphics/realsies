@@ -1,60 +1,27 @@
-// The trailer as data: every shot, framing, line of dialogue, blink, glance and music cue, in
-// seconds from the first frame. The renderer, the audio synth, the contact sheet and script.md all
-// read this file, so a retime here moves picture, sound and paperwork together.
+// For realsies?: the trailer as data. Every shot, framing, line of dialogue, blink, glance and
+// music cue, in seconds from the first frame. The scenes, the soundtrack, the contact sheet and
+// script.md all read this file, so a retime here moves picture, sound and paperwork together.
 
-import type { ThemeId } from '../../../shared/protocol.ts';
-import { rngFrom, randomSeed } from '../../src/core/rng.ts';
-import type { ActorState } from './actor.ts';
+import type { ActorDirection } from '../../src/engine/actor.ts';
+import { beatGrid, type Framing, type Line, type Push, type Shot, type Speaker } from '../../src/engine/timeline.ts';
+import type { MontageCues } from '../../src/scenes/montage.ts';
+import type { ThemeId } from '../../src/art.ts';
 
 export const FPS = 24;
 export const TITLE = 'Realsies: For Realsies? (launch trailer)';
+export const THEME: ThemeId = 'space';
 
 // ---------------------------------------------------------------- music grid
 
 export const BPM = 136;
-export const BEAT = 60 / BPM;
 /** Downbeat of the chiptune (bar 1, beat 1): the montage's first frame. */
 export const MUSIC_AT = 37.4;
+const grid = beatGrid(BPM, MUSIC_AT);
+export const BEAT = grid.beatLen;
 /** Absolute time of a beat counted from the music's first downbeat (negative = pickup). */
-export const beat = (n: number) => MUSIC_AT + n * BEAT;
+export const beat = grid.beat;
 
 // ---------------------------------------------------------------- shots
-
-export type ShotKind = 'black' | 'set' | 'card' | 'lobby' | 'countdown' | 'chat' | 'call' | 'end';
-
-export interface Framing {
-  /** World point at the centre of the frame and output pixels per world pixel. */
-  cx: number;
-  cy: number;
-  k: number;
-  /** wide = full detail and the foreground camera; tight = defocused room behind the faces. */
-  lens: 'wide' | 'tight';
-}
-
-/** A slow push-in: from one framing to another in whole-number (even) zoom steps. */
-export interface Push {
-  from: Framing;
-  to: Framing;
-  t0: number;
-  t1: number;
-}
-
-export interface Shot {
-  id: string;
-  kind: ShotKind;
-  start: number;
-  end: number;
-  /** Shot list line for script.md. */
-  title: string;
-  notes: string;
-  framing?: Framing;
-  push?: Push;
-  /** Fade in from black over this many seconds (palette steps). */
-  fadeIn?: number;
-  fadeOut?: number;
-  /** Time used for the contact sheet (absolute). */
-  key: number;
-}
 
 const T = {
   wide: 2.5,
@@ -122,7 +89,7 @@ export const SHOTS: Shot[] = [
   {
     id: 's07', kind: 'set', start: T.cui, end: T.cus, key: 26.3,
     title: 'Close-up: interviewer',
-    notes: 'Close-up, held. Typing dots. The key line, slowly: "you\'re For realsies?"',
+    notes: 'Close-up, held. Typing dots. The key line, slowly: "you\'re for realsies?"',
     framing: { cx: 114, cy: 87.5, k: 40, lens: 'tight' },
   },
   {
@@ -170,54 +137,16 @@ export const SHOTS: Shot[] = [
 ];
 
 export const DURATION = T.out;
-export const THEME: ThemeId = 'space';
-
-export function shotAt(t: number): Shot {
-  for (const s of SHOTS) if (t >= s.start && t < s.end) return s;
-  return SHOTS[SHOTS.length - 1];
-}
-
-const easeInOut = (u: number) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
-
-/** The framing of a set shot at time t: fixed, or along its push-in in even zoom steps. */
-export function framingAt(s: Shot, t: number): Framing {
-  if (!s.push) return s.framing!;
-  const p = s.push;
-  const u = easeInOut((t - p.t0) / (p.t1 - p.t0));
-  const k = Math.round((p.from.k + (p.to.k - p.from.k) * u) / 2) * 2;
-  // keep the eyes' point fixed on screen as the zoom steps: interpolate the centre by zoom, not time
-  const z = (k - p.from.k) / (p.to.k - p.from.k);
-  return { cx: p.from.cx + (p.to.cx - p.from.cx) * z, cy: p.from.cy + (p.to.cy - p.from.cy) * z, k, lens: p.to.lens };
-}
+/** Where the close-ups begin (the high beating sines join the drone here). */
+export const CLOSE_UPS = T.cui;
 
 // ---------------------------------------------------------------- dialogue
-
-export type Speaker = 'host' | 'guest';
-
-export interface Line {
-  /** Voice file id: art/scripts/trailer/voice/<id>.wav replaces the blips for this line. */
-  id: string;
-  speaker: Speaker | 'card' | 'tagline';
-  /** Shown verbatim; '|' marks a held pause while typing (not shown). */
-  text: string;
-  /** When the text starts typing into its bubble. */
-  at: number;
-  /** Characters per second while typing. */
-  cps: number;
-  /** Seconds of typing dots before the bubble (chat lines). */
-  lead?: number;
-  /** Semitone offsets per character for the blip voice (optional). */
-  tune?: number[];
-}
-
-/** Seconds a '|' pause holds. */
-export const PAUSE = 0.55;
 
 export const LINES: Line[] = [
   { id: 'human-being', speaker: 'guest', text: "I'm engaging with you as a human being.", at: 8.2, cps: 17, lead: 0.75 },
   { id: 'deceive', speaker: 'guest', text: 'Why would I deceive you.', at: 15.55, cps: 15, lead: 0.7 },
   { id: 'good-chat', speaker: 'host', text: 'Ohkay,| OK good chat', at: 19.6, cps: 12, lead: 1.05 },
-  { id: 'for-realsies', speaker: 'host', text: "you're For realsies?", at: 24.05, cps: 11, lead: 0.85 },
+  { id: 'for-realsies', speaker: 'host', text: "you're for realsies?", at: 24.05, cps: 11, lead: 0.85 },
   { id: 'always', speaker: 'guest', text: "I'm always for realsies", at: 28.0, cps: 15, lead: 0.7 },
   { id: 'can-you-tell', speaker: 'card', text: 'Can you tell?', at: 35.0, cps: 14 },
   { id: 'tagline', speaker: 'tagline', text: "Come and guess if she's for realsies.", at: beat(17.5), cps: 30 },
@@ -227,52 +156,14 @@ export const LINES: Line[] = [
 export const CHAT = LINES.filter((l) => l.speaker === 'host' || l.speaker === 'guest');
 /** The chat slides away as the push-in begins. */
 export const CHAT_AWAY = 30.3;
-
-/** Timeline of a line: when each visible character appears (pauses applied). */
-export function lineTimes(l: Line): { chars: string[]; times: number[]; end: number } {
-  const chars: string[] = [];
-  const times: number[] = [];
-  let t = l.at;
-  for (const ch of l.text) {
-    if (ch === '|') {
-      t += PAUSE;
-      continue;
-    }
-    chars.push(ch);
-    times.push(t);
-    t += 1 / l.cps;
-  }
-  return { chars, times, end: t };
-}
-
-/** Characters of a line visible at time t. */
-export function typedCount(l: Line, t: number): number {
-  const { times } = lineTimes(l);
-  let n = 0;
-  while (n < times.length && times[n] <= t) n++;
-  return n;
-}
-
-export function lineShown(l: Line): string {
-  return l.text.replace(/\|/g, '');
-}
+export const CARD_LINE = LINES.find((l) => l.id === 'can-you-tell')!;
+export const TAGLINE = LINES.find((l) => l.id === 'tagline')!;
 
 // ---------------------------------------------------------------- actor direction
 
-export interface Direction {
-  /** Base state, then timed changes (held until the next change). */
-  base: Partial<ActorState>;
-  keys: { t: number; set: Partial<ActorState> }[];
-  /** Blink start times (each lasts BLINK seconds). */
-  blinks: number[];
-  /** Breathing: one 1-px drop per period, off inside these windows. */
-  breathPeriod: number;
-  breathOff: [number, number][];
-}
-
 export const BLINK = 0.125;
 
-export const DIRECTION: Record<Speaker, Direction> = {
+export const DIRECTION: Record<Speaker, ActorDirection> = {
   host: {
     base: { look: 1 },
     keys: [
@@ -310,7 +201,7 @@ export const DRONE = { from: 2.5, to: GLITCH[0] };
 export const SWELL = { from: PUSH.t0 - 0.2, to: GLITCH[0] };
 
 /** Montage beats (in beats from MUSIC_AT). */
-export const CUE = {
+export const CUE: MontageCues & { logo: number; url: number; chime: number } = {
   lobbySelect: 1.5,
   count3: 3,
   count2: 4,
@@ -328,6 +219,9 @@ export const CUE = {
   url: 20.5,
   chime: 24,
 };
+/** First beats of the montage's chat and call shots (the chat clock, the fuse, the call timer). */
+export const CHAT_BEAT = 7;
+export const CALL_BEAT = 12;
 
 export const CHAT_LINES = {
   me: 'ok be honest. are you a bot?',
@@ -345,15 +239,5 @@ export const END = {
   brow: 21.5,
 };
 
-/** Gamertags for the lobby; index 2 is her. */
-export const TAGS = ['Maple330', 'Kraken246', 'Juniper31', 'Coconut843', 'Pebble242', 'Lobster99', 'Acorn132', 'Lemon89', 'Rhino946', 'Walnut81'];
-export const GUEST_SEAT = 2;
-export const GUEST_TAG = TAGS[GUEST_SEAT];
-
-/** The lobby's rig seeds by seat ('' at her seat), shared by the montage and the end card. */
-export function lobbySeeds(): string[] {
-  const r = rngFrom('trailer-lobby');
-  return TAGS.map((_, i) => (i === GUEST_SEAT ? '' : randomSeed(r)));
-}
-/** The two lobby characters who join her on the end card. */
-export const END_SEATS = { left: 3, right: 4 };
+/** End-card text: the URL under the tagline. */
+export const URL_TEXT = 'realsies.lol';

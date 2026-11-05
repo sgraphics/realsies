@@ -2,8 +2,8 @@
 // own font is 3x5 capitals only). Cap height 7, x-height 5, two descender rows. Every glyph is
 // authored here as ASCII; nothing is copied from another font.
 
-import { type Rgba, px } from '../../src/core/buffer.ts';
-import type { Color } from '../../src/core/palette.ts';
+import { type Rgba, px } from '../art.ts';
+import type { Color } from '../art.ts';
 
 /** Rows per glyph box: 7 above the baseline (caps), 2 below (descenders). */
 export const FONT_ROWS = 9;
