@@ -4,7 +4,7 @@
 // Recorded voices (voice/<line-id>.wav, decoded by the build) replace a line's blips.
 
 import { writeFileSync } from 'node:fs';
-import { BEAT, CUE, DRONE, DURATION, END, GLITCH, LINES, MUSIC_AT, beat, lineTimes, type Line } from './storyboard.ts';
+import { BEAT, CUE, DRONE, DURATION, END, GLITCH, LINES, MUSIC_AT, PUSH, SHOTS, SWELL, beat, lineTimes, type Line } from './storyboard.ts';
 
 export const SR = 48000;
 
@@ -185,12 +185,47 @@ function drone(m: Mix): void {
     // unease up high in the close-ups: two sines beating
     s0 += (2 * Math.PI * 659.25) / SR;
     s1 += (2 * Math.PI * 662.1) / SR;
-    const hi = abs > 19.5 ? Math.min(1, (abs - 19.5) / 2.5) * (Math.sin(s0) + Math.sin(s1)) * 0.006 : 0;
+    const hi = abs > CLOSE_UPS ? Math.min(1, (abs - CLOSE_UPS) / 2.5) * (Math.sin(s0) + Math.sin(s1)) * 0.006 : 0;
     const lfo = 0.8 + 0.2 * Math.sin(2 * Math.PI * 0.11 * abs);
-    const swell = Math.min(1, t / 3.5) * (0.55 + 0.45 * Math.min(1, Math.max(0, (abs - 7) / 19)));
+    const swell = Math.min(1, t / 3.5) * (0.55 + 0.45 * Math.min(1, Math.max(0, (abs - 7) / (CLOSE_UPS + 3 - 7))));
     const cut = Math.min(1, (dur - t) / 0.008); // dead stop at the glitch, no click
     return ((Math.sin(p0) * 0.055 + Math.sin(p1) * 0.025 + body * 0.035) * lfo + hi * 0.7) * swell * Math.max(0, cut);
   });
+}
+
+/** Start of the close-ups (his "you're For realsies?"), where the high beating sines come in. */
+const CLOSE_UPS = SHOTS.find((s) => s.id === 's07')!.start;
+
+/**
+ * The low swell under the push-in: E1 and B1 sines and an octave of buzz rising through the
+ * whole-number zoom steps to the held beat on her eyes, a slow filtered rush on top, all cut dead
+ * by the glitch like the drone.
+ */
+function lowSwell(m: Mix): void {
+  const dur = SWELL.to - SWELL.from;
+  const hold = PUSH.t1 - SWELL.from;
+  let a = 0, b = 0, c = 0;
+  const sv = new Svf();
+  m.add(SWELL.from, dur + 0.01, 0, (_i, t) => {
+    a += (2 * Math.PI * 41.2) / SR;
+    b += (2 * Math.PI * 61.74) / SR;
+    c += (2 * Math.PI * 82.4 * (1 + 0.004 * Math.sin(t * 5))) / SR;
+    const rise = Math.min(1, t / hold);
+    const env = rise * rise * (3 - 2 * rise);
+    const rush = sv.next(white(), 120 + 900 * env, 2.2) * 0.05 * env;
+    const cut = Math.max(0, Math.min(1, (dur - t) / 0.008));
+    return (Math.sin(a) * 0.16 + Math.sin(b) * 0.07 + Math.tanh(Math.sin(c) * 3) * 0.035 + rush) * env * cut;
+  });
+}
+
+/** Soft keyboard ticks under a chat line's typing dots, on the speaker's side. */
+function typingTicks(m: Mix, l: Line): void {
+  const from = l.at - (l.lead ?? 0.7);
+  const pan = l.speaker === 'host' ? -0.4 : 0.4;
+  for (let k = 0, t = from + 0.06; t < l.at - 0.05; k++, t += 0.11 + ((k * 37) % 5) * 0.012) {
+    const bp = Biquad.make('bp', 3200 + (k % 3) * 500, 2);
+    m.add(t, 0.02, pan, (_n, u) => bp.next(white()) * ad(u, 0.0005, 0.02, 6) * 0.1);
+  }
 }
 
 const VOWEL = /[aeiouyAEIOUY]/;
@@ -495,7 +530,9 @@ export function synthesize(voices: VoiceClip[] = []): Stereo {
   const m = new Mix(DURATION + 0.05);
   roomTone(m);
   drone(m);
+  lowSwell(m);
   const voiced = new Set(voices.map((v) => v.id));
+  for (const l of LINES) if (l.speaker === 'host' || l.speaker === 'guest') typingTicks(m, l);
   for (const l of LINES) {
     if (voiced.has(l.id)) continue;
     if (l.speaker === 'host' || l.speaker === 'guest') blips(m, l);

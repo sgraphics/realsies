@@ -6,8 +6,8 @@ import { PAL, TRANSPARENT, luminance, type Color } from '../../src/core/palette.
 import { hash01 } from '../../src/core/rng.ts';
 import { Actor, CAST, REST, keyLight, type ActorState } from './actor.ts';
 import { setLayers, tightBackLayer, drawSetLife, HOST_AT, GUEST_AT, WORLD_W, WORLD_H } from './set.ts';
-import { shoot, letterbox, fadeBuffer, BAR, OUT_H } from './camera.ts';
-import { BLINK, DIRECTION, GLITCH, GLITCH_FRAME, LINES, FPS, lineTimes, type Shot, type Speaker } from './storyboard.ts';
+import { shoot, fadeBuffer, BAR, OUT_H } from './camera.ts';
+import { BLINK, DIRECTION, GLITCH, GLITCH_FRAME, LINES, FPS, framingAt, lineTimes, type Shot, type Speaker } from './storyboard.ts';
 
 /** Per-line voice envelopes (when a recorded voice replaces the blips). */
 export type VoiceEnvelopes = Map<string, { rate: number; env: Float32Array }>;
@@ -52,7 +52,11 @@ export function actorState(sp: Speaker, t: number, voice?: VoiceEnvelopes): Acto
 
 export class Interview {
   private host = new Actor(CAST.host);
-  private guest = new Actor(CAST.guest);
+  private guest = (() => {
+    const a = new Actor(CAST.guest);
+    a.bigEyes = true;
+    return a;
+  })();
   private world = createBuffer(WORLD_W, WORLD_H);
   private fh = createBuffer(32, 48);
   private fg = createBuffer(32, 48);
@@ -76,37 +80,26 @@ export class Interview {
   }
 
   render(out: Rgba, shot: Shot, t: number, voice?: VoiceEnvelopes): void {
-    const f = shot.framing!;
+    const f = framingAt(shot, t);
     const w = this.worldAt(t, f.lens, voice);
     if (shot.fadeIn && t < shot.start + shot.fadeIn) fadeBuffer(w, Math.ceil((1 - (t - shot.start) / shot.fadeIn) * 6));
     shoot(out, w, f, BAR, OUT_H - BAR);
-    letterbox(out);
   }
 }
 
 // ---------------------------------------------------------------- the glitch
 
 /**
- * Two frames of a tear across her face. Frame 0: bands of rows slide sideways, thin scanlines rip
- * across the whole picture, and her face flashes to a cyan and magenta negative. Frame 1: smaller
- * slides the other way, her pupils light up cyan, and a few dead pixels.
+ * Two frames of a tear through her eyes (the push-in ends on them). Frame 0: the rows of her eyes
+ * slide apart, the irises flash to a cyan and magenta negative, thin scanlines rip across the
+ * picture. Frame 1: the slide snaps back the other way and her irises glow like a screen, with a
+ * few dead pixels.
  */
 function glitch(w: Rgba, variant: number): void {
   const gx = GUEST_AT.x, gy = GUEST_AT.y;
-  // rows of the seated face: eyes at 19..22 (pupils 21..22), mouth at 24..26, chin at 28
+  // her big eyes sit on seated rows 18..22 (head rows 14..18), columns 9..22 of her box
+  const ex0 = gx + 9, ex1 = gx + 22, ey = gy + 18;
   const fx0 = gx - 2, fx1 = gx + 34;
-  const robotEyes = () => {
-    // the pupils (looking at the lens by now) light up
-    for (let y = gy + 20; y <= gy + 22; y++)
-      for (let x = gx + 11; x <= gx + 20; x++) if (get(w, x, y) === PAL.black) px(w, x, y, y === gy + 20 ? PAL.white : PAL.cyan);
-  };
-  const negativeRows = (y0: number, y1: number) => {
-    for (let y = y0; y <= y1; y++)
-      for (let x = fx0; x <= fx1; x++) {
-        const c = get(w, x, y);
-        if (c !== TRANSPARENT) px(w, x, y, negative(c));
-      }
-  };
   const shiftRows = (y0: number, y1: number, dx: number, x0 = 0, x1 = w.w) => {
     const src = new Uint8ClampedArray(w.data);
     for (let y = y0; y <= y1; y++)
@@ -119,26 +112,35 @@ function glitch(w: Rgba, variant: number): void {
         w.data[di + 3] = 255;
       }
   };
+  const eachEye = (fn: (x: number, y: number, c: Color) => void) => {
+    for (let y = ey; y <= ey + 4; y++)
+      for (let x = ex0; x <= ex1; x++) {
+        const c = get(w, x, y);
+        if (c !== TRANSPARENT) fn(x, y, c);
+      }
+  };
   if (variant === 0) {
-    // the tear: the eye band and the mouth band flash negative and slide apart
-    negativeRows(gy + 19, gy + 20);
-    negativeRows(gy + 25, gy + 26);
-    const bands: [number, number, number][] = [[11, 16, 2], [17, 18, -1], [19, 20, 4], [21, 23, -2], [24, 26, 3], [27, 29, -1]];
-    for (const [a, b, dx] of bands) shiftRows(gy + a, gy + b, dx, fx0 - 8, fx1 + 8);
-    // thin scanlines rip across the whole picture
-    for (const [y, dx] of [[gy + 13, 12], [gy + 22, -10], [gy + 28, 7]] as const) shiftRows(y, y, dx);
+    eachEye((x, y, c) => {
+      if (y === ey + 1 || y === ey + 2) px(w, x, y, negative(c));
+    });
+    const bands: [number, number, number][] = [[-2, -1, 1], [0, 0, 1], [1, 2, -2], [3, 3, 2], [4, 4, -1], [5, 6, 1]];
+    for (const [a, b, dx] of bands) shiftRows(ey + a, ey + b, dx, fx0 - 8, fx1 + 8);
+    for (const [y, dx] of [[ey - 1, 4], [ey + 3, -5]] as const) shiftRows(y, y, dx);
   } else {
-    // a frame later: the slide snaps the other way and her eyes glow like a screen
-    robotEyes();
-    const bands: [number, number, number][] = [[12, 18, -1], [19, 22, 2], [23, 24, -3], [25, 28, 1]];
-    for (const [a, b, dx] of bands) shiftRows(gy + a, gy + b, dx, fx0 - 8, fx1 + 8);
-    for (const [y, dx] of [[gy + 17, -6]] as const) shiftRows(y, y, dx);
-    // a few dead pixels around the face
+    // robot eyes: the irises glow cyan, the pupils and the highlights burn white
+    for (const x0 of [gx + 10, gx + 17])
+      for (let y = ey + 1; y <= ey + 3; y++)
+        for (let x = x0 + 1; x <= x0 + 3; x++) {
+          const c = get(w, x, y);
+          px(w, x, y, c === PAL.blue || c === PAL.blueDark ? PAL.cyan : PAL.white);
+        }
+    const bands: [number, number, number][] = [[0, 0, -1], [1, 2, 1], [3, 4, -1]];
+    for (const [a, b, dx] of bands) shiftRows(ey + a, ey + b, dx, fx0 - 8, fx1 + 8);
+    shiftRows(ey + 2, ey + 2, -3);
     for (let i = 0; i < 6; i++) {
-      const x = gx + 4 + Math.floor(hash01(91, i) * 24), y = gy + 11 + Math.floor(hash01(92, i) * 8) + (i % 2) * 10;
+      const x = ex0 - 2 + Math.floor(hash01(91, i) * 18), y = ey - 2 + Math.floor(hash01(92, i) * 9);
       const c = [PAL.hotRed, PAL.lime, PAL.cyan][i % 3];
       px(w, x, y, c);
-      px(w, x + 1, y, c);
     }
   }
 }

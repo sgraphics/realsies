@@ -6,13 +6,10 @@ import { PAL } from '../../src/core/palette.ts';
 import { Interview, type VoiceEnvelopes } from './interview.ts';
 import { renderMontage } from './montage.ts';
 import { renderEndCard } from './endcard.ts';
-import { fillOut, fadeBuffer, newFrame, rectOut, OUT_W, OUT_H, BAR } from './camera.ts';
+import { fillOut, fadeBuffer, newFrame, rectOut, letterbox, OUT_W, OUT_H } from './camera.ts';
 import { drawCentered, advanceTo, measure } from './font.ts';
-import { SHOTS, LINES, shotAt, typedCount, lineShown, lineTimes, type Shot } from './storyboard.ts';
-
-const SUB_SCALE = 6;
-/** Top of the subtitle glyph box (cap line), just above the lower bar. */
-const SUB_Y = OUT_H - BAR - 26 - 9 * SUB_SCALE;
+import { drawChat } from './chat.ts';
+import { SHOTS, LINES, shotAt, typedCount, lineShown, lineTimes } from './storyboard.ts';
 
 export class Renderer {
   private interview = new Interview();
@@ -28,7 +25,8 @@ export class Renderer {
         break;
       case 'set':
         this.interview.render(out, shot, t, this.voice);
-        this.subtitles(out, shot, t);
+        drawChat(out, t);
+        letterbox(out);
         break;
       case 'card':
         this.card(out, t);
@@ -41,16 +39,6 @@ export class Renderer {
     }
     if (shot.fadeOut && t > shot.end - shot.fadeOut) fadeBuffer(out, Math.ceil(((t - (shot.end - shot.fadeOut)) / shot.fadeOut) * 6));
     return out;
-  }
-
-  private subtitles(out: Rgba, shot: Shot, t: number): void {
-    for (const l of LINES) {
-      if (l.speaker !== 'host' && l.speaker !== 'guest') continue;
-      if (l.at < shot.start || l.at >= shot.end) continue;
-      if (t < l.at || t >= (l.until ?? shot.end)) continue;
-      const n = typedCount(l, t);
-      drawCentered(out, lineShown(l), OUT_W / 2, SUB_Y, { color: PAL.white, scale: SUB_SCALE, outline: PAL.black }, n);
-    }
   }
 
   private card(out: Rgba, t: number): void {
@@ -66,7 +54,7 @@ export class Renderer {
       const done = t > lineTimes(l).end;
       const on = !done || Math.floor((t - lineTimes(l).end) / 0.4) % 2 === 1;
       if (on) rectOut(out, x + (advanceTo(text, n) + (n ? 1 : 0)) * k, y, 4 * k, 7 * k, PAL.white);
-    } else if (Math.floor((t - 27.5) / 0.4) % 2 === 1) {
+    } else if (Math.floor((t - shotAt(t).start) / 0.4) % 2 === 1) {
       // before typing: just the blinking cursor where the line will start
       const x = Math.round((OUT_W / 2 - (measure(text) * k) / 2) / k) * k;
       rectOut(out, x, y, 4 * k, 7 * k, PAL.white);

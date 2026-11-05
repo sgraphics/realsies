@@ -3,7 +3,7 @@
 // sit. Standing frames still come from the stock Rig (lobby, chat, call, countdown).
 
 import { type Rgba, createBuffer, blit, get, px } from '../../src/core/buffer.ts';
-import { type Color, RAMPS, type Ramp, darker, lighter, TRANSPARENT } from '../../src/core/palette.ts';
+import { type Color, PAL, RAMPS, type Ramp, darker, lighter, TRANSPARENT } from '../../src/core/palette.ts';
 import { lookFromSeed, type Look } from '../../src/rig/look.ts';
 import { buildSprites, type LayerSprites } from '../../src/rig/build.ts';
 import { torsoSpan } from '../../src/rig/parts/body.ts';
@@ -118,13 +118,52 @@ export class Actor {
     const h = this.headBuf;
     h.data.fill(0);
     blit(h, s.head, 0, 0);
-    blit(h, s.eyes[st.blink ? 1 : 0], st.look, 0);
+    if (!this.bigEyes) blit(h, s.eyes[st.blink ? 1 : 0], st.look, 0);
     blit(h, s.mouth[st.mouthOpen ? 1 : 0], st.look, 0);
     if (!this.bald) blit(h, s.hair[0], 0, 0);
     if (s.hat) blit(h, s.hat[0], 0, 0);
+    if (this.bigEyes) drawBigEyes(h, st.blink, st.look, (RAMPS as Record<string, Ramp>)[this.look.ramps.skin]);
     if (st.tilt) shearHead(h, st.tilt, st.tiltDir);
     blit(out, h, 0, up);
     return out;
+  }
+
+  /** Large blue eyes with highlights (her interview look; the game sprite keeps its own eyes). */
+  bigEyes = false;
+}
+
+/**
+ * Big blue eyes, 5x5 each at x 10-14 and 17-21, rows 14-18 of the head: a black rim and lash,
+ * a blue iris lit cyan at the bottom, a pupil that follows `look`, a big white highlight top-left
+ * and a small second glint. Closed: a lashed line.
+ */
+export function drawBigEyes(h: Rgba, closed: boolean, look: number, skin: Ramp): void {
+  for (const [x0, outer] of [[10, 9], [17, 22]] as const) {
+    for (let y = 14; y <= 18; y++) for (let x = x0; x < x0 + 5; x++) px(h, x, y, skin[1]);
+    if (closed) {
+      for (let x = x0; x < x0 + 5; x++) px(h, x, 17, PAL.black);
+      px(h, outer, 16, PAL.black);
+      px(h, x0 + 1, 18, PAL.black);
+      px(h, x0 + 3, 18, PAL.black);
+      continue;
+    }
+    const rows = ['.KKK.', 'KbbbK', 'KBBBK', 'KCBCK', '.KKK.'];
+    rows.forEach((r, dy) =>
+      [...r].forEach((ch, dx) => {
+        const c = ch === 'K' ? PAL.black : ch === 'b' ? PAL.blueDark : ch === 'B' ? PAL.blue : ch === 'C' ? PAL.cyan : -2;
+        if (c !== -2) px(h, x0 + dx, 14 + dy, c);
+      }),
+    );
+    // the pupil, following the look
+    const p = x0 + 2 + Math.max(-1, Math.min(1, look));
+    px(h, p, 16, PAL.black);
+    px(h, p, 15, PAL.navyDark);
+    // highlights: big glint top-left, a small one low on the other side
+    px(h, x0 + 1, 15, PAL.white);
+    px(h, x0 + 3, 17, PAL.white);
+    // the lash flick at the outer corner
+    px(h, outer, 14, PAL.black);
+    px(h, outer, 13, PAL.black);
   }
 }
 
