@@ -21,6 +21,10 @@
       "culture": "uk"
     },
     "english": "native",
+    "languages": {
+      "en": "native",
+      "fr": "basic"
+    },
     "job": {
       "title": "barista",
       "phrase": "You're a barista at a small coffee place near Leeds station",

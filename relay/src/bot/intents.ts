@@ -6,7 +6,13 @@
 // in the history, so every request is the previous request + the previous reply + the player's new
 // lines + one new steering message. The set is finite and published (STEERING, docs/bot-api.md):
 // a verifier checks every non-player, non-reply message after message 1 against it byte for byte,
-// so nobody can ghost-write through the model. Changing a string means a new version.
+// so nobody can ghost-write through the model.
+//
+// Append-only: a published note never changes and never moves, so every past round stays verifiable;
+// new intents add notes at the end (changing or removing one would need steer-v2). History, sha256 of the
+// canonical catalogue JSON:
+//   2026-11-04  37 notes  9a87ff905c41b0e823a5842a052d20b8c4b22729b7f008b5bcd3d77baa023338
+//   2026-11-05  39 notes  + foreign/one, foreign/multi (STEERING_SHA256 below)
 import { sha256Hex } from '../crypto.js';
 import { INTENTS, LENGTHS, TOPICS, type Intent, type Length, type SayIntent, type Topic, kindOf } from './api.js';
 
@@ -27,6 +33,8 @@ const BODY: Record<Exclude<Intent, 'tangent'>, string> = {
   afterthought: 'Add a quick afterthought to your own last message, something you forgot to say, without repeating yourself.',
   clarify: 'Clarify or fix something you said earlier, the way people do when they reread their own text.',
   late_answer: 'Go back to something they said or asked earlier that you skipped, and answer it now, as if you only just noticed.',
+  foreign:
+    'Their last message is in a language you do not speak, and you cannot understand it. React the way a real person would; do not translate it, answer it or write in it.',
 };
 
 const TOPIC: Record<Topic, string> = {
@@ -93,7 +101,10 @@ function enumerate(): SteeringEntry[] {
   return out;
 }
 
-/** Every steering message steer-v1 can produce (37 strings). */
+/** The first published catalogue (37 notes): its canonical JSON hash, which the first 37 entries must keep. */
+export const STEERING_V1_37_SHA256 = '9a87ff905c41b0e823a5842a052d20b8c4b22729b7f008b5bcd3d77baa023338';
+
+/** Every steering message steer-v1 can produce (39 strings), in catalogue order. */
 export const STEERING: readonly SteeringEntry[] = Object.freeze(enumerate());
 const BY_TEXT = new Map(STEERING.map((e) => [e.text, e]));
 

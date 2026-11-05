@@ -7,6 +7,8 @@
 // the running shares toward those targets, so they hold whatever the player does. The bot reads
 // before it reacts, waits while the player is typing, speaks when the partner goes quiet, sometimes
 // double-texts, sometimes types and stops, and now and then deletes a draft when a new message lands.
+// When the partner's latest message is in a language the persona does not read (player_message.lang
+// against the card's languages), the answer is always the foreign intent: it cannot understand a word.
 // Persona traits (chatty, fast, curious, guarded, drift) move every dial; demo personas derive them
 // from their attributes, the Myers-Briggs letters included (src/persona/model.ts deriveTraits).
 //
@@ -19,6 +21,7 @@ import {
 } from './api.js';
 import { chance, createRng, lerp, pickR, uniformR, weighted, type Rng } from './rng.js';
 import { readMs } from './typing.js';
+import { MIN_LETTERS, readsLanguage } from './language.js';
 
 export interface PolicyConfig {
   /** target share of turns that probe (own goal) */
@@ -52,6 +55,8 @@ interface PMsg {
   id: string;
   text: string;
   at: number;
+  /** detected by the relay when clearly not English */
+  lang?: string;
 }
 
 const QUESTIONISH = /\?|\b(who|what|where|when|why|how|are you|r u|do you|did you|can you|you\s+a)\b/i;
@@ -164,7 +169,7 @@ export class DefaultBrainCore {
         if (e.on) this.playerTypingSince = e.at;
         return [];
       case 'player_message': {
-        const m = { id: e.id, text: e.text, at: e.at };
+        const m: PMsg = { id: e.id, text: e.text, at: e.at, lang: e.lang };
         this.playerCount++;
         this.selfStreak = 0;
         this.unanswered.push(m);
@@ -271,7 +276,7 @@ export class DefaultBrainCore {
       return [{ type: 'typing', on: true, ms: Math.round(ms) }];
     }
     let say = this.choose(plan.trigger);
-    if (this.remaining < 6500 && say.intent !== 'react') say = { intent: 'react', length: 'one' };
+    if (this.remaining < 6500 && say.intent !== 'react' && say.intent !== 'foreign') say = { intent: 'react', length: 'one' };
     this.plan = null;
     return [this.start(say)];
   }
@@ -308,6 +313,7 @@ export class DefaultBrainCore {
    * built up meanwhile is paid back on the next turn that has something to answer.
    */
   private choose(trigger: Trigger): SayIntent {
+    if (this.foreignPending()) return { intent: 'foreign', length: this.len('foreign') };
     if (trigger === 'opener' || (this.playerCount === 0 && this.botShown === 0)) return { intent: 'opener', length: this.len('opener') };
     if (trigger === 'verdict') return { intent: 'verdict', length: 'one' };
     const pt = this.probeTarget;
@@ -325,6 +331,20 @@ export class DefaultBrainCore {
     if (kind === 'direct') return this.chooseDirect();
     if (kind === 'aside') return this.chooseAside();
     return this.chooseProbe(trigger);
+  }
+
+  /**
+   * The partner's latest unanswered message is in a language the persona does not read. Short lines with no
+   * detected language ("??", "hallo?") do not decide; the newest one that is detected or long enough does.
+   * Personas that do not say which languages they read never get here.
+   */
+  private foreignPending(): boolean {
+    for (let i = this.unanswered.length - 1; i >= 0; i--) {
+      const m = this.unanswered[i];
+      if (m.lang) return readsLanguage(this.persona?.languages, m.lang) === false;
+      if ((m.text.match(/\p{L}/gu) ?? []).length >= MIN_LETTERS) return false;
+    }
+    return false;
   }
 
   private len(intent: Intent): Length {

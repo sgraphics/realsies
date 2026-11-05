@@ -22,6 +22,12 @@
     },
     "english": "good",
     "language": "Estonian",
+    "languages": {
+      "et": "native",
+      "en": "good",
+      "ru": "good",
+      "fi": "basic"
+    },
     "job": {
       "title": "truck mechanic",
       "phrase": "You're a truck mechanic",

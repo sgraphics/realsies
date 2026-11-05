@@ -11,8 +11,8 @@ import type { Config } from '../config.js';
 import type { Db } from '../db.js';
 import type { ChainAdapter, ChainConfig, Opening } from '../chain/types.js';
 import type { NearAi } from '../nearai/client.js';
-import { atRound, fromGenerated, type Persona } from '../personas.js';
-import { generateCast } from '../persona/generate.js';
+import { atRound, type Persona } from '../personas.js';
+import { buildCast } from '../persona/cast.js';
 import { chatCostUsd } from '../models.js';
 import {
   avatarSeed, botPreimage, chatTag, commitmentOf, handleOf, humanPreimage, newCharacterId, newSalt, newSecret,
@@ -528,16 +528,17 @@ export class Game implements BotHost {
   }
 
   /**
-   * This round's demo cast: the personas folder with each prompt composed for the round's start (local
-   * time, scene), plus GEN_PERSONAS fresh people from the round's castSeed (one level each). Remote-brain
-   * personas with their own prompt come through unchanged.
+   * This round's cast, prompts composed for the round's start (local time, scene). Demo bots: CAST_SIZE
+   * characters whose countries follow the Western mix, each a hand-written persona of that country or a
+   * person generated from the round's castSeed (src/persona/cast.ts), one level each. Personas driven by a
+   * remote brain play every round at each of their levels. CAST_SIZE 0: the personas folder as is.
    */
   castOf(r: RoundRec): Persona[] {
-    const fixed = this.personas.map((p) => atRound(p, r.startedAt));
-    if (!r.castSeed || this.cfg.genPersonas <= 0) return fixed;
-    const names = fixed.flatMap((p) => (p.person ? [p.person.name, p.person.nickname ?? ''] : [])).filter(Boolean);
-    const gen = generateCast(r.castSeed, this.cfg.genPersonas, r.startedAt, names).map((g) => fromGenerated(g, g.level, r.startedAt));
-    return [...fixed, ...gen];
+    const folder = this.personas.map((p) => atRound(p, r.startedAt));
+    if (!r.castSeed || this.cfg.castSize <= 0) return folder;
+    const remote = folder.filter((p) => p.brain.kind === 'remote');
+    const demo = this.personas.filter((p) => p.brain.kind === 'default' && p.person);
+    return [...remote, ...buildCast({ seed: r.castSeed, size: this.cfg.castSize, at: r.startedAt, hand: demo, pins: this.cfg.castPins })];
   }
 
   /** The persona a bot character plays: its committed snapshot, else (older rounds) the personas folder. */

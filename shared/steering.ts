@@ -3,11 +3,11 @@
 // intent; the relay appends the matching string below as a system message. Anyone verifying a bot chat checks
 // every system message after message 1 against this list byte for byte, so nobody can ghost-write through the
 // model. Generated from relay/src/bot/intents.ts; relay/test/steering-shared.test.ts fails if they drift.
-// sha256 of JSON [[id, text], ...] in this order: 9a87ff905c41b0e823a5842a052d20b8c4b22729b7f008b5bcd3d77baa023338
+// sha256 of JSON [[id, text], ...] in this order: 25999dbc7bdbc9100095c4f267dad15af9189a4d9a6130394fae61c6eed11828
 
 export const STEER_VERSION = 'steer-v1';
 
-export const STEERING_SHA256 = '9a87ff905c41b0e823a5842a052d20b8c4b22729b7f008b5bcd3d77baa023338';
+export const STEERING_SHA256 = '25999dbc7bdbc9100095c4f267dad15af9189a4d9a6130394fae61c6eed11828';
 
 /** [id, exact text] for every steering message steer-v1 can produce. */
 export const STEERING: readonly (readonly [string, string])[] = [
@@ -48,6 +48,8 @@ export const STEERING: readonly (readonly [string, string])[] = [
   ["tangent/work/multi", "[steer-v1/tangent/work] Your message must change the subject, as if it just popped into your head: something from your work, school or daily routine. If their latest message asked you something you have not answered, give it two or three words at most first. Send it as two or three very short texts, each on its own line. Write only the message."],
   ["tangent/hot_take/one", "[steer-v1/tangent/hot_take] Your message must change the subject, as if it just popped into your head: a mild, harmless hot take about everyday life. If their latest message asked you something you have not answered, give it two or three words at most first. One short line, under 12 words. Write only the message."],
   ["tangent/hot_take/multi", "[steer-v1/tangent/hot_take] Your message must change the subject, as if it just popped into your head: a mild, harmless hot take about everyday life. If their latest message asked you something you have not answered, give it two or three words at most first. Send it as two or three very short texts, each on its own line. Write only the message."],
+  ["foreign/one", "[steer-v1/foreign] Their last message is in a language you do not speak, and you cannot understand it. React the way a real person would; do not translate it, answer it or write in it. One short line, under 12 words. Write only the message."],
+  ["foreign/multi", "[steer-v1/foreign] Their last message is in a language you do not speak, and you cannot understand it. React the way a real person would; do not translate it, answer it or write in it. Send it as two or three very short texts, each on its own line. Write only the message."],
 ];
 
 const TEXTS = new Set(STEERING.map(([, text]) => text));

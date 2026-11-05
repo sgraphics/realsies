@@ -107,7 +107,8 @@ test('a bot trace names the persona, so it is refused until the round settles', 
     await assert.rejects(http(base, 'GET', `/api/dev/bot-trace/${m.chatId}?account=eve.realsies.testnet`), /409.*not_settled/);
     await assert.rejects(http(base, 'GET', `/api/dev/bot-trace/${m.chatId}?account=ana.realsies.testnet`), /403.*forbidden/);
     const st = await http<any>(base, 'GET', '/api/bot/steering');
-    assert.equal(st.entries.length, 37);
+    assert.equal(st.entries.length, 39, 'the 37 first notes and the two foreign ones');
+    assert.ok(st.intents.includes('foreign'), 'remote brains learn the foreign intent');
     assert.equal(st.sha256, STEERING_SHA256);
     c.close();
   } finally {
@@ -472,14 +473,19 @@ test('persona cards: every demo bot has one; results and bundles reveal it only 
       if (s.round?.ready && (s.characters['human-committed'] ?? 0) >= 1) break;
       await new Promise((r) => setTimeout(r, 200));
     }
-    // the round's cast: the personas folder plus fresh generated people, all with a full card
+    // the round's cast: CAST_SIZE demo characters, hand-written and generated people one level each, all with a full card
     const bots = [...app.game.chars.get(R)!.values()].filter((x: CharacterRec) => x.kind === 'bot');
     const gen = bots.filter((x) => x.persona?.source === 'generated');
-    assert.equal(new Set(gen.map((x) => x.personaId)).size, app.cfg.genPersonas, 'GEN_PERSONAS generated personas, one character each');
+    assert.equal(bots.length, app.cfg.castSize, 'CAST_SIZE demo characters');
+    assert.equal(new Set(bots.map((x) => x.personaId)).size, bots.length, 'each persona plays one character a round');
+    assert.deepEqual([1, 2, 3].map((l) => bots.filter((x) => x.level === l).length), [13, 13, 13]);
+    assert.ok(gen.length > 0, 'generated people in the cast');
     for (const x of bots) assert.equal(cardProblem(x.card), null, `${x.personaId}: card ${JSON.stringify(x.card)}`);
+    for (const x of bots) assert.ok(x.persona?.languages?.en, `${x.personaId}: the languages it reads are stored with the character`);
     assert.ok(app.db.loadRound<any>(R)?.castSeed, 'the cast seed is stored with the round');
-    const again = app.game.castOf(app.game.rounds.get(R)!).filter((p) => p.source === 'generated');
-    assert.deepEqual(again.map((p) => [p.id, p.promptHash]), gen.map((x) => [x.personaId, x.promptHash]), 'the seed regenerates the same people and prompts');
+    const again = app.game.castOf(app.game.rounds.get(R)!);
+    const key = (xs: [string, string][]) => xs.map((x) => x.join(' ')).sort();
+    assert.deepEqual(key(again.map((p) => [p.id, p.promptHash])), key(bots.map((x) => [x.personaId!, x.promptHash!])), 'the seed regenerates the same cast and prompts');
 
     c.send({ t: 'pick_seat', level: 1, seatIndex: 0, mode: 'paid', coins: 5 });
     const m = (await c.waitT('matched', 10_000)).chat;

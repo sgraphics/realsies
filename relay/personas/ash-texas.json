@@ -22,6 +22,10 @@
       "culture": "us"
     },
     "english": "native",
+    "languages": {
+      "en": "native",
+      "es": "basic"
+    },
     "job": {
       "title": "warehouse worker",
       "phrase": "You work night shifts at a warehouse outside San Antonio",

@@ -1,8 +1,125 @@
 // Pools for the demo persona generator (src/persona/generate.ts) and the style rules (src/persona/model.ts).
-// Plain data: places with their time zones, cultures (first language, laughter, slang, natural English
-// slips, names, food), jobs by age, scenes by time of day, hobbies mapped onto the steering topics.
-import type { Topic } from '../bot/api.js';
+// Plain data: the nationality mix of a round's cast (COUNTRY_WEIGHTS, proportional to a Western player
+// base), places with their time zones, cultures (first language, laughter, slang, natural English slips,
+// names, food), the other languages people of each culture know (CULTURE_LANGS), jobs by age, scenes by
+// time of day, hobbies mapped onto the steering topics.
+import type { LangLevel, Topic } from '../bot/api.js';
 import type { JobCat, Slot } from './model.js';
+
+// ---------- nationality mix ----------
+
+/**
+ * Target share of a round's demo characters by country, in percent, proportional to a Western player base:
+ * the US about a third, the UK 12, Canada, Australia, Ireland and New Zealand 14 together, Western and
+ * Northern Europe 25, Latin America 6, everyone else 10. Every country here has places below; a
+ * hand-written persona from a country missing here never plays.
+ */
+export const COUNTRY_WEIGHTS: Readonly<Record<string, number>> = {
+  US: 33,
+  UK: 12,
+  Canada: 5.5, Australia: 4.5, Ireland: 2.5, 'New Zealand': 1.5,
+  Germany: 5.5, France: 3.25, Netherlands: 2, Belgium: 0.6, Sweden: 1.4, Denmark: 0.9, Norway: 0.9, Finland: 0.9, Spain: 2.4, Italy: 2,
+  Portugal: 0.7, Poland: 1.2, Estonia: 0.4, Latvia: 0.25, Lithuania: 0.3, Austria: 0.6, Switzerland: 0.6, Czechia: 0.4, Greece: 0.25,
+  Romania: 0.25, Hungary: 0.2,
+  Mexico: 2.2, Brazil: 2.2, Argentina: 0.8, Colombia: 0.4, Chile: 0.2, Peru: 0.2,
+  India: 2, Philippines: 1.5, 'South Africa': 1, Nigeria: 1, Singapore: 0.5, Kenya: 0.4, Japan: 0.8, 'South Korea': 0.7, Malaysia: 0.3,
+  Taiwan: 0.3, Vietnam: 0.3, Thailand: 0.3, Indonesia: 0.3, Turkey: 0.3, Egypt: 0.2, Morocco: 0.1,
+};
+
+export const REGIONS = ['US', 'UK', 'Canada, Australia, Ireland, New Zealand', 'Western and Northern Europe', 'Latin America', 'rest of the world'] as const;
+export type Region = (typeof REGIONS)[number];
+const REGION_LISTS: [Region, string[]][] = [
+  ['US', ['US']],
+  ['UK', ['UK']],
+  ['Canada, Australia, Ireland, New Zealand', ['Canada', 'Australia', 'Ireland', 'New Zealand']],
+  ['Western and Northern Europe', ['Germany', 'France', 'Netherlands', 'Belgium', 'Sweden', 'Denmark', 'Norway', 'Finland', 'Spain', 'Italy', 'Portugal', 'Poland', 'Estonia', 'Latvia', 'Lithuania', 'Austria', 'Switzerland', 'Czechia', 'Greece', 'Romania', 'Hungary']],
+  ['Latin America', ['Mexico', 'Brazil', 'Argentina', 'Colombia', 'Chile', 'Peru']],
+];
+export const regionOf = (country: string): Region => REGION_LISTS.find(([, cs]) => cs.includes(country))?.[0] ?? 'rest of the world';
+
+// ---------- languages besides the first ----------
+
+export interface LangOpt {
+  /** ISO 639 code (src/persona/languages.ts) */
+  lang: string;
+  /** chance to know it at all (times the schooling factor for school languages) */
+  p: number;
+  /** level weights */
+  lv: [LangLevel, number][];
+  /** only at these ages */
+  ages?: [number, number];
+  /** learned at school: likelier the more schooling the job implies */
+  school?: boolean;
+}
+
+export interface LangSpec {
+  /** a second first language some people grow up with (Yoruba in Lagos, Afrikaans or Zulu in South Africa) */
+  alsoNative?: { p: number; pick: [string, number][] };
+  other?: LangOpt[];
+}
+
+/** How much a job's schooling raises the chance of a school language. */
+export const SCHOOLING: Record<JobCat, number> = {
+  student: 1.25, teacher: 1.3, office: 1.15, creative: 1.1, care: 1, school: 1, shop: 0.9, shift: 0.9, home: 0.95, trade: 0.75, driver: 0.75, night: 0.8, retired: 0.85,
+};
+
+const B: [LangLevel, number][] = [['basic', 1]];
+const BG: [LangLevel, number][] = [['basic', 0.8], ['good', 0.2]];
+const sch = (lang: string, p: number, lv: [LangLevel, number][] = BG, ages?: [number, number]): LangOpt => ({ lang, p, lv, ages, school: true });
+const opt = (lang: string, p: number, lv: [LangLevel, number][], ages?: [number, number]): LangOpt => ({ lang, p, lv, ages });
+
+/** Per culture (CULTURES key): the languages people know besides their first one and English. */
+export const CULTURE_LANGS: Record<string, LangSpec> = {
+  us: { other: [sch('es', 0.32, [['basic', 0.8], ['good', 0.15], ['fluent', 0.05]], [16, 54]), sch('es', 0.15, [['basic', 0.9], ['good', 0.1]], [55, 90]), sch('fr', 0.07, B), sch('de', 0.03, B)] },
+  uk: { other: [sch('fr', 0.45, [['basic', 0.9], ['good', 0.1]]), sch('es', 0.18, [['basic', 0.85], ['good', 0.15]]), sch('de', 0.1, B)] },
+  ie: { other: [opt('ga', 0.85, [['basic', 0.8], ['good', 0.15], ['fluent', 0.05]]), sch('fr', 0.35), sch('de', 0.1, B)] },
+  au: { other: [sch('fr', 0.1, B), sch('it', 0.07, B), sch('ja', 0.08, B), sch('id', 0.04, B)] },
+  nz: { other: [opt('mi', 0.3, [['basic', 0.85], ['good', 0.15]]), sch('fr', 0.1, B), sch('ja', 0.05, B)] },
+  ca: { other: [sch('fr', 0.55, [['basic', 0.72], ['good', 0.2], ['fluent', 0.08]]), sch('es', 0.08, B)] },
+  za: { alsoNative: { p: 0.55, pick: [['af', 0.4], ['zu', 0.35], ['xh', 0.25]] }, other: [opt('af', 0.35, [['basic', 0.5], ['good', 0.5]]), opt('zu', 0.15, B)] },
+  ng: { alsoNative: { p: 0.85, pick: [['yo', 0.5], ['ig', 0.3], ['ha', 0.2]] }, other: [opt('pcm', 0.75, [['fluent', 0.8], ['good', 0.2]])] },
+  sg: { alsoNative: { p: 0.6, pick: [['zh', 0.7], ['ms', 0.2], ['ta', 0.1]] }, other: [opt('zh', 0.3, [['good', 0.6], ['basic', 0.4]]), sch('ms', 0.3, B)] },
+  ke: {},
+  in: { other: [opt('hi', 0.9, [['fluent', 0.5], ['good', 0.4], ['basic', 0.1]])] },
+  ph: { other: [opt('tl', 0.9, [['fluent', 0.7], ['good', 0.3]])] },
+  my: {},
+  br: { other: [sch('es', 0.3)] },
+  pt: { other: [opt('es', 0.35, [['basic', 0.6], ['good', 0.4]]), sch('fr', 0.25)] },
+  es: { other: [sch('fr', 0.2, [['basic', 0.85], ['good', 0.15]])] },
+  mx: { other: [sch('fr', 0.04, B)] },
+  ar: { other: [opt('it', 0.06, B), opt('pt', 0.08, B)] },
+  co: { other: [opt('pt', 0.05, B)] },
+  cl: { other: [opt('pt', 0.05, B)] },
+  pe: { other: [opt('pt', 0.05, B)] },
+  de: { other: [sch('fr', 0.3, [['basic', 0.75], ['good', 0.25]]), sch('es', 0.15)] },
+  nl: { other: [sch('de', 0.7, [['basic', 0.5], ['good', 0.4], ['fluent', 0.1]]), sch('fr', 0.35)] },
+  nordic: { other: [sch('de', 0.2, B), sch('fr', 0.1, B), sch('es', 0.1, B)] },
+  fi: { other: [sch('sv', 0.7, [['basic', 0.7], ['good', 0.25], ['fluent', 0.05]]), sch('de', 0.12, B), opt('et', 0.03, B)] },
+  ee: {
+    other: [
+      opt('ru', 0.85, [['good', 0.5], ['fluent', 0.25], ['basic', 0.25]], [40, 90]), opt('ru', 0.45, [['basic', 0.6], ['good', 0.4]], [16, 39]),
+      opt('fi', 0.35, [['basic', 0.65], ['good', 0.3], ['fluent', 0.05]]), sch('de', 0.12, B),
+    ],
+  },
+  lv: { other: [opt('ru', 0.9, [['good', 0.5], ['fluent', 0.4], ['basic', 0.1]], [40, 90]), opt('ru', 0.55, [['basic', 0.5], ['good', 0.5]], [16, 39]), sch('de', 0.1, B)] },
+  lt: { other: [opt('ru', 0.85, [['good', 0.55], ['fluent', 0.3], ['basic', 0.15]], [40, 90]), opt('ru', 0.4, [['basic', 0.6], ['good', 0.4]], [16, 39]), opt('pl', 0.1, B), sch('de', 0.1, B)] },
+  pl: { other: [sch('de', 0.25), opt('ru', 0.5, BG, [45, 90])] },
+  cz: { other: [opt('sk', 0.9, [['good', 0.6], ['fluent', 0.4]]), sch('de', 0.25), opt('ru', 0.5, B, [50, 90])] },
+  fr: { other: [sch('es', 0.35), sch('de', 0.12, B), sch('it', 0.08, B)] },
+  it: { other: [sch('fr', 0.2), sch('es', 0.2)] },
+  gr: { other: [sch('de', 0.1, B), sch('fr', 0.08, B)] },
+  tr: { other: [opt('de', 0.15, BG)] },
+  kr: { other: [sch('ja', 0.12, [['basic', 0.85], ['good', 0.15]]), sch('zh', 0.06, B)] },
+  jp: { other: [opt('ko', 0.04, B)] },
+  tw: { other: [sch('ja', 0.15, B)] },
+  vn: {},
+  th: {},
+  id: {},
+  eg: { other: [sch('fr', 0.1, B)] },
+  ma: { other: [opt('fr', 0.85, [['good', 0.5], ['fluent', 0.4], ['basic', 0.1]]), opt('es', 0.1, B)] },
+  ro: { other: [sch('fr', 0.3), opt('it', 0.1, B), opt('es', 0.1, B)] },
+  hu: { other: [sch('de', 0.3), opt('ru', 0.4, B, [50, 90])] },
+};
 
 export interface Culture {
   /** first language ("English" for native speakers) */
@@ -33,10 +150,10 @@ export const CULTURES: Record<string, Culture> = {
     laughYoung: ['lol', 'lmao', 'lmaooo', 'LMAO'], laughOld: ['haha', 'lol', 'LOL', 'ha'],
     slangYoung: ['fr', 'lowkey', 'bet', 'no cap'],
     names: {
-      w: ['Madison', 'Kayla', 'Brianna', 'Jasmine', 'Megan', 'Taylor', 'Hannah', 'Destiny', 'Alyssa', 'Morgan', 'Kaitlyn', 'Danielle'],
-      wOld: ['Linda', 'Patricia', 'Debbie', 'Karen', 'Barbara', 'Cheryl', 'Brenda', 'Donna'],
-      m: ['Tyler', 'Brandon', 'Jake', 'Austin', 'Marcus', 'Kevin', 'Josh', 'Dylan', 'Cody', 'Trevor', 'Jalen', 'Devin'],
-      mOld: ['Gary', 'Dennis', 'Ron', 'Rick', 'Steve', 'Bill', 'Larry', 'Doug'],
+      w: ['Madison', 'Kayla', 'Brianna', 'Jasmine', 'Megan', 'Taylor', 'Hannah', 'Destiny', 'Alyssa', 'Morgan', 'Kaitlyn', 'Danielle', 'Ashley', 'Emily', 'Sarah', 'Jessica', 'Samantha', 'Olivia', 'Abigail', 'Mackenzie', 'Paige', 'Kendall', 'Gabby', 'Courtney'],
+      wOld: ['Linda', 'Patricia', 'Debbie', 'Karen', 'Barbara', 'Cheryl', 'Brenda', 'Donna', 'Susan', 'Sharon', 'Nancy', 'Pam', 'Joyce', 'Carol'],
+      m: ['Tyler', 'Brandon', 'Jake', 'Austin', 'Marcus', 'Kevin', 'Josh', 'Dylan', 'Cody', 'Trevor', 'Jalen', 'Devin', 'Ryan', 'Matt', 'Chris', 'Nick', 'Ethan', 'Logan', 'Caleb', 'Hunter', 'Mason', 'Zach', 'Andre', 'Darnell'],
+      mOld: ['Gary', 'Dennis', 'Ron', 'Rick', 'Steve', 'Bill', 'Larry', 'Doug', 'Mike', 'Jim', 'Tom', 'Greg', 'Wayne', 'Terry'],
     },
     food: {
       breakfast: ['a bagel', 'a bowl of cereal', 'a breakfast burrito', 'a granola bar and coffee'],
@@ -49,9 +166,9 @@ export const CULTURES: Record<string, Culture> = {
     laughYoung: ['lol', 'haha', 'lmao', 'hahaha'], laughOld: ['haha', 'ha', 'lol'],
     slang: ['mate', 'cheers', 'proper', 'knackered', 'quid', 'reckon'], slangYoung: ['peak', 'bare'],
     names: {
-      w: ['Chloe', 'Amy', 'Jess', 'Ellie', 'Holly', 'Lauren', 'Abbie', 'Georgia', 'Becky', 'Freya'],
+      w: ['Chloe', 'Amy', 'Jess', 'Ellie', 'Holly', 'Lauren', 'Abbie', 'Georgia', 'Becky', 'Freya', 'Emily', 'Katie', 'Charlotte', 'Rosie', 'Lucy', 'Millie', 'Jade', 'Hannah'],
       wOld: ['Susan', 'Jean', 'Pauline', 'Carol', 'Janet', 'Linda'],
-      m: ['Callum', 'Jack', 'Liam', 'Ryan', 'Tom', 'Kieran', 'Connor', 'Jamie', 'Lewis', 'Ollie'],
+      m: ['Callum', 'Jack', 'Liam', 'Ryan', 'Tom', 'Kieran', 'Connor', 'Jamie', 'Lewis', 'Ollie', 'Josh', 'Harry', 'Ben', 'Sam', 'Dan', 'Alfie', 'George', 'Reece'],
       mOld: ['Keith', 'Graham', 'Colin', 'Trevor', 'Derek', 'Nigel'],
     },
     food: {
@@ -91,7 +208,7 @@ export const CULTURES: Record<string, Culture> = {
     language: 'English', native: true,
     laughYoung: ['lol', 'haha', 'lmao'], laughOld: ['haha', 'lol'],
     slang: ['eh'],
-    names: { w: ['Madison', 'Brittany', 'Kaitlyn', 'Emilie', 'Avery', 'Chloe'], m: ['Tyler', 'Logan', 'Mathieu', 'Kyle', 'Owen', 'Liam'] },
+    names: { w: ['Madison', 'Brittany', 'Kaitlyn', 'Emilie', 'Avery', 'Chloe', 'Jessica', 'Hailey', 'Megan', 'Sarah'], m: ['Tyler', 'Logan', 'Mathieu', 'Kyle', 'Owen', 'Liam', 'Connor', 'Brandon', 'Ethan', 'Jacob'] },
     food: { breakfast: ['a breakfast sandwich from Tim Hortons'], lunch: ['poutine', 'a wrap'], dinner: ['butter chicken', 'pasta'] },
   },
   za: {
@@ -248,6 +365,19 @@ export const CULTURES: Record<string, Culture> = {
     names: { w: ['Kadri', 'Liis', 'Triin', 'Kertu'], m: ['Rasmus', 'Kristjan', 'Siim', 'Tanel'] },
     food: { breakfast: ['rye bread and coffee'], lunch: ['soup and rye bread'], dinner: ['pork and sauerkraut'] },
   },
+  lv: {
+    language: 'Latvian', native: false, level: [0.4, 0.45, 0.15], slips: SLIP_ARTICLES,
+    laughYoung: ['haha', 'hah'], laughOld: ['haha'],
+    names: { w: ['Anna', 'Laura', 'Elīna', 'Kristīne', 'Liene', 'Madara'], m: ['Jānis', 'Mārtiņš', 'Edgars', 'Andris', 'Roberts', 'Kārlis'] },
+    food: { breakfast: ['rye bread with butter and coffee'], lunch: ['grey peas with bacon', 'soup and rye bread'], dinner: ['potatoes and a pork chop'] },
+  },
+  lt: {
+    language: 'Lithuanian', native: false, level: [0.4, 0.45, 0.15], slips: SLIP_ARTICLES,
+    laughYoung: ['haha', 'chaha'], laughOld: ['haha'],
+    names: { w: ['Gabija', 'Ieva', 'Austėja', 'Rūta', 'Eglė', 'Greta'], m: ['Lukas', 'Mantas', 'Tomas', 'Darius', 'Jonas', 'Matas'] },
+    food: { breakfast: ['dark bread and coffee'], lunch: ['cold beetroot soup', 'cepelinai'], dinner: ['kugelis'] },
+    teams: ['Žalgiris'],
+  },
   pl: {
     language: 'Polish', native: false, level: [0.3, 0.5, 0.2],
     slips: "you skip 'a' and 'the' now and then and mix up tenses a little",
@@ -374,10 +504,12 @@ export interface Place {
   tz: string;
   culture: string;
   w: number;
-  /** first language override (India, Philippines) */
+  /** first language override (India, Philippines, the Nordics, Belgium) */
   language?: string;
   slang?: string[];
   teams?: string[];
+  /** languages people here know on top of their culture's (CULTURE_LANGS) */
+  langs?: LangOpt[];
 }
 
 const us = (city: string, region: string, tz: string, slang?: string[], teams?: string[]): Place => ({ city, region, country: 'US', tz, culture: 'us', w: 2.5, slang, teams });
@@ -402,7 +534,7 @@ export const PLACES: Place[] = [
   uk('Manchester', undefined, ['buzzing'], ['City', 'United']),
   uk('Bristol', undefined, ['gert'], ['Bristol City']),
   uk('Glasgow', 'Scotland', ['wee', 'aye'], ['Celtic', 'Rangers']),
-  uk('Cardiff', 'Wales', ['tidy', 'cwtch'], ['Cardiff City']),
+  { ...uk('Cardiff', 'Wales', ['tidy', 'cwtch'], ['Cardiff City']), langs: [opt('cy', 0.25, [['basic', 0.3], ['good', 0.4], ['fluent', 0.3]])] },
   uk('Newcastle', undefined, ['canny', 'howay'], ['Newcastle']),
   p('Dublin', 'Ireland', 'Europe/Dublin', 'ie', 1.6),
   p('Cork', 'Ireland', 'Europe/Dublin', 'ie', 1.2),
@@ -434,7 +566,7 @@ export const PLACES: Place[] = [
   p('Lisbon', 'Portugal', 'Europe/Lisbon', 'pt'),
   p('Porto', 'Portugal', 'Europe/Lisbon', 'pt', 0.7),
   p('Madrid', 'Spain', 'Europe/Madrid', 'es'),
-  p('Valencia', 'Spain', 'Europe/Madrid', 'es', 0.7),
+  p('Valencia', 'Spain', 'Europe/Madrid', 'es', 0.7, { langs: [opt('ca', 0.5, [['good', 0.5], ['fluent', 0.3], ['native', 0.2]])] }),
   p('Seville', 'Spain', 'Europe/Madrid', 'es', 0.7),
   p('Monterrey', 'Mexico', 'America/Monterrey', 'mx', 0.8),
   p('Puebla', 'Mexico', 'America/Mexico_City', 'mx', 0.7),
@@ -450,11 +582,16 @@ export const PLACES: Place[] = [
   p('Vienna', 'Austria', 'Europe/Vienna', 'de', 0.8, { teams: ['Rapid'] }),
   p('Utrecht', 'Netherlands', 'Europe/Amsterdam', 'nl', 0.8),
   p('Rotterdam', 'Netherlands', 'Europe/Amsterdam', 'nl', 0.8),
-  p('Gothenburg', 'Sweden', 'Europe/Stockholm', 'nordic', 0.7, { language: 'Swedish' }),
-  p('Aarhus', 'Denmark', 'Europe/Copenhagen', 'nordic', 0.6, { language: 'Danish' }),
-  p('Bergen', 'Norway', 'Europe/Oslo', 'nordic', 0.6, { language: 'Norwegian' }),
+  p('Antwerp', 'Belgium', 'Europe/Brussels', 'nl', 1, { language: 'Dutch', teams: ['Antwerp'], langs: [sch('fr', 0.85, [['basic', 0.3], ['good', 0.5], ['fluent', 0.2]])] }),
+  p('Zurich', 'Switzerland', 'Europe/Zurich', 'de', 1, { teams: ['FC Zürich'], langs: [sch('fr', 0.6, [['basic', 0.5], ['good', 0.4], ['fluent', 0.1]]), sch('it', 0.2, B)] }),
+  p('Gothenburg', 'Sweden', 'Europe/Stockholm', 'nordic', 0.7, { language: 'Swedish', langs: [opt('no', 0.85, [['good', 0.7], ['basic', 0.3]]), opt('da', 0.7, [['basic', 0.6], ['good', 0.4]])] }),
+  p('Aarhus', 'Denmark', 'Europe/Copenhagen', 'nordic', 0.6, { language: 'Danish', langs: [opt('no', 0.85, [['good', 0.7], ['basic', 0.3]]), opt('sv', 0.75, [['basic', 0.5], ['good', 0.5]])] }),
+  p('Bergen', 'Norway', 'Europe/Oslo', 'nordic', 0.6, { language: 'Norwegian', langs: [opt('sv', 0.85, [['good', 0.7], ['basic', 0.3]]), opt('da', 0.8, [['good', 0.6], ['basic', 0.4]])] }),
   p('Tampere', 'Finland', 'Europe/Helsinki', 'fi', 0.6),
+  p('Tallinn', 'Estonia', 'Europe/Tallinn', 'ee', 0.6),
   p('Tartu', 'Estonia', 'Europe/Tallinn', 'ee', 0.5),
+  p('Riga', 'Latvia', 'Europe/Riga', 'lv', 1),
+  p('Vilnius', 'Lithuania', 'Europe/Vilnius', 'lt', 1),
   p('Kraków', 'Poland', 'Europe/Warsaw', 'pl', 0.9),
   p('Wrocław', 'Poland', 'Europe/Warsaw', 'pl', 0.7),
   p('Brno', 'Czechia', 'Europe/Prague', 'cz', 0.6),

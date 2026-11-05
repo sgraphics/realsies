@@ -23,6 +23,9 @@
       "culture": "us"
     },
     "english": "native",
+    "languages": {
+      "en": "native"
+    },
     "job": {
       "title": "retired school librarian",
       "phrase": "You're a retired school librarian",

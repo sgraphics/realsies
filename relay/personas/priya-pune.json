@@ -22,6 +22,11 @@
     },
     "english": "fluent",
     "language": "Marathi",
+    "languages": {
+      "mr": "native",
+      "hi": "fluent",
+      "en": "fluent"
+    },
     "job": {
       "title": "software tester",
       "phrase": "You're a software tester at an IT company",

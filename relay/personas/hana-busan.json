@@ -22,6 +22,11 @@
     },
     "english": "good",
     "language": "Korean",
+    "languages": {
+      "ko": "native",
+      "en": "good",
+      "ja": "basic"
+    },
     "job": {
       "title": "florist",
       "phrase": "You run a small flower shop",

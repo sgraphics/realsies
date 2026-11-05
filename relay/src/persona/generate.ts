@@ -1,16 +1,20 @@
 // Fresh demo personas for every round, from a seeded RNG (the round's castSeed, stored in the DB), so a
 // player who plays round after round keeps meeting new people. Same seed, index and start time, same
-// person. Every attribute is drawn so it fits the others: the job fits the age, names fit the culture and
-// the age, the family fits the life stage, the scene fits the job and the local time of day, the food fits
-// the culture and the hour, the temperament follows E/I with noise, interests follow job, hobbies, age
-// and letters. The style is then derived from all of it (src/persona/model.ts) and stored with the person.
+// person. The country comes from the round's cast plan (src/persona/cast.ts) or, alone, from the Western
+// mix in COUNTRY_WEIGHTS; the city is drawn within it. Every attribute is drawn so it fits the others: the
+// job fits the age, names fit the culture and the age, the languages fit the place, the age and the
+// schooling the job implies, the family fits the life stage, the scene fits the job and the local time of
+// day, the food fits the culture and the hour, the temperament follows E/I with noise, interests follow
+// job, hobbies, age and letters. The style is then derived from all of it (src/persona/model.ts) and
+// stored with the person.
 import type { Level } from '../../../shared/protocol.js';
-import { TOPICS, type Topic } from '../bot/api.js';
+import { TOPICS, type Languages, type Topic } from '../bot/api.js';
 import { chance, createRng, pickR, type Rng } from '../bot/rng.js';
 import {
-  CARS, COMMUTES, CULTURES, DETAILS, GENERIC_FOOD, HOBBIES, JOBS, NEUTRAL_NAMES, PETS, PLACES, QUIRKS, SCENES, SUBJECTS, TRIPS,
-  type Culture, type Place,
+  CARS, COMMUTES, COUNTRY_WEIGHTS, CULTURE_LANGS, CULTURES, DETAILS, GENERIC_FOOD, HOBBIES, JOBS, NEUTRAL_NAMES, PETS, PLACES, QUIRKS, SCENES,
+  SCHOOLING, SUBJECTS, TRIPS, type Culture, type Place,
 } from './data.js';
+import { codeOfLanguage } from './languages.js';
 import {
   deriveStyle, letters, localTime, MOODS, pickSome, pickW,
   type Device, type EnglishLevel, type Gender, type JobCat, type Person, type Slot, type Temperament,
@@ -189,6 +193,34 @@ function drawInterests(rng: Rng, age: number, mbti: string, job: Partial<Record<
   return out;
 }
 
+/** A city in the country (by the places' weights), or a country from the Western mix first. */
+export function drawPlace(rng: Rng, country?: string): Place {
+  const c = country ?? pickW(rng, Object.entries(COUNTRY_WEIGHTS));
+  const here = PLACES.filter((x) => x.country === c);
+  return pickW(rng, (here.length ? here : PLACES).map((x) => [x, x.w] as [Place, number]));
+}
+
+/**
+ * Every language the person reads: the first one (English for native speakers), English at its level, a
+ * second first language for some (Yoruba in Lagos), then the culture's and the place's other languages,
+ * by age and, for school languages, by how much schooling the job implies.
+ */
+export function drawLanguages(rng: Rng, place: Place, c: Culture, age: number, cat: JobCat, english: EnglishLevel): Languages {
+  const first = english === 'native' ? 'en' : codeOfLanguage(place.language ?? c.language) ?? 'en';
+  const out: Languages = { [first]: 'native' };
+  if (english !== 'native') out.en = english;
+  const spec = CULTURE_LANGS[place.culture] ?? {};
+  if (spec.alsoNative && chance(rng, spec.alsoNative.p)) {
+    const l = pickW(rng, spec.alsoNative.pick);
+    if (!out[l]) out[l] = 'native';
+  }
+  for (const o of [...(spec.other ?? []), ...(place.langs ?? [])]) {
+    if (out[o.lang] || (o.ages && (age < o.ages[0] || age > o.ages[1]))) continue;
+    if (chance(rng, Math.min(0.95, o.p * (o.school ? SCHOOLING[cat] : 1)))) out[o.lang] = pickW(rng, o.lv);
+  }
+  return out;
+}
+
 function drawMood(rng: Rng, slot: Slot): { mood: string; why: string } {
   const mood = pickW(rng, Object.entries(MOODS).map(([k, m]) => [k, m.slots?.includes(slot) ? 2 : 1] as [string, number]));
   return { mood, why: pickR(rng, MOODS[mood].why) };
@@ -199,6 +231,8 @@ export interface GenOptions {
   at: number;
   /** first names already in the cast (lowercase) */
   avoidNames?: Set<string>;
+  /** the country (a COUNTRY_WEIGHTS key) the cast plan drew for this slot; drawn from the weights if absent */
+  country?: string;
 }
 
 /** One person from (seed, index). Deterministic. */
@@ -207,7 +241,7 @@ export function generatePersona(seed: string, index: number, opts: GenOptions): 
   const avoid = opts.avoidNames ?? new Set<string>();
   const age = drawAge(rng);
   const gender = pickW<Gender>(rng, [['woman', 0.48], ['man', 0.48], ['nonbinary', 0.04]]);
-  const place = pickW(rng, PLACES.map((x) => [x, x.w] as [Place, number]));
+  const place = drawPlace(rng, opts.country);
   const c = CULTURES[place.culture];
   const english = drawEnglish(rng, c, age);
   const mbti = drawMbti(rng);
@@ -215,6 +249,7 @@ export function generatePersona(seed: string, index: number, opts: GenOptions): 
   const name = firstName(rng, c, gender, age, avoid);
   avoid.add(name.toLowerCase());
   const job = drawJob(rng, age, english);
+  const languages = drawLanguages(rng, place, c, age, job.cat, english);
   const family = drawFamily(rng, c, gender, age, avoid);
   const device = drawDevice(rng, age, job.cat);
   const { likes, topics } = drawLikes(rng, age, mbti, place, c);
@@ -230,6 +265,7 @@ export function generatePersona(seed: string, index: number, opts: GenOptions): 
     home: { city: place.city, region: place.region, country: place.country, tz: place.tz, culture: place.culture },
     english,
     language: english === 'native' ? undefined : place.language ?? c.language,
+    languages,
     job: { title: job.title, phrase: job.phrase, cat: job.cat },
     family: family.text,
     commute: drawCommute(rng, age, job.cat),

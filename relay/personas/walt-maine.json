@@ -22,6 +22,10 @@
       "culture": "us"
     },
     "english": "native",
+    "languages": {
+      "en": "native",
+      "fr": "basic"
+    },
     "job": {
       "title": "retired lobsterman",
       "phrase": "You're a retired lobsterman",

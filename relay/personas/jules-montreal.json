@@ -23,6 +23,10 @@
       "culture": "ca"
     },
     "english": "native",
+    "languages": {
+      "en": "native",
+      "fr": "native"
+    },
     "job": {
       "title": "freelance illustrator",
       "phrase": "You're a freelance illustrator",

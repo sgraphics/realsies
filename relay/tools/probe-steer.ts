@@ -35,6 +35,14 @@ const CTX: Record<string, ChatTurn[]> = {
     { role: 'assistant', content: 'nice, never been. jealous of the weather' },
     { role: 'user', content: 'haha yeah its sunny today' },
   ],
+  // a line in another language (for the foreign intent, and for personas who do read it)
+  et: [{ role: 'user', content: 'Tere! Kuidas sul läheb? Kust sa pärit oled?' }],
+  de: [{ role: 'user', content: 'Hallo! Wie geht es dir? Woher kommst du?' }],
+  es: [
+    { role: 'user', content: 'hey' },
+    { role: 'assistant', content: 'hi there!' },
+    { role: 'user', content: 'Yo vivo en Valencia y hoy hace mucho calor. ¿Qué estás haciendo ahora?' },
+  ],
 };
 const history = CTX[opt('--ctx') ?? 'q'];
 let usd = 0;

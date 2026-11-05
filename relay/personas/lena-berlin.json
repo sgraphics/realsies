@@ -22,6 +22,10 @@
     },
     "english": "fluent",
     "language": "German",
+    "languages": {
+      "de": "native",
+      "en": "fluent"
+    },
     "job": {
       "title": "marine biology PhD student",
       "phrase": "You're doing a PhD in marine biology in Berlin, even though Berlin has no sea, which people always joke about",

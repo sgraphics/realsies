@@ -122,6 +122,8 @@ export interface PlayerModel {
   /** probability of going quiet for 15 to 25 s instead of answering */
   quietP: number;
   cps: [number, number];
+  /** what the player writes, picked at random; default a mix of short English questions and statements */
+  lines?: readonly string[];
 }
 
 export const DEFAULT_PLAYER: PlayerModel = { opensP: 0.4, answerP: 0.85, doubleP: 0.15, quietP: 0.1, cps: [3, 6] };
@@ -174,10 +176,10 @@ export async function simulateChat(o: {
   const playerTurn = async (delay: number) => {
     await sleepOn(clock, delay);
     if (clock.now() >= endsAt || playerBusy) return;
-    await playerSays(chance(rng, 0.4) ? pickR(rng, QUESTIONS) : pickR(rng, STATEMENTS));
+    await playerSays(P.lines ? pickR(rng, P.lines) : chance(rng, 0.4) ? pickR(rng, QUESTIONS) : pickR(rng, STATEMENTS));
     if (chance(rng, P.doubleP)) {
       await sleepOn(clock, uniformR(rng, 400, 1500));
-      if (clock.now() < endsAt && !playerBusy) await playerSays(pickR(rng, STATEMENTS));
+      if (clock.now() < endsAt && !playerBusy) await playerSays(pickR(rng, P.lines ?? STATEMENTS));
     }
   };
 

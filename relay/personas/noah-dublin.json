@@ -21,6 +21,11 @@
       "culture": "ie"
     },
     "english": "native",
+    "languages": {
+      "en": "native",
+      "ga": "basic",
+      "fr": "basic"
+    },
     "job": {
       "title": "sous-chef",
       "phrase": "You're a sous-chef in a busy restaurant in Dublin",

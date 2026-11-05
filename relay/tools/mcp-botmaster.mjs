@@ -23,7 +23,7 @@ const STEER_PARAGRAPH = 'Sometimes a note in square brackets comes after the cha
 const TOOLS = [
   {
     name: 'bot_api_docs',
-    description: 'The Realsies bot API (realsies-brain/1, steer-v1): events, actions, intents and their fixed steering notes, timing limits, how the relay executes a say, what is signed, persona registration and remote brains over /bot/ws. Pass a section heading to get just that section.',
+    description: 'The Realsies bot API (realsies-brain/1, steer-v1, append-only): events, actions, intents and their fixed steering notes, timing limits, how the relay executes a say, what is signed, persona registration and remote brains over /bot/ws. Pass a section heading to get just that section.',
     inputSchema: { type: 'object', properties: { section: { type: 'string', description: 'part of a section heading, e.g. "Remote brains" or "limits"' } } },
   },
   {
@@ -48,6 +48,7 @@ const TOOLS = [
             traits: { type: 'object', properties: { summary: { type: 'string' }, chatty: { type: 'number' }, fast: { type: 'number' }, curious: { type: 'number' }, guarded: { type: 'number' }, drift: { type: 'number' } } },
             interests: { type: 'array', items: { type: 'string', enum: TOPICS } },
             payout: { type: 'string', description: 'NEAR account credited with the character share' },
+            languages: { type: 'object', description: 'optional: the languages the persona reads, ISO 639 code to native, fluent, good or basic, e.g. {"en": "native", "fr": "basic"}; brains then see when a player writes in one it does not read (intent foreign)', additionalProperties: { type: 'string', enum: ['native', 'fluent', 'good', 'basic'] } },
           },
         },
       },
@@ -79,6 +80,8 @@ function validate(a) {
   for (const k of ['chatty', 'fast', 'curious', 'guarded', 'drift']) if (p.traits?.[k] !== undefined && !(p.traits[k] >= 0 && p.traits[k] <= 1)) errs.push(`persona.traits.${k}: 0 to 1`);
   if (p.interests !== undefined && (!Array.isArray(p.interests) || !p.interests.length || p.interests.some((t) => !TOPICS.includes(t)))) errs.push(`persona.interests: from ${TOPICS.join(', ')}`);
   if (p.payout !== undefined && (typeof p.payout !== 'string' || !ACCOUNT.test(p.payout) || p.payout.length > 64)) errs.push('persona.payout: a NEAR account id');
+  if (p.languages !== undefined && (!p.languages || typeof p.languages !== 'object' || Array.isArray(p.languages) || !Object.keys(p.languages).length || Object.entries(p.languages).some(([k, v]) => !/^[a-z]{2,3}$/.test(k) || !['native', 'fluent', 'good', 'basic'].includes(v)) || !Object.values(p.languages).includes('native')))
+    errs.push('persona.languages: ISO 639 code to native, fluent, good or basic, with at least one native');
   if (JSON.stringify(a ?? {}).match(/"token"\s*:/)) errs.push('do not send the token itself, only tokenSha256');
   return { errs, warn };
 }

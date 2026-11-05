@@ -15,6 +15,8 @@
 //   traits.summary                     one line about the persona (not sent anywhere)
 //   traits.chatty/fast/curious/guarded/drift   0..1 dials for the default brain when it stands in (default 0.5)
 //   interests                          tangent topics, from TOPICS in src/bot/api.ts
+//   languages                          optional, ISO 639 code to level ({"en": "native"}); lets brains react to lines
+//                                      in a language the persona does not read (the foreign intent)
 //   payout                             account credited with the character's share (default: the bots account)
 //   brain                              "default" or { "remote": "<botmaster name>" }
 import fs from 'node:fs';
@@ -22,10 +24,11 @@ import path from 'node:path';
 import type { Level } from '../../shared/protocol.js';
 import { promptHash } from './formats.js';
 import { MODELS } from './models.js';
-import { TOPICS, type PersonaTraits, type Topic } from './bot/api.js';
+import { TOPICS, type Languages, type PersonaTraits, type Topic } from './bot/api.js';
 import { createRng } from './bot/rng.js';
 import { cardOf, deriveCps, deriveStyle, deriveTraits, parsePerson, summaryOf, type Person, type RevealCard, type Style } from './persona/model.js';
 import { composePrompt } from './persona/prompt.js';
+import { parseLanguages } from './persona/languages.js';
 import type { GeneratedPersona } from './persona/generate.js';
 
 export type BrainRef = { kind: 'default' } | { kind: 'remote'; botmaster: string };
@@ -41,6 +44,8 @@ export interface Persona {
   traits: PersonaTraits;
   summary: string;
   interests: Topic[];
+  /** the languages the persona reads (demo personas always; remote prompts if their file says so) */
+  languages?: Languages;
   brain: BrainRef;
   /** payout account for this persona's characters; undefined = the configured bots account */
   payout?: string;
@@ -73,6 +78,7 @@ export function fromPerson(base: { id: string; levels: Level[]; model: string; b
     traits,
     summary: summaryOf(person),
     interests: [...person.interests],
+    languages: { ...person.languages },
     person,
     style,
     card: cardOf(person, style),
@@ -131,6 +137,7 @@ export function parsePersona(raw: any, where: string, at = Date.now()): Persona 
     },
     summary,
     interests: [...new Set(interests)],
+    languages: raw.languages === undefined ? undefined : parseLanguages(raw.languages, `${where} languages`),
     brain,
     payout: raw.payout,
     source: 'prompt',

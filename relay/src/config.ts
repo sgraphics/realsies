@@ -39,8 +39,14 @@ export interface Config {
   callSeconds: number;
   /** full-screen 3-2-1 before every chat: chat_started carries startedAt = now + this; say is refused until then */
   countdownSeconds: number;
-  /** demo personas generated fresh each round from the round's seed, on top of relay/personas (one level each) */
-  genPersonas: number;
+  /**
+   * demo bot characters per round, over the three levels: each one's country from the Western mix
+   * (src/persona/data.ts COUNTRY_WEIGHTS), played by a hand-written persona of that country or a person
+   * generated from the round's seed (src/persona/cast.ts); 0 = the personas folder as is, nobody generated
+   */
+  castSize: number;
+  /** hand-written persona ids forced into every cast (tests and smoke runs) */
+  castPins: string[];
   freeChatsPerDay: number;
   nearAiKey?: string;
   nearAiBase: string;
@@ -98,7 +104,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     chatSeconds: num('CHAT_SECONDS', 120),
     callSeconds: num('CALL_SECONDS', 20),
     countdownSeconds: num('COUNTDOWN_SECONDS', 3),
-    genPersonas: num('GEN_PERSONAS', 9),
+    castSize: num('CAST_SIZE', 39),
+    castPins: (env.CAST_PINS ?? '').split(',').map((x) => x.trim()).filter(Boolean),
     freeChatsPerDay: num('FREE_CHATS_PER_DAY', 0),
     nearAiKey: env.NEAR_AI_API_KEY || undefined,
     nearAiBase: (env.NEAR_AI_BASE || 'https://cloud-api.near.ai/v1').replace(/\/+$/, ''),
@@ -125,6 +132,6 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (!['auto', 'near', 'mock'].includes(cfg.chain)) throw new Error(`CHAIN must be auto, near or mock`);
   if (!['auto', 'real', 'mock'].includes(cfg.nearAi)) throw new Error(`NEAR_AI must be auto, real or mock`);
   if (!(cfg.countdownSeconds >= 0 && cfg.countdownSeconds <= 30)) throw new Error('COUNTDOWN_SECONDS must be from 0 to 30');
-  if (!(Number.isInteger(cfg.genPersonas) && cfg.genPersonas >= 0 && cfg.genPersonas <= 60)) throw new Error('GEN_PERSONAS must be a whole number from 0 to 60');
+  if (!(Number.isInteger(cfg.castSize) && cfg.castSize >= 0 && cfg.castSize <= 60)) throw new Error('CAST_SIZE must be a whole number from 0 to 60');
   return cfg;
 }

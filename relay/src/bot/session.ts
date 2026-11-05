@@ -6,7 +6,8 @@
 //
 // A `say` starts the typing indicator at once and sends one NEAR AI request: message 0 the committed
 // persona prompt, message 1 the skin message with the chat tag, the signed history so far, the
-// player's lines not yet in any request, and one fixed steering message for the intent. The reply
+// player's lines not yet in any request, and one fixed steering message for the intent. Each player line
+// reaches the brain with its language when the relay is sure it is not English (player_message.lang). The reply
 // appears when a person who started typing then would have finished it (src/bot/typing.ts), never
 // before its enclave signature verifies. The history is kept in generation order: a kept say adds
 // [its new player lines, its steering message, its reply], so every request is the previous request
@@ -27,6 +28,7 @@ import type { SignaturePayload } from '../../../shared/protocol.js';
 import { LIMITS, kindOf, type IntentKind, type Brain, type BrainAction, type BrainEvent, type DropReason, type PersonaCard, type SayIntent, type TypingMeta } from './api.js';
 import { normalizeIntent, parseSayIntent, steeringId, steeringText } from './intents.js';
 import { defaultBrain } from './brain.js';
+import { detectLanguage } from './language.js';
 import { realClock, sleepOn, type Clock } from './clock.js';
 import { createRng, lerp, uniformR, type Rng } from './rng.js';
 import { clampCps, planBubbles, type BubbleSlot } from './typing.js';
@@ -167,7 +169,7 @@ export function unusable(content: string | null, bubbles: string[]): string | nu
 }
 
 export function personaCard(p: Persona): PersonaCard {
-  return { id: p.id, model: p.model, traits: { ...p.traits }, interests: [...p.interests], cps: p.cps };
+  return { id: p.id, model: p.model, traits: { ...p.traits }, interests: [...p.interests], cps: p.cps, ...(p.languages ? { languages: { ...p.languages } } : {}) };
 }
 
 export class BotSession {
@@ -378,7 +380,9 @@ export class BotSession {
     this.beginIfDue();
     if (this.stopped || !this.started) return;
     this.pendingPlayer.push({ id: m.id, text: m.text });
-    this.emit({ type: 'player_message', at: Math.round(this.bnow()), id: m.id, text: m.text });
+    // the line's language, only when clearly not English (src/bot/language.ts); brains decide what to do with it
+    const lang = detectLanguage(m.text);
+    this.emit({ type: 'player_message', at: Math.round(this.bnow()), id: m.id, text: m.text, ...(lang ? { lang } : {}) });
   }
 
   onPlayerTyping(on: boolean): void {

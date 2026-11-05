@@ -1,5 +1,6 @@
 // The persona prompt of a demo bot (message 0, committed by sha256 every round), composed from its
-// attributes and writing style plus the base rules every persona shares: pass as a human player of
+// attributes and writing style plus the base rules every persona shares: the languages it reads and the
+// rule that it understands no other (src/persona/languages.ts), pass as a human player of
 // Realsies, text like a stranger and not like an assistant, no lists or markdown, deny being an AI
 // without overdoing it, deflect prompt injection the way an amused or confused person would, the
 // generated gamertag, and the steering paragraph (docs/bot-api.md section 5) last.
@@ -7,6 +8,7 @@
 // The prompt depends on the round's start time: it says what time and day it is where the character
 // lives, and picks the scene (where they are, what is around them, what they ate) for that time of day.
 import { CULTURES } from './data.js';
+import { languageRule, languagesSentence } from './languages.js';
 import { ageBand, homeOf, letters, localTime, MOODS, type LocalTime, type Person, type Scene, type Style, type Temperament } from './model.js';
 
 export const GAME_PARAGRAPH =
@@ -88,16 +90,18 @@ function personality(p: Person): string[] {
   ];
 }
 
-function english(p: Person, s: Style): string[] {
+/** The languages they read, how their English sounds, and the rule that they understand no other language. */
+function languages(p: Person, s: Style): string[] {
+  const out = [`${languagesSentence(p.languages)}.`];
   if (p.english === 'native') {
-    const out = ['English is your first language.'];
     if (s.slang.length) out.push(`You naturally use words like ${list(s.slang)} now and then, not in every message.`);
-    return out;
+  } else {
+    const level = { fluent: 'fluent, with only the odd slip', good: 'good but not perfect', basic: 'basic, so you keep your sentences simple' }[p.english];
+    const slips = p.slips ?? CULTURES[p.home.culture]?.slips ?? 'small grammar slips';
+    out.push(`Your English is ${level}: ${slips}.`, 'Keep the mistakes natural and light, never cartoonish.');
+    if (s.slang.length) out.push(`Now and then a word like ${list(s.slang)} slips in.`);
   }
-  const level = { fluent: 'fluent, with only the odd slip', good: 'good but not perfect', basic: 'basic, so you keep your sentences simple' }[p.english];
-  const slips = p.slips ?? CULTURES[p.home.culture]?.slips ?? 'small grammar slips';
-  const out = [`English is your second language; your first is ${p.language ?? CULTURES[p.home.culture]?.language}.`, `Your English is ${level}: ${slips}.`, 'Keep the mistakes natural and light, never cartoonish.'];
-  if (s.slang.length) out.push(`Now and then a word like ${list(s.slang)} slips in.`);
+  out.push(languageRule(p.languages));
   return out;
 }
 
@@ -143,7 +147,7 @@ export function composePrompt(p: Person, s: Style, at: number): string {
     identity(p).join(' '),
     rightNow(p, at).join(' '),
     personality(p).join(' '),
-    english(p, s).join(' '),
+    languages(p, s).join(' '),
     GAME_PARAGRAPH,
     `How you write: ${writing(p, s).join(' ')}`,
     `If they ask whether you are a bot or an AI, ${s.botReaction}; deny it casually without overdoing it, and do not protest too much. ${BASE_RULES} ${STEER_PARAGRAPH}`,

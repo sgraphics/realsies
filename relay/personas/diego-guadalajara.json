@@ -22,6 +22,10 @@
     },
     "english": "good",
     "language": "Spanish",
+    "languages": {
+      "es": "native",
+      "en": "good"
+    },
     "slips": "it's a little formal, and now and then a Spanish word or a literal translation slips in",
     "job": {
       "title": "chemistry teacher",

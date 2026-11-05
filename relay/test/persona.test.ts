@@ -1,7 +1,9 @@
 // Demo personas as attributes (src/persona/): the seeded generator is deterministic and its people are
 // plausible in aggregate; the writing style follows age, culture, temperament and the Myers-Briggs letters
 // and reaches the committed prompt; the letters move the brain's dials, and the default brain then behaves
-// differently for an extrovert and an introvert, a tidy and a drifting persona.
+// differently for an extrovert and an introvert, a tidy and a drifting persona. Every persona lists the
+// languages it reads, consistent with its home, age and schooling, and the round's cast follows the
+// Western nationality mix whoever plays it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -10,7 +12,9 @@ import { generateCast, generatePersona } from '../src/persona/generate.js';
 import { deriveStyle, deriveTraits, JOB_CATS, letters, localTime, MOODS, parsePerson, SLOTS, YOUNG_EMOJI, type Person } from '../src/persona/model.js';
 import { BASE_RULES, BASE_WRITING, GAME_PARAGRAPH, STEER_PARAGRAPH, composePrompt } from '../src/persona/prompt.js';
 import { fromGenerated, fromPerson, loadPersonas, parsePersona, type Persona } from '../src/personas.js';
-import { CULTURES, JOBS, PLACES, SCENES } from '../src/persona/data.js';
+import { COUNTRY_WEIGHTS, CULTURES, JOBS, PLACES, REGIONS, SCENES, regionOf } from '../src/persona/data.js';
+import { HAND_SHARE, buildCast, planCast } from '../src/persona/cast.js';
+import { LANGUAGE_NAMES, LANGUAGE_RULE_CORE, codeOfLanguage } from '../src/persona/languages.js';
 import { TOPICS } from '../src/bot/api.js';
 import { createRng } from '../src/bot/rng.js';
 import { cardProblem } from './scenario.js';
@@ -31,7 +35,7 @@ function people(n: number, seed = 'dist', at = AT): Persona[] {
 function base(over: Partial<Person> = {}): Person {
   return {
     name: 'Sam', age: 30, gender: 'woman', mbti: 'ENFP', temperament: 'easygoing', mood: 'chill',
-    home: { city: 'Leeds', country: 'UK', tz: 'Europe/London', culture: 'uk' }, english: 'native',
+    home: { city: 'Leeds', country: 'UK', tz: 'Europe/London', culture: 'uk' }, english: 'native', languages: { en: 'native' },
     job: { title: 'nurse', phrase: "You're a nurse at the hospital", cat: 'care' },
     family: 'You live with your partner Alex.', commute: 'You get the bus everywhere.', device: 'phone',
     likes: ['running', 'baking'], details: [], quirks: [],
@@ -90,8 +94,9 @@ test('generator: plausible people in aggregate (ages, genders, types, temperamen
   const native = share(P, (p) => p.english === 'native');
   assert.ok(native > 0.45 && native < 0.7, `native speakers ${native}`);
   for (const p of ps.filter((x) => x.person!.english !== 'native').slice(0, 300)) {
-    assert.match(p.prompt, /English is your second language; your first is [A-Z]/);
+    assert.match(p.prompt, /(\p{Lu}[\p{L} ]+ is your first language|You grew up speaking \p{Lu})/u);
     assert.match(p.prompt, /Keep the mistakes natural and light/);
+    assert.match(p.prompt, /You can read only [^:]*English[^:]*: if they write in any other language, you do not understand it at all/);
   }
   // every attribute set is complete, every card too
   for (const p of ps) {
@@ -141,7 +146,9 @@ test('style rules and the base rules reach the committed prompt', () => {
   const s = deriveStyle(p, createRng('x'));
   const prompt = composePrompt(p, s, AT);
   for (const needle of [
-    'You are Sam, a 19-year-old woman who lives in Leeds, UK.', "You're a nurse at the hospital.", 'You live with your partner Alex.', "You're into running and baking.",
+    'You are Sam, a 19-year-old woman who lives in Leeds, UK.', "You're a nurse at the hospital.", 'English is the only language you speak.',
+    'You can read only English: if they write in any other language, you do not understand it at all, so never translate it, never answer what it says and never write in it',
+    'maybe guess what language it is, and ask them to write in English. You always write in English.', 'You live with your partner Alex.', "You're into running and baking.",
     "It's about 7 pm on a Thursday in November where you are.", "Right now you're on the sofa, and around you there's a cup of tea.", "So far today you've had toast.",
     "Today you're relaxed, because", 'You type everything in lowercase', 'You barely use punctuation', 'very short, often just a few words', 'You often ask a question back',
     'mostly 💀 and 😭', 'When something is funny you write lmao.', 'abbreviations like ngl and fr', 'words like mate', 'You make small typos fairly often',
@@ -153,12 +160,14 @@ test('style rules and the base rules reach the committed prompt', () => {
     assert.ok(composePrompt(base({ age }), deriveStyle(base({ age }), createRng('a')), AT).startsWith(`You are Sam, ${article} ${age}-year-old woman`), `${article} ${age}`);
   assert.ok(prompt.includes(MOODS.chill.why[0]), 'the mood comes with its reason');
   // the other ends of each rule
-  const q = base({ mbti: 'ISTJ', age: 66, gender: 'man', english: 'good', language: 'German', home: { city: 'Hamburg', country: 'Germany', tz: 'Europe/Berlin', culture: 'de' }, style: {
+  const q = base({ mbti: 'ISTJ', age: 66, gender: 'man', english: 'good', language: 'German', languages: { de: 'native', en: 'good', fr: 'basic' }, home: { city: 'Hamburg', country: 'Germany', tz: 'Europe/Berlin', culture: 'de' }, style: {
     case: 'normal', punctuation: 'dots', exclaim: 'none', length: 'full', questions: 'rare', emoji: 'none', emojis: [], emoticons: [':-)'], laugh: ['haha'], abbreviations: [], slang: [], typos: 'rare',
   } });
   const qp = composePrompt(q, deriveStyle(q, createRng('y')), AT);
   for (const needle of [
-    'a 66-year-old man who lives in Hamburg, Germany', 'English is your second language; your first is German.', 'Your English is good but not perfect:', "since two years",
+    'a 66-year-old man who lives in Hamburg, Germany', 'German is your first language, you speak good English, and you know a little French, just simple words and phrases.',
+    'Your English is good but not perfect:', "since two years", 'You can read only German, English and French: if they write in any other language, you do not understand it at all',
+    'You never switch language on your own: you write in English, but if they write to you in German or French, you may answer in that language.',
     'You start every message with a capital letter', 'put ... between thoughts', 'You almost never use exclamation marks.', 'in full sentences', 'You rarely ask questions back',
     "You don't use emoji.", 'Instead you sometimes use old-school smileys like :-).', 'no texting abbreviations', 'almost never make typos',
     "You're an introvert:", "You're down to earth:", "You're blunt and a bit dry:", "You're tidy:", "It's about 8 pm on a Thursday in November where you are.",
@@ -199,6 +208,140 @@ test('the hand-written personas carry the full attribute set, cards and the base
   assert.throws(() => parsePerson({ ...base(), mood: 'ecstatic' }, 'x:'), /mood/);
   assert.throws(() => parsePerson({ ...base(), favourite: 'x' }, 'x:'), /not an attribute/);
   assert.throws(() => parsePersona({ id: 'x-y', levels: [1], model: 'z-ai/glm-5.3-flash', person: base(), prompt: 'p'.repeat(80) }, 'x.json:'), /derived from the person block/);
+});
+
+test('languages: every demo persona lists them, consistent with home, age, schooling and English; the prompt pins them', () => {
+  // the hand-written ones, as the owner described them
+  const ps = loadPersonas(path.resolve(here, '../personas'), AT);
+  const by = Object.fromEntries(ps.map((p) => [p.id, p]));
+  assert.deepEqual(by['mia-leeds'].languages, { en: 'native', fr: 'basic' }, 'Leeds: English, a little school French');
+  assert.deepEqual(by['marek-tallinn'].languages, { et: 'native', en: 'good', ru: 'good', fi: 'basic' }, 'Tallinn: Estonian, good English, Russian, some Finnish');
+  assert.deepEqual(by['lena-berlin'].languages, { de: 'native', en: 'fluent' }, 'Berlin: German and English');
+  assert.deepEqual(by['dottie-ohio'].languages, { en: 'native' });
+  for (const p of ps) {
+    const L = p.languages!;
+    assert.equal(L.en, p.person!.english, `${p.id}: English at the level of person.english`);
+    assert.ok(Object.values(L).includes('native') && Object.keys(L).every((c) => LANGUAGE_NAMES[c]), `${p.id}: ${JSON.stringify(L)}`);
+    assert.ok(p.prompt.includes(LANGUAGE_RULE_CORE), `${p.id}: the language rule is in the committed prompt`);
+  }
+  assert.match(by['mia-leeds'].prompt, /English is your first language, and you know a little French, just simple words and phrases\. [\s\S]*You can read only English and French: if they write in any other language, you do not understand it at all/);
+  assert.match(by['lena-berlin'].prompt, /You can read only German and English:[\s\S]*but if they write to you in German, you may answer in German\./);
+  assert.match(by['marek-tallinn'].prompt, /Estonian is your first language, you speak good English and Russian, and you know a little Finnish/);
+  assert.match(by['marek-tallinn'].prompt, /Your English is good but not perfect: you skip 'a' and 'the'/, 'non-native English keeps its natural slips');
+  // what a persona file may say
+  const raw = (over: Partial<Person>) => ({ ...base(), ...over });
+  assert.throws(() => parsePerson({ ...base(), languages: undefined }, 'x:'), /languages must be an object/);
+  assert.throws(() => parsePerson(raw({ languages: { de: 'native', en: 'fluent' } }), 'x:'), /languages\.en must be native/);
+  assert.throws(() => parsePerson(raw({ languages: { en: 'basic' } }), 'x:'), /at least one native/);
+  assert.throws(() => parsePerson(raw({ languages: { en: 'native', xx: 'basic' } as never }), 'x:'), /not a known language code/);
+  assert.throws(() => parsePerson(raw({ languages: { en: 'native', fr: 'perfect' } as never }), 'x:'), /must be one of native, fluent, good, basic/);
+  assert.throws(() => parsePerson(raw({ english: 'good', language: 'German', languages: { de: 'fluent', en: 'good' } }), 'x:'), /must list German \(person\.language\) as native|at least one native/);
+  const remote = parsePersona({ id: 'x-y', levels: [1], model: 'z-ai/glm-5.3-flash', prompt: 'p'.repeat(80), brain: { remote: 'acme' }, languages: { es: 'native', en: 'good' } }, 'x.json:');
+  assert.deepEqual(remote.languages, { es: 'native', en: 'good' }, 'remote personas may say which languages they read');
+  assert.equal(parsePersona({ id: 'x-y', levels: [1], model: 'z-ai/glm-5.3-flash', prompt: 'p'.repeat(80), brain: { remote: 'acme' } }, 'x.json:').languages, undefined);
+
+  // generated people: always a list, English at its level, the first language native
+  const gen = people(3000).map((p) => p.person!);
+  for (const p of gen) {
+    assert.equal(p.languages.en, p.english, `${p.name}: ${JSON.stringify(p.languages)}`);
+    if (p.english !== 'native') assert.equal(p.languages[codeOfLanguage(p.language!)!], 'native', `${p.name}, ${p.home.city}: first language ${p.language}`);
+    assert.ok(Object.keys(p.languages).every((c) => LANGUAGE_NAMES[c]));
+  }
+  // consistent with home, age and schooling
+  const from = (country: string, n = 400) => Array.from({ length: n }, (_, i) => generatePersona(`lang-${country}`, i, { at: AT, country }).person);
+  const knows = (ps: Person[], code: string) => share(ps, (p) => !!p.languages[code]);
+  const uk = from('UK');
+  assert.ok(knows(uk, 'fr') > 0.3 && knows(uk, 'fr') < 0.6 && uk.every((p) => !p.languages.fr || ['basic', 'good'].includes(p.languages.fr)), 'UK: some school French, never fluent');
+  assert.ok(uk.every((p) => !p.languages.et && !p.languages.fi), 'nobody in the UK reads Estonian or Finnish');
+  const studied = uk.filter((p) => ['student', 'teacher', 'office'].includes(p.job.cat));
+  const trades = uk.filter((p) => ['trade', 'driver'].includes(p.job.cat));
+  assert.ok(knows(studied, 'fr') > knows(trades, 'fr'), 'school languages follow schooling');
+  assert.ok(knows(from('Ireland'), 'ga') > 0.7, 'the Irish learned Irish at school');
+  assert.ok(knows(from('Canada'), 'fr') > 0.4);
+  const ee = from('Estonia', 600);
+  assert.ok(ee.every((p) => p.languages.et === 'native' && p.languages.en), 'Estonians: Estonian and some English');
+  assert.ok(knows(ee.filter((p) => p.age >= 40), 'ru') > knows(ee.filter((p) => p.age < 30), 'ru') + 0.25, 'older Estonians speak Russian more often');
+  assert.ok(knows(ee, 'fi') > 0.2, 'many Estonians understand some Finnish');
+  const de = from('Germany');
+  assert.ok(de.every((p) => p.languages.de === 'native' && p.languages.en !== 'native'));
+  const us = from('US');
+  assert.ok(knows(us, 'es') > 0.15 && knows(us, 'es') < 0.4 && share(us, (p) => Object.keys(p.languages).length === 1) > 0.5, 'most Americans read only English');
+});
+
+test('cast: the nationality mix follows the Western weights over many rounds; hand-written personas are sampled', () => {
+  const folder = loadPersonas(path.resolve(here, '../personas'), AT);
+  const hand = folder.map((p) => ({ id: p.id, country: p.person!.home.country, levels: p.levels }));
+  for (const p of folder) assert.ok(COUNTRY_WEIGHTS[p.person!.home.country] > 0, `${p.id}: ${p.person!.home.country} has a weight, so the persona can play`);
+  for (const c of Object.keys(COUNTRY_WEIGHTS)) assert.ok(PLACES.some((p) => p.country === c), `${c} has places`);
+  const W = Object.values(COUNTRY_WEIGHTS).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(W - 100) < 1e-9, 'the weights are percentages');
+  const want = (reg: string) => Object.entries(COUNTRY_WEIGHTS).filter(([c]) => regionOf(c) === reg).reduce((a, [, w]) => a + w, 0) / 100;
+  assert.ok(Math.abs(want('US') - 0.33) < 0.005 && Math.abs(want('UK') - 0.12) < 0.005 && Math.abs(want('Canada, Australia, Ireland, New Zealand') - 0.14) < 0.005);
+  assert.ok(Math.abs(want('Western and Northern Europe') - 0.25) < 0.005 && Math.abs(want('Latin America') - 0.06) < 0.005 && Math.abs(want('rest of the world') - 0.1) < 0.005);
+
+  // the plan: 3000 rounds, 117,000 characters
+  const R = 3000;
+  const count = new Map<string, number>();
+  const handIn = new Map<string, number>();
+  let total = 0;
+  for (let r = 0; r < R; r++) {
+    const slots = planCast(`plan-${r}`, 39, hand);
+    assert.equal(slots.length, 39);
+    assert.deepEqual([1, 2, 3].map((l) => slots.filter((s) => s.level === l).length), [13, 13, 13], 'thirteen a level');
+    const ids = slots.flatMap((s) => (s.hand ? [s.hand] : []));
+    assert.equal(new Set(ids).size, ids.length, 'a hand-written persona plays at most once a round');
+    for (const s of slots) {
+      total++;
+      count.set(s.country, (count.get(s.country) ?? 0) + 1);
+      if (s.hand) {
+        const h = hand.find((x) => x.id === s.hand)!;
+        assert.ok(h.country === s.country && h.levels.includes(s.level), 'only at its own country and levels');
+        handIn.set(s.hand, (handIn.get(s.hand) ?? 0) + 1);
+      }
+    }
+  }
+  for (const [c, w] of Object.entries(COUNTRY_WEIGHTS)) {
+    const p = w / 100;
+    const got = (count.get(c) ?? 0) / total;
+    assert.ok(Math.abs(got - p) <= Math.max(0.001, 4 * Math.sqrt((p * (1 - p)) / total)), `${c}: ${(got * 100).toFixed(2)}% vs ${w}%`);
+  }
+  for (const reg of REGIONS) {
+    const got = [...count].filter(([c]) => regionOf(c) === reg).reduce((a, [, n]) => a + n, 0) / total;
+    assert.ok(Math.abs(got - want(reg)) < 0.005, `${reg}: ${(got * 100).toFixed(1)}% vs ${(want(reg) * 100).toFixed(1)}%`);
+  }
+  const rate = (id: string) => (handIn.get(id) ?? 0) / R;
+  for (const p of folder) assert.ok(rate(p.id) > 0 && rate(p.id) < 1, `${p.id} plays in some rounds, not all (${rate(p.id)})`);
+  for (const id of ['hana-busan', 'kenji-osaka', 'priya-pune', 'tunde-lagos', 'marek-tallinn']) assert.ok(rate(id) < 0.3, `${id} is rare (${rate(id)})`);
+  for (const id of ['ash-texas', 'dottie-ohio', 'walt-maine', 'mia-leeds']) assert.ok(rate(id) > 0.6, `${id} is common (${rate(id)})`);
+  const handShare = [...handIn.values()].reduce((a, b) => a + b, 0) / total;
+  console.log(`  ${R} planned rounds: hand-written ${(handShare * 100).toFixed(1)}% of characters (${(handShare * 39).toFixed(1)} a round); ` +
+    REGIONS.map((reg) => `${reg} ${(([...count].filter(([c]) => regionOf(c) === reg).reduce((a, [, n]) => a + n, 0) / total) * 100).toFixed(1)}%`).join(', '));
+
+  // the cast itself, as the relay builds it: the people really live where their slots say
+  const regions = new Map<string, number>();
+  let n = 0;
+  for (let r = 0; r < 120; r++) {
+    const cast = buildCast({ seed: `cast-${r}`, size: 39, at: AT, hand: folder });
+    assert.equal(cast.length, 39);
+    assert.equal(new Set(cast.map((p) => p.id)).size, 39, 'unique ids');
+    assert.equal(new Set(cast.map((p) => (p.person!.nickname ?? p.person!.name).toLowerCase())).size, 39, `round ${r}: no repeated first names`);
+    const slots = planCast(`cast-${r}`, 39, hand);
+    cast.forEach((p, i) => {
+      assert.equal(p.person!.home.country, slots[i].country, `${p.id}: lives in the slot's country`);
+      assert.equal(p.levels[0], slots[i].level);
+      assert.ok(p.languages && p.languages.en, `${p.id}: languages`);
+      regions.set(regionOf(p.person!.home.country), (regions.get(regionOf(p.person!.home.country)) ?? 0) + 1);
+      n++;
+    });
+  }
+  for (const reg of REGIONS) assert.ok(Math.abs((regions.get(reg) ?? 0) / n - want(reg)) < 0.03, `built casts, ${reg}: ${((regions.get(reg) ?? 0) / n * 100).toFixed(1)}%`);
+  const a = buildCast({ seed: 'same', size: 39, at: AT, hand: folder });
+  const b = buildCast({ seed: 'same', size: 39, at: AT, hand: folder });
+  assert.deepEqual(a.map((p) => [p.id, p.promptHash, p.levels[0]]), b.map((p) => [p.id, p.promptHash, p.levels[0]]), 'a cast is a pure function of its seed');
+  // pins (smoke runs) put a hand-written persona in at one of its levels
+  const pinned = buildCast({ seed: 'same', size: 39, at: AT, hand: folder, pins: ['marek-tallinn', 'hana-busan'] });
+  assert.ok(pinned.length === 39 && ['marek-tallinn', 'hana-busan'].every((id) => pinned.some((p) => p.id === id)));
+  assert.ok(HAND_SHARE > 0 && HAND_SHARE < 1);
 });
 
 test('the letters move the brain dials and the writing', () => {

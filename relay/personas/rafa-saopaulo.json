@@ -23,6 +23,11 @@
     },
     "english": "good",
     "language": "Portuguese",
+    "languages": {
+      "pt": "native",
+      "en": "good",
+      "es": "basic"
+    },
     "slips": "you learned English from games and series, so you make small grammar mistakes like 'i have 31 years' and 'is very hot here' with no subject",
     "job": {
       "title": "motorbike delivery driver",

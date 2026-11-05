@@ -4,9 +4,10 @@
 //   RELAY=ws://localhost:3960/bot/ws TOKEN=<token> node examples/remote-brain.mjs
 //
 // It plays every chat of the botmaster's personas with a deliberately simple policy: after the player
-// writes, read for a moment, then alternate between answering and testing them; when the chat goes
-// quiet, nudge; otherwise send `wait` often enough that the relay knows this brain is alive. It never
-// sends text: only intents. The relay turns each intent into one signed enclave completion.
+// writes, read for a moment, then alternate between answering and testing them (or, when the line is in a
+// language the persona does not read, say foreign); when the chat goes quiet, nudge; otherwise send `wait`
+// often enough that the relay knows this brain is alive. It never sends text: only intents. The relay
+// turns each intent into one signed enclave completion.
 import crypto from 'node:crypto';
 
 if (process.argv[2] === '--hash') {
@@ -37,13 +38,15 @@ ws.onmessage = (ev) => {
   const c = chats.get(m.chatId);
   switch (e.type) {
     case 'chat_started':
-      chats.set(m.chatId, { busy: false, heardAt: null, lastAt: 0, lastActionAt: 0, turns: 0, persona: e.persona });
+      chats.set(m.chatId, { busy: false, heardAt: null, lastAt: 0, lastActionAt: 0, turns: 0, persona: e.persona, foreign: false });
       console.log(`${m.chatId}: chat started as ${e.persona.id}, ${Math.round(e.chatMs / 1000)} s`);
       return;
     case 'player_message':
       if (c) c.heardAt = c.heardAt ?? e.at;
       if (c) c.lastAt = e.at;
-      console.log(`${m.chatId}: player: ${e.text}`);
+      // lang: set by the relay only when the line is clearly not English; the card says what the persona reads
+      if (c) c.foreign = !!(e.lang && c.persona.languages && !c.persona.languages[e.lang]);
+      console.log(`${m.chatId}: player: ${e.text}${e.lang ? ` [${e.lang}]` : ''}`);
       return;
     case 'say_started':
       if (c) c.busy = true;
@@ -79,6 +82,7 @@ ws.onmessage = (ev) => {
       if (c.heardAt !== null && e.at - c.heardAt > 2500) {
         // something to answer: answer on even turns, test them on odd ones
         c.heardAt = null;
+        if (c.foreign) return send({ type: 'say', intent: 'foreign' });
         return send(c.turns % 2 === 0 ? { type: 'say', intent: 'reply' } : { type: 'say', intent: 'probe' });
       }
       if (c.turns === 0 && e.at > 5000) return send({ type: 'say', intent: 'opener' });

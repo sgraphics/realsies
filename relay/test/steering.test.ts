@@ -1,11 +1,12 @@
-// The steering catalogue (steer-v1) and the rule that brains choose intents, never text: a fixed,
+// The steering catalogue (steer-v1, append-only) and the rule that brains choose intents, never text: a fixed,
 // enumerable set of strings; free text and unknown fields are refused; a hostile brain throwing
 // garbage at the executor cannot get any of it into a model request.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Observable } from 'rxjs';
 import { INTENTS, TOPICS, type Brain, type BrainAction, type BrainEvent } from '../src/bot/api.js';
-import { STEERING, STEERING_SHA256, STEER_VERSION, isSteeringMessage, parseSayIntent, steeringId, steeringText } from '../src/bot/intents.js';
+import { STEERING, STEERING_SHA256, STEERING_V1_37_SHA256, STEER_VERSION, isSteeringMessage, parseSayIntent, steeringId, steeringText } from '../src/bot/intents.js';
+import { sha256Hex } from '../src/crypto.js';
 import { validateAction } from '../src/bot/session.js';
 import { createRng, pickR } from '../src/bot/rng.js';
 import { setLogLevel } from '../src/log.js';
@@ -15,13 +16,24 @@ import { skinMessage } from '../src/formats.js';
 
 setLogLevel('error');
 
-test('steer-v1 is a fixed, pinned set of 37 strings', () => {
+test('steer-v1 is a fixed, pinned catalogue that only grows at the end: the 37 first notes byte for byte, 39 in all', () => {
   assert.equal(STEER_VERSION, 'steer-v1');
-  assert.equal(STEERING.length, 37);
-  assert.equal(new Set(STEERING.map((e) => e.id)).size, 37);
-  assert.equal(new Set(STEERING.map((e) => e.text)).size, 37);
-  // changing any template changes this hash: bump STEER_VERSION, update docs/bot-api.md and the web copy
-  assert.equal(STEERING_SHA256, '9a87ff905c41b0e823a5842a052d20b8c4b22729b7f008b5bcd3d77baa023338');
+  assert.equal(STEERING.length, 39);
+  assert.equal(new Set(STEERING.map((e) => e.id)).size, 39);
+  assert.equal(new Set(STEERING.map((e) => e.text)).size, 39);
+  // past rounds stay verifiable: the first 37 notes are the published ones of 2026-11-04, same bytes, same order
+  const first = STEERING.slice(0, 37).map((e) => [e.id, e.text]);
+  assert.equal(sha256Hex(JSON.stringify(first)), STEERING_V1_37_SHA256);
+  assert.equal(STEERING_V1_37_SHA256, '9a87ff905c41b0e823a5842a052d20b8c4b22729b7f008b5bcd3d77baa023338');
+  assert.equal(first[0][1], '[steer-v1/opener] Open the chat with your first message: a casual hello, maybe with a quick first question to size them up. One short line, under 12 words. Write only the message.');
+  assert.equal(first[36][1], '[steer-v1/tangent/hot_take] Your message must change the subject, as if it just popped into your head: a mild, harmless hot take about everyday life. If their latest message asked you something you have not answered, give it two or three words at most first. Send it as two or three very short texts, each on its own line. Write only the message.');
+  // then the notes added since, at the end: foreign (their last message is in a language the persona does not read)
+  assert.deepEqual(STEERING.slice(37).map((e) => [e.id, e.kind]), [['foreign/one', 'direct'], ['foreign/multi', 'direct']]);
+  assert.equal(steeringText({ intent: 'foreign' }), '[steer-v1/foreign] Their last message is in a language you do not speak, and you cannot understand it. React the way a real person would; do not translate it, answer it or write in it. One short line, under 12 words. Write only the message.');
+  assert.equal(INTENTS.at(-1), 'foreign');
+  assert.deepEqual(parseSayIntent({ type: 'say', intent: 'foreign', length: 'multi' }), { intent: 'foreign', topic: undefined, length: 'multi' }, 'remote brains may say foreign');
+  // adding or changing a note changes this hash: update docs/bot-api.md and regenerate shared/steering.ts (tools/gen-steering.ts)
+  assert.equal(STEERING_SHA256, '25999dbc7bdbc9100095c4f267dad15af9189a4d9a6130394fae61c6eed11828');
   for (const e of STEERING) {
     assert.match(e.text, /^\[steer-v1\/[a-z_]+(\/[a-z_]+)?\] .+ Write only the message\.$/);
     assert.ok(isSteeringMessage(e.text));

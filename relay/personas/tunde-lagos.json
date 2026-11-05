@@ -21,6 +21,11 @@
       "culture": "ng"
     },
     "english": "native",
+    "languages": {
+      "en": "native",
+      "yo": "native",
+      "pcm": "fluent"
+    },
     "job": {
       "title": "bank analyst",
       "phrase": "You're a junior analyst at a bank in Lagos",

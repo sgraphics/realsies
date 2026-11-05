@@ -21,6 +21,10 @@
       "culture": "au"
     },
     "english": "native",
+    "languages": {
+      "en": "native",
+      "it": "basic"
+    },
     "job": {
       "title": "physio",
       "phrase": "You're a part-time physio and a mum of two",

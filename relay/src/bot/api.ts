@@ -17,12 +17,25 @@ export const BRAIN_PROTOCOL = 'realsies-brain/1';
 
 /** Pursue the bot's own goal: find out whether the partner is human. */
 export const PROBE_INTENTS = ['opener', 'probe', 'challenge', 'accuse', 'nudge', 'verdict'] as const;
-/** Answer, directly. */
-export const DIRECT_INTENTS = ['reply', 'react'] as const;
+/** Answer, directly. `foreign`: their last message is in a language the persona does not read. */
+export const DIRECT_INTENTS = ['reply', 'react', 'foreign'] as const;
 /** Answer, out of order: afterthought, clarification, late answer, tangent. */
 export const ASIDE_INTENTS = ['afterthought', 'clarify', 'late_answer', 'tangent'] as const;
-export const INTENTS = [...PROBE_INTENTS, ...DIRECT_INTENTS, ...ASIDE_INTENTS] as const;
+/**
+ * Every intent, in steering-catalogue order. The catalogue grows append-only (every earlier note keeps its
+ * exact bytes, so past rounds stay verifiable), so an intent added later comes last whatever its kind.
+ */
+export const INTENTS = ['opener', 'probe', 'challenge', 'accuse', 'nudge', 'verdict', 'reply', 'react', 'afterthought', 'clarify', 'late_answer', 'tangent', 'foreign'] as const;
 export type Intent = (typeof INTENTS)[number];
+type KindIntent = (typeof PROBE_INTENTS)[number] | (typeof DIRECT_INTENTS)[number] | (typeof ASIDE_INTENTS)[number];
+/** compile-time: INTENTS lists exactly the intents of the three kinds */
+export const INTENTS_COMPLETE: [Intent] extends [KindIntent] ? ([KindIntent] extends [Intent] ? true : never) : never = true;
+
+/** How well a persona knows a language; any language not listed it cannot read at all. */
+export const LANG_LEVELS = ['native', 'fluent', 'good', 'basic'] as const;
+export type LangLevel = (typeof LANG_LEVELS)[number];
+/** ISO 639 code (en, et, de, pcm, ...) to level. */
+export type Languages = Record<string, LangLevel>;
 
 /** Topics for `tangent` (pick from the persona's `interests`). */
 export const TOPICS = ['local', 'news', 'sport', 'music', 'food', 'weather', 'work', 'hot_take'] as const;
@@ -87,6 +100,11 @@ export interface PersonaCard {
   interests: Topic[];
   /** characters per second on a phone keyboard */
   cps: number;
+  /**
+   * The languages the persona reads, ISO 639 code to level (`{"en": "native", "fr": "basic"}`); it reads no
+   * other. Every demo persona has it; a remote persona with its own prompt only if its file says so.
+   */
+  languages?: Languages;
 }
 
 // ---------- events (relay -> brain) ----------
@@ -102,7 +120,11 @@ export type BrainEvent =
   | { type: 'chat_started'; at: number; chatId: string; persona: PersonaCard; level: 1 | 2 | 3; gamertag: string; chatMs: number }
   | { type: 'tick'; at: number; remainingMs: number }
   | { type: 'player_typing'; at: number; on: boolean }
-  | { type: 'player_message'; at: number; id: string; text: string }
+  /**
+   * `lang`: ISO 639-1 code of the line's language when the relay is confident it is not English
+   * (src/bot/language.ts); absent for English, short, mixed or unclear lines.
+   */
+  | { type: 'player_message'; at: number; id: string; text: string; lang?: string }
   /** the relay accepted a say: typing indicator on, model call in flight */
   | { type: 'say_started'; at: number; sayId: number; intent: SayIntent }
   /** one bubble of a say is now on the player's screen */

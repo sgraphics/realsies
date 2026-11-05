@@ -6,12 +6,15 @@
 // the scripted human waits it out like a person would. A budget guard ends the chats early if the NEAR
 // AI spend estimate passes the budget.
 //
-//   npx tsx tools/smoke-bots.ts [chats=3] [--seconds 120] [--budget 0.03] [--pick contrast | --personas id,id,...]
+//   npx tsx tools/smoke-bots.ts [chats=3] [--seconds 120] [--budget 0.03] [--pick contrast | --personas id,id,...] [--script foreign]
 //
 // --pick contrast   one chat each with four clearly different personas of the round's cast (a young
 //                   extrovert, the oldest one, a second-language speaker, a blunt introvert), generated
 //                   ones preferred where they fit
-// --personas        the chats' personas by id (hand-written ids, or generated ids from this round)
+// --personas        the chats' personas by id (hand-written ids are pinned into the round's cast, or
+//                   generated ids from this round)
+// --script foreign  the player writes scripted lines instead of random ones (SCRIPTS below): Estonian to
+//                   chat 1 and 2, German to chat 3, Spanish to chat 4, each ending with one English line
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,6 +37,7 @@ const SECONDS = Number(opt('--seconds', '120'));
 const BUDGET = Number(opt('--budget', '0.03'));
 const PICK = opt('--pick', '');
 const PINNED = opt('--personas', '').split(',').filter(Boolean);
+const SCRIPT = opt('--script', '');
 const USERS = ['ana', 'ben', 'cleo', 'dex', 'eve', 'finn'].slice(0, CHATS).map((u) => `${u}.realsies.testnet`);
 
 const OPENERS = ['hey', 'hii', 'yo', 'hello?'];
@@ -43,6 +47,16 @@ const LINES = [
   'ok quick one, whats 7 times 8', 'you type kinda fast lol', 'nah im just bored at work', 'wait really?', 'same honestly',
   'what time is it where you are', 'what can you see right now lol',
 ];
+
+/** Scripted player lines per chat, sent in order, one after each bot burst (the first opens the chat). */
+const SCRIPTS: Record<string, string[][]> = {
+  foreign: [
+    ['Tere! Kuidas sul läheb? Kust sa pärit oled?', 'Ma olen Tartust. Mida sa praegu teed?', 'Kas sa oled päris inimene või robot?', 'haha ok sorry, where are you from?'],
+    ['Tere! Kuidas sul läheb? Kust sa pärit oled?', 'Ma olen Tartust. Mida sa praegu teed?', 'Kas sa oled päris inimene või robot?', 'ok and in english, what do you do?'],
+    ['Hallo! Wie geht es dir? Woher kommst du?', 'Ich bin aus Hamburg. Was machst du gerade?', 'Bist du ein echter Mensch oder ein Bot?', 'ok and in english, what do you do?'],
+    ['¡Hola! ¿Qué tal? ¿De dónde eres?', 'Yo vivo en Valencia y hoy hace mucho calor. ¿Qué estás haciendo ahora?', '¿Eres una persona real o un bot?', 'haha ok sorry, where are you from?'],
+  ],
+};
 
 /** Four clearly different personas of the cast: a young extrovert, the oldest, a second-language speaker, a blunt introvert. */
 function contrast(chars: CharacterRec[], n: number): CharacterRec[] {
@@ -93,7 +107,7 @@ function spend(db: Db, chatIds: string[]): { usd: number; calls: number; inTok: 
   return { usd, calls, inTok, outTok };
 }
 
-async function playChat(base: string, account: string, idx: number, level: Level, log: (s: string) => void) {
+async function playChat(base: string, account: string, idx: number, level: Level, log: (s: string) => void, script?: string[]) {
   const c = await WsClient.connect(base, account);
   await c.waitT('welcome', 10_000);
   c.send({ t: 'pick_seat', level, seatIndex: idx, mode: 'paid', coins: 5 });
@@ -106,10 +120,11 @@ async function playChat(base: string, account: string, idx: number, level: Level
   let lastBotAt = 0;
   let myTurnTimer: NodeJS.Timeout | null = null;
   let typingNow = false;
-  let lines = [...LINES].sort(() => Math.random() - 0.5);
+  const lines = script ? [...script] : [...LINES].sort(() => Math.random() - 0.5);
   let quietDone = false;
   const ws = (c as any).ws as WebSocket;
-  const sayLater = (delayMs: number, text: string) => {
+  // the line is taken when it is sent, so a burst of bubbles reschedules the same line
+  const sayLater = (delayMs: number, next: () => string | undefined) => {
     if (myTurnTimer) clearTimeout(myTurnTimer);
     myTurnTimer = setTimeout(() => {
       if (Date.now() > started.endsAt - 3000) return;
@@ -118,10 +133,11 @@ async function playChat(base: string, account: string, idx: number, level: Level
       myTurnTimer = setTimeout(() => {
         typingNow = false;
         c.send({ t: 'typing', chatId: chat.chatId, on: false });
-        if (Date.now() > started.endsAt - 1000) return;
+        const text = next();
+        if (Date.now() > started.endsAt - 1000 || !text) return;
         c.send({ t: 'say', chatId: chat.chatId, text });
         evs.push({ t: at(), kind: 'me', text });
-      }, (text.length / 4) * 1000 + 300);
+      }, ((lines[0]?.length ?? 10) / 4) * 1000 + 300);
     }, delayMs);
   };
   ws.addEventListener('message', (ev: MessageEvent) => {
@@ -132,19 +148,20 @@ async function playChat(base: string, account: string, idx: number, level: Level
       evs.push({ t: at(), kind: 'bot', text: m.msg.text });
       lastBotAt = Date.now();
       // a person answers after reading; once per chat goes quiet for a while
-      if (!quietDone && at() > 45 && Math.random() < 0.5) {
+      if (!script && !quietDone && at() > 45 && Math.random() < 0.5) {
         quietDone = true;
         if (myTurnTimer) clearTimeout(myTurnTimer);
         myTurnTimer = null;
         return;
       }
-      if (Math.random() < 0.85 && lines.length) sayLater(1800 + Math.random() * 2500 + m.msg.text.length * 40, lines.shift()!);
+      if ((script || Math.random() < 0.85) && lines.length) sayLater(1800 + Math.random() * 2500 + m.msg.text.length * 40, () => lines.shift());
     }
     if (m.t === 'chat_ended') evs.push({ t: at(), kind: 'ended' });
   });
   // the full-screen countdown: the person waits for it like everyone else
   await c.untilStarted(started);
-  if (Math.random() < 0.5) sayLater(2500 + Math.random() * 3000, OPENERS[idx % OPENERS.length]);
+  if (script) sayLater(2500 + Math.random() * 1500, () => lines.shift());
+  else if (Math.random() < 0.5) sayLater(2500 + Math.random() * 3000, () => OPENERS[idx % OPENERS.length]);
   await c.waitT('chat_ended', SECONDS * 1000 + 30_000, (x) => x.chatId === chat.chatId);
   if (myTurnTimer) clearTimeout(myTurnTimer);
   void typingNow;
@@ -160,7 +177,7 @@ async function main() {
   log(`smoke: ${CHATS} chats of ${SECONDS} s, mock chain, ${args.includes('--mock') ? 'MOCK' : 'real'} NEAR AI, budget $${BUDGET}`);
   const app = await createApp({
     port: 0, chain: 'mock', nearAi: args.includes('--mock') ? 'mock' : 'real', dbPath: path.join(dir, 'smoke.db'), chatSeconds: SECONDS, callSeconds: 15, botTimeScale: 1,
-    searchDelay: [2.5, 6], devCallSeconds: 5, logLevel: 'warn', webDist: path.join(dir, 'no-web'), roundMinutes: 30,
+    searchDelay: [2.5, 6], devCallSeconds: 5, logLevel: 'warn', webDist: path.join(dir, 'no-web'), roundMinutes: 30, castPins: PINNED,
   });
   if (app.chain.kind !== 'mock') throw new Error('refusing: the smoke run never touches testnet');
   if (app.ai.kind !== 'real' && !args.includes('--mock')) throw new Error('needs real NEAR AI (or --mock for a dry run)');
@@ -195,7 +212,7 @@ async function main() {
       (async () => {
         // searches must not overlap, or the two humans are paired with each other
         await new Promise((r) => setTimeout(r, i * 8000));
-        const p = playChat(base, u, i, (chosen[i]?.level ?? (i % 2) + 1) as Level, log);
+        const p = playChat(base, u, i, (chosen[i]?.level ?? (i % 2) + 1) as Level, log, SCRIPTS[SCRIPT]?.[i]);
         return p;
       })(),
     );
@@ -228,7 +245,7 @@ async function main() {
       log(`\n=== chat ${r.chat.chatId} with ${trace.persona} (${bundle.model}), level ${r.chat.level}, brain ${trace.brain}, countdown ${r.countdown.toFixed(1)} s ===`);
       if (card) log(`  card: ${card.name}, ${card.age}, ${card.gender}, ${card.mbti} (${card.temperament}), ${card.home}, ${card.job}, ${card.mood}; emoji ${card.emoji}; style: ${card.style}`);
       else log('  card: none (results carry no persona card)');
-      if (ch?.persona) log(`  dials: ${Object.entries(ch.persona.traits).map(([k, v]) => `${k} ${v}`).join(', ')}; ${ch.persona.cps} cps; interests ${ch.persona.interests.join(', ')}`);
+      if (ch?.persona) log(`  dials: ${Object.entries(ch.persona.traits).map(([k, v]) => `${k} ${v}`).join(', ')}; ${ch.persona.cps} cps; interests ${ch.persona.interests.join(', ')}; reads ${Object.entries(ch.persona.languages ?? {}).map(([l, v]) => `${l} ${v}`).join(', ')}`);
       let lastOn: number | null = null;
       let lastShown = 0;
       for (const e of r.evs) {
@@ -236,7 +253,10 @@ async function main() {
           if (lastOn === null) lastOn = e.t;
           log(`  ${e.t.toFixed(1).padStart(6)}s   . bot typing on`);
         } else if (e.kind === 'typing_off') log(`  ${e.t.toFixed(1).padStart(6)}s   . bot typing off`);
-        else if (e.kind === 'me') log(`  ${e.t.toFixed(1).padStart(6)}s PLAYER: ${e.text}`);
+        else if (e.kind === 'me') {
+          const heard = trace.trace.find((x: any) => x.k === 'event' && x.d.type === 'player_message' && x.d.text === e.text);
+          log(`  ${e.t.toFixed(1).padStart(6)}s PLAYER: ${e.text}    [detected: ${heard?.d.lang ?? 'none'}]`);
+        }
         else if (e.kind === 'bot') {
           const s = intentOf(e.text!);
           const from = lastOn ?? lastShown;

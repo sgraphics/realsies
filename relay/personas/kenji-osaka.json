@@ -22,6 +22,10 @@
     },
     "english": "good",
     "language": "Japanese",
+    "languages": {
+      "ja": "native",
+      "en": "good"
+    },
     "slips": "you picked it up from online gaming, so you keep it very short and simple and sometimes drop 'a', 'the' and the plural s",
     "job": {
       "title": "engineering student",

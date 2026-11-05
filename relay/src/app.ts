@@ -66,6 +66,7 @@ export async function createApp(overrides: Partial<Config> = {}, deps: { chain?:
   const chain = deps.chain ?? (await createChain(cfg, db));
   const ai = deps.ai ?? createAi(cfg, chain);
   const personas = loadPersonas(cfg.personasDir);
+  if (process.env.GEN_PERSONAS !== undefined) log.warn('GEN_PERSONAS is no longer used; CAST_SIZE sets the demo characters per round (default 39)');
   const hub = new BotmasterHub(loadBotmasters(cfg.botmastersDir), cfg.remoteSilenceSeconds * 1000);
   for (const p of personas) {
     if (p.brain.kind !== 'remote') continue;

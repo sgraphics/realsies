@@ -1,5 +1,6 @@
 // Demo bot personas as attributes: who the character is (age, gender, Myers-Briggs type, temperament,
-// today's mood, home, English, job, life details, interests) and everything that follows from it:
+// today's mood, home, English and other languages, job, life details, interests) and everything that
+// follows from it:
 //
 //   deriveStyle    how they text: case, punctuation, length, questions, exclamations, emoji (an
 //                  age-appropriate set), emoticons, laughter, abbreviations, slang, typos, and how they
@@ -10,14 +11,17 @@
 //
 // The four letters each move both the writing and the dials: E chattier, more questions and
 // exclamations, opens sooner; I terse, guarded, slower to start; S concrete; N ideas and tangents;
-// T blunt and guarded; F warm; J tidy and on topic; P messy and drifting. Hand-written personas live
-// in relay/personas/*.json ("person" block, style overrides allowed); generated ones come from
-// src/persona/generate.ts. src/persona/prompt.ts turns a person into the committed persona prompt.
+// T blunt and guarded; F warm; J tidy and on topic; P messy and drifting. Languages: what the person
+// reads and how well (src/persona/languages.ts), English always among them at the level of `english`.
+// Hand-written personas live in relay/personas/*.json ("person" block, style overrides allowed);
+// generated ones come from src/persona/generate.ts. src/persona/prompt.ts turns a person into the
+// committed persona prompt.
 import type { PersonaCard } from '../../../shared/protocol.js';
-import { TOPICS, type PersonaTraits, type Topic } from '../bot/api.js';
+import { TOPICS, type Languages, type PersonaTraits, type Topic } from '../bot/api.js';
 import { weighted, type Rng } from '../bot/rng.js';
 import { sha256Hex } from '../crypto.js';
 import { CULTURES } from './data.js';
+import { codeOfLanguage, parseLanguages } from './languages.js';
 
 export const SLOTS = ['morning', 'afternoon', 'evening', 'night'] as const;
 export type Slot = (typeof SLOTS)[number];
@@ -63,6 +67,11 @@ export interface Person {
   language?: string;
   /** how their English slips; default from the culture */
   slips?: string;
+  /**
+   * Every language they read, ISO 639 code to level, English included at the level of `english` and the
+   * first language as native; any other language they cannot read (src/persona/languages.ts).
+   */
+  languages: Languages;
   job: { title: string; phrase: string; cat: JobCat };
   /** a pet, sibling, partner or kids, as a sentence */
   family: string;
@@ -412,7 +421,7 @@ const oneOf = <T extends string>(v: unknown, xs: readonly T[], what: string): T 
 /** Validate a "person" block. Every attribute is required except nickname, moodWhy, slips, ate and style. */
 export function parsePerson(raw: any, where: string): Person {
   if (!raw || typeof raw !== 'object') throw new Error(`${where} person must be an object`);
-  const allowed = new Set(['name', 'nickname', 'age', 'gender', 'mbti', 'temperament', 'mood', 'moodWhy', 'home', 'english', 'language', 'slips', 'job', 'family', 'commute', 'device', 'likes', 'details', 'quirks', 'scenes', 'ate', 'interests', 'style']);
+  const allowed = new Set(['name', 'nickname', 'age', 'gender', 'mbti', 'temperament', 'mood', 'moodWhy', 'home', 'english', 'language', 'slips', 'languages', 'job', 'family', 'commute', 'device', 'likes', 'details', 'quirks', 'scenes', 'ate', 'interests', 'style']);
   for (const k of Object.keys(raw)) if (!allowed.has(k)) throw new Error(`${where} person.${k} is not an attribute`);
   const w = (k: string) => `${where} person.${k}`;
   if (!Number.isInteger(raw.age) || raw.age < 16 || raw.age > 85) throw new Error(`${w('age')} must be a whole number from 16 to 85`);
@@ -427,6 +436,12 @@ export function parsePerson(raw: any, where: string): Person {
   }
   const english = oneOf(raw.english, ENGLISH_LEVELS, w('english'));
   if (english !== 'native' && typeof raw.language !== 'string') throw new Error(`${w('language')} is required when english is not native`);
+  const languages = parseLanguages(raw.languages, w('languages'));
+  if (languages.en !== english) throw new Error(`${w('languages')}.en must be ${english}, the level of person.english`);
+  if (english !== 'native') {
+    const first = codeOfLanguage(String(raw.language));
+    if (!first || languages[first] !== 'native') throw new Error(`${w('languages')} must list ${raw.language} (person.language) as native`);
+  }
   const j = raw.job ?? {};
   const scenes = Array.isArray(raw.scenes) && raw.scenes.length ? raw.scenes : null;
   if (!scenes) throw new Error(`${w('scenes')} must list at least one scene`);
@@ -457,6 +472,7 @@ export function parsePerson(raw: any, where: string): Person {
     english,
     language: raw.language === undefined ? undefined : str(raw.language, w('language'), 1, 40),
     slips: raw.slips === undefined ? undefined : str(raw.slips, w('slips')),
+    languages,
     job: { title: str(j.title, w('job.title'), 1, 60), phrase: str(j.phrase, w('job.phrase')), cat: oneOf(j.cat, JOB_CATS, w('job.cat')) },
     family: str(raw.family, w('family')),
     commute: str(raw.commute, w('commute')),
