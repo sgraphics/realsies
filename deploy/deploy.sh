@@ -32,8 +32,13 @@ echo "== relay: build"
 chown -R realsies:realsies "$APP"
 chmod 600 "$APP/.env" relay/.secrets/*.json 2>/dev/null || true
 install -m 644 deploy/realsies.service /etc/systemd/system/realsies.service
+# operator emails: the relay drops files in the spool, a root-only unit sends them through SES (deploy/realsies-mail.py)
+install -d -o root -g realsies -m 1730 /var/spool/realsies-mail
+install -d -o root -g root -m 700 /var/spool/realsies-mail/sent /var/spool/realsies-mail/failed
+install -m 644 deploy/realsies-mail.path deploy/realsies-mail.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --quiet realsies
+systemctl enable --quiet --now realsies-mail.path
 systemctl restart realsies
 sleep 3
 systemctl --no-pager --lines=5 status realsies | head -12

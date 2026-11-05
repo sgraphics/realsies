@@ -1,0 +1,9 @@
+[Unit]
+Description=Realsies: send the relay's operator emails when the outbox has any
+
+[Path]
+PathExistsGlob=/var/spool/realsies-mail/*.json
+Unit=realsies-mail.service
+
+[Install]
+WantedBy=multi-user.target

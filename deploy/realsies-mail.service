@@ -1,0 +1,12 @@
+[Unit]
+Description=Realsies: send queued operator emails through Amazon SES (root's AWS profile; the relay holds no keys)
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /opt/realsies/deploy/realsies-mail.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/spool/realsies-mail

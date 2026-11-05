@@ -39,7 +39,7 @@ export interface AgentApiDeps {
   admin: AdminContext;
   /** the gateway's model list (GET /v1/models, public) */
   models: () => Promise<ModelListing[]>;
-  /** operator emails (src/agents/notify.ts); default: from cfg, off without RESEND_API_KEY */
+  /** operator emails (src/agents/notify.ts); default: from cfg, off without AGENT_NOTIFY_EMAIL */
   notifier?: Notifier;
 }
 
@@ -86,7 +86,7 @@ export function createAgentApi(d: AgentApiDeps) {
   const routes: { method: string; re: RegExp; fn: Handler }[] = [];
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
   const perIp = new RateLimit(Math.max(1, d.cfg.agentRequestsPerHour));
-  const notifier = d.notifier ?? new Notifier({ resendApiKey: d.cfg.resendApiKey, notifyEmail: d.cfg.notifyEmail, notifyFrom: d.cfg.notifyFrom });
+  const notifier = d.notifier ?? new Notifier({ notifyEmail: d.cfg.notifyEmail, notifyFrom: d.cfg.notifyFrom, outboxDir: d.cfg.notifyOutbox });
   const GLOBAL_PER_DAY = 500;
   if (d.cfg.adminToken && d.cfg.adminToken.length < 16) log.warn('ADMIN_TOKEN is shorter than 16 characters: admin endpoints stay disabled');
 

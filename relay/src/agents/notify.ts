@@ -1,21 +1,26 @@
-// Operator notices for AI builders by email: a new access request, or a persona waiting for review. Sent through
-// Resend's HTTPS API, because the server cannot send mail itself (no MTA, and outbound port 25 is blocked).
-// Off unless RESEND_API_KEY and AGENT_NOTIFY_EMAIL are both set. Never throws: a failed notice is logged and the
-// request or persona stands. The default sender, onboarding@resend.dev, reaches only the Resend account's own
-// address; set AGENT_NOTIFY_FROM to an address on a domain verified in Resend to mail anyone else.
+// Operator notices for AI builders by email: a new access request, or a persona waiting for review.
+// The relay holds no mail credentials. It drops each email as a JSON file into an outbox directory, and a root-only
+// sender on the server (deploy/realsies-mail.py, run by the realsies-mail.path unit) sends it through Amazon SES,
+// only from @realsies.lol and only to the operator address. Off unless AGENT_NOTIFY_EMAIL is set. Never throws: a
+// failed notice is logged and the request or persona stands.
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { AccessRequestRec, AgentPersonaRec } from './store.js';
 import { errMsg } from '../util.js';
 import { logger } from '../log.js';
 
 const log = logger('notify');
-export const RESEND_URL = 'https://api.resend.com/emails';
-export const DEFAULT_FROM = 'Realsies <onboarding@resend.dev>';
+export const DEFAULT_FROM = 'Realsies <notify@realsies.lol>';
 const ADMIN = 'cd /opt/realsies/relay && sudo -u realsies npx tsx tools/botmaster-admin.ts';
 
 export interface NotifyConfig {
-  resendApiKey?: string;
+  /** the operator's address; unset = no emails */
   notifyEmail?: string;
+  /** sender, on the SES-verified domain realsies.lol */
   notifyFrom?: string;
+  /** where the email files go for the root sender */
+  outboxDir: string;
 }
 
 export interface Email {
@@ -24,42 +29,41 @@ export interface Email {
   replyTo?: string;
 }
 
+/** One file in the outbox, as deploy/realsies-mail.py reads it. */
+export interface OutboxMail {
+  v: 1;
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  replyTo?: string;
+  createdAt: number;
+}
+
 export class Notifier {
-  constructor(
-    private cfg: NotifyConfig,
-    private fetchFn: typeof fetch = fetch,
-  ) {}
+  constructor(private cfg: NotifyConfig) {}
 
   get enabled(): boolean {
-    return !!(this.cfg.resendApiKey && this.cfg.notifyEmail);
+    return !!this.cfg.notifyEmail;
   }
 
-  /** Resend's message id, or undefined when off or failed. */
+  /** The outbox file written, or undefined when off or failed. */
   async send(m: Email): Promise<string | undefined> {
     if (!this.enabled) return undefined;
     try {
-      const res = await this.fetchFn(RESEND_URL, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${this.cfg.resendApiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: this.cfg.notifyFrom || DEFAULT_FROM,
-          to: [this.cfg.notifyEmail],
-          subject: m.subject,
-          text: m.text,
-          ...(m.replyTo ? { reply_to: m.replyTo } : {}),
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const body = await res.text();
-      if (!res.ok) {
-        log.warn(`email "${m.subject}" not sent: HTTP ${res.status} ${body.replace(/\s+/g, ' ').slice(0, 200)}`);
-        return undefined;
-      }
-      const id = (JSON.parse(body) as { id?: string }).id;
-      log.info(`email "${m.subject}" sent to the operator${id ? ` (${id})` : ''}`);
-      return id;
+      const mail: OutboxMail = {
+        v: 1, from: this.cfg.notifyFrom || DEFAULT_FROM, to: this.cfg.notifyEmail!, subject: m.subject, text: m.text,
+        ...(m.replyTo ? { replyTo: m.replyTo } : {}), createdAt: Date.now(),
+      };
+      fs.mkdirSync(this.cfg.outboxDir, { recursive: true });
+      const name = `${mail.createdAt}-${crypto.randomBytes(4).toString('hex')}.json`;
+      const tmp = path.join(this.cfg.outboxDir, `.${name}.tmp`);
+      fs.writeFileSync(tmp, JSON.stringify(mail));
+      fs.renameSync(tmp, path.join(this.cfg.outboxDir, name)); // the sender only picks up complete *.json files
+      log.info(`email "${m.subject}" queued for the operator (${name})`);
+      return name;
     } catch (e) {
-      log.warn(`email "${m.subject}" not sent: ${errMsg(e)}`);
+      log.warn(`email "${m.subject}" not queued: ${errMsg(e)}`);
       return undefined;
     }
   }

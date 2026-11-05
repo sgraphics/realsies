@@ -86,12 +86,12 @@ export interface Config {
   encryptionKey?: string;
   /** POSTed (JSON, with Slack and Discord friendly text) for every new access request */
   agentRequestWebhook?: string;
-  /** Resend API key for operator emails (src/agents/notify.ts): new access requests, personas to review */
-  resendApiKey?: string;
-  /** where those emails go; both this and resendApiKey must be set */
+  /** operator address for AI builder emails (src/agents/notify.ts): new access requests, personas to review; unset = none */
   notifyEmail?: string;
-  /** sender; default Realsies <onboarding@resend.dev>, which reaches only the Resend account's own address */
+  /** sender, on the SES-verified domain; default Realsies <notify@realsies.lol> */
   notifyFrom?: string;
+  /** where queued emails go for the root SES sender (deploy/realsies-mail.py); default: outbox next to the DB */
+  notifyOutbox: string;
   /** access requests stored per IP per hour */
   agentRequestsPerHour: number;
   // ---------- NEAR AI credits ----------
@@ -166,9 +166,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     adminToken: env.ADMIN_TOKEN || undefined,
     encryptionKey: env.RELAY_ENCRYPTION_KEY || undefined,
     agentRequestWebhook: env.AGENT_REQUEST_WEBHOOK || undefined,
-    resendApiKey: env.RESEND_API_KEY || undefined,
     notifyEmail: env.AGENT_NOTIFY_EMAIL || undefined,
     notifyFrom: env.AGENT_NOTIFY_FROM || undefined,
+    notifyOutbox: resolveFromRepo(env.NOTIFY_OUTBOX || path.join(path.dirname(env.DB || 'relay/data/realsies.db'), 'outbox')),
     agentRequestsPerHour: num('AGENT_REQUESTS_PER_HOUR', 5),
     nearAiBudgetUsd: num('NEAR_AI_BUDGET_USD', 10),
     nearAiRecheckSeconds: num('NEAR_AI_RECHECK_SECONDS', 180),
