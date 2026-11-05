@@ -69,7 +69,7 @@ Evidence from 2026-11-04: model z-ai/glm-5.3-flash, attested signer 0x3b753b4406
 
 ## Economy
 
-Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every depositor, half the supply plus all deposited NEAR locked in a Ref pool for 69 years, a 20% team allocation with a 1-month cliff and 3-month vesting. One coin is a fixed number of REAL chosen at launch so that a coin is about one cent. Presets run from 5 coins at Level 1 to 500 at Level 3. Coins are held in the game contract per account; deposit and withdraw are one call each.
+Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every depositor, half the supply plus all deposited NEAR locked in a Ref pool for 69 years, a 20% team allocation with a 7-day cliff and 21-day vesting. One coin is a fixed number of REAL chosen at launch so that a coin is about one cent. Presets run from 5 coins at Level 1 to 500 at Level 3. Coins are held in the game contract per account; deposit and withdraw are one call each.
 
 ## Architecture
 

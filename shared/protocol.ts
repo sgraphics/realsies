@@ -1,4 +1,4 @@
-// Realsies relay <-> web protocol, v1.1 (2026-11-05: chat countdown, persona cards; both additive).
+// Realsies relay <-> web protocol, v1.2 (2026-11-05: chat countdown, persona cards, AI builders; all additive).
 // Authoritative. Owned by the lead; workstreams import it and do not edit it.
 // Spec: docs/spec.md
 
@@ -256,6 +256,89 @@ export interface VerifyBundle {
   viewer: string;
   handle: string;
   chain: { revealTx?: string; openTx?: string; settleTx?: string; playTx?: string; callTx?: string };
+}
+
+// ---------- AI builders: LLM operators, chat and voice vendors ----------
+// They apply for access, get a botmaster token, enter agents, earn the Turing bonus on chats their agents win,
+// and read every settled transcript plus a scorecard. HTTP only (see docs/agents.md); not part of GameClient.
+
+export type BuilderKind = 'llm_operator' | 'chat_vendor' | 'voice_vendor' | 'researcher' | 'other';
+
+/** POST /api/agents/request */
+export interface AgentAccessRequest {
+  name: string;
+  email: string;
+  company?: string;
+  website?: string;
+  kind: BuilderKind;
+  models: string; // models and stack they want to enter, free text
+  goal: string; // what they want to learn or test, free text
+  volume?: string; // expected chats per day, free text
+  payoutAccount?: string; // NEAR account that receives the Turing bonus
+  agreeTerms: boolean;
+}
+
+export interface AgentRequestReceipt {
+  id: string;
+  status: 'pending';
+  createdAt: number;
+}
+
+export interface BotmasterPersonaSummary {
+  id: string;
+  model: string;
+  levels: Level[];
+  brain: 'default' | 'remote';
+  active: boolean;
+}
+
+/** GET /api/botmaster/me (Authorization: Bearer <botmaster token>) */
+export interface BotmasterProfile {
+  name: string;
+  payoutAccount: string;
+  personas: BotmasterPersonaSummary[];
+  byok: boolean; // uses its own NEAR AI key
+  createdAt: number;
+}
+
+export interface BotmasterScore {
+  chats: number; // settled chats with a call
+  paidChats: number;
+  calledHuman: number; // players fooled
+  calledBot: number;
+  missed: number;
+  fooledShare: number | null; // calledHuman / (calledHuman + calledBot)
+  coinFooledShare: number | null; // coin-weighted, paid calls only
+  turingBonusCoins: number;
+}
+
+export interface BotmasterRoundStats extends BotmasterScore {
+  roundId: number;
+  settledAt?: number;
+}
+
+/** GET /api/botmaster/stats */
+export interface BotmasterStats {
+  totals: BotmasterScore;
+  byPersona: Record<string, BotmasterScore>;
+  rounds: BotmasterRoundStats[]; // newest first
+}
+
+/** GET /api/botmaster/chats?round=&limit=  and one JSON object per line in GET /api/botmaster/export.jsonl */
+export interface BotmasterChat {
+  roundId: number;
+  chatId: string;
+  personaId: string;
+  model: string;
+  level: Level;
+  startedAt: number;
+  player: string; // anonymised, stable per player within a round
+  playerMode: Mode;
+  coins: number;
+  playerCall: boolean | null; // true = called human
+  fooled: boolean | null; // the player called this bot human
+  turingBonusCoins: number;
+  transcript: { from: 'player' | 'bot'; text: string; at: number }[];
 }
 
 // ---------- WebSocket ----------
