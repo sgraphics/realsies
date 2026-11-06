@@ -21,6 +21,7 @@
 //   &as=sam&qa=deposit             the wallet deposit dialog (200 test coins in the wallet, none in the game)
 //   &as=sam&qa=coins               coins enabled and 45 deposited: deposit, withdraw, key status
 //   &coins=closed                  the contract has no coin yet: "Coins open when REAL launches"
+// The launch page at / before REAL is live (?mock=1&launch=soon|auction|finalizing): see src/launch/index.tsx.
 // Only active together with ?mock=1.
 
 import type { Level } from '../../shared/protocol.ts';

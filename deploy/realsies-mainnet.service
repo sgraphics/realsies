@@ -1,0 +1,24 @@
+[Unit]
+Description=Realsies mainnet relay: API, WebSocket, rounds, bots, static web app on 127.0.0.1:3961 (realsies.lol at launch)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=realsies
+Group=realsies
+WorkingDirectory=/opt/realsies/relay
+EnvironmentFile=/opt/realsies/.env
+EnvironmentFile=/opt/realsies/.env.mainnet
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning dist/index.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/realsies/relay/data
+
+[Install]
+WantedBy=multi-user.target

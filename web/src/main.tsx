@@ -8,6 +8,7 @@ import './screens.css';
 import './hud.css';
 import './countdown.css';
 import './wallet.css';
+import type { GameClient, PublicConfig } from '../../shared/protocol.ts';
 import { App } from './app.tsx';
 import { createClient, createWallet } from './net/index.ts';
 import { createStore } from './state/store.ts';
@@ -16,13 +17,14 @@ import { applyUiScale } from './ui/theme.ts';
 import { chooseScale } from '../../art/src/scene/layout.ts';
 import { hudHeight } from './ui/hudSize.ts';
 import { routeOf } from './agents/route.ts';
+import { isPlayPath, launchShown } from './launch/phase.ts';
 
 if (/[?&]qa=|[?&]as=/.test(location.search)) document.documentElement.classList.add('qa');
 const route = routeOf(location.pathname);
 const root = document.getElementById('app')!;
 
-if (route === 'game') {
-  const client = createClient();
+/** The game: the store over the relay (or the mock), the room's pixel scale, the app. */
+function startGame(client: GameClient): void {
   // the wallet reads the network from the relay's public config once it is loaded
   let network: 'mainnet' | 'testnet' | undefined;
   const store = createStore(client, createWallet(client, () => network));
@@ -40,6 +42,38 @@ if (route === 'game') {
 
   // handy in the console
   (window as unknown as { realsies: unknown }).realsies = { store };
+}
+
+/** The relay's public config before the first paint; null if it does not come in time (the game copes then). */
+async function firstConfig(client: GameClient): Promise<PublicConfig | null> {
+  for (let i = 0; i < 2; i++) {
+    try {
+      return await Promise.race([
+        client.getConfig(),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('config timeout')), 6000)),
+      ]);
+    } catch {
+      /* once more */
+    }
+  }
+  return null;
+}
+
+if (route === 'game') {
+  const client = createClient();
+  if (isPlayPath(location.pathname)) startGame(client);
+  else {
+    // `/` is the launch page while the relay sends one (mainnet before REAL is live), else the game
+    void firstConfig(client).then((cfg) => {
+      if (!launchShown(cfg)) return startGame(client);
+      import('./launch/index.tsx')
+        .then((m) => m.start(root, client, cfg))
+        .catch((e) => {
+          console.error(e);
+          root.textContent = 'This page did not load. Please reload.';
+        });
+    });
+  }
 } else {
   // /agents and /agents/dashboard: the pages for AI builders, in their own chunk
   document.documentElement.classList.add('ag-doc');

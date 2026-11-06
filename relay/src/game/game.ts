@@ -206,6 +206,7 @@ export class Game implements BotHost {
     this.coinUnit = this.chainCfg.coinUnit;
     this.publicConfig = this.makePublicConfig();
     if (!this.chainCfg.coinsOpen) log.warn(`${this.chain.contractId} has no coin set yet: free play only, "Coins open when REAL launches" (re-checked every minute)`);
+    this.logLaunch();
     this.loadUsers();
     const seen = Number(this.db.getKv('last_human_at') ?? '');
     this.lastHumanAt = Number.isFinite(seen) && seen > 0 ? seen : Date.now();
@@ -247,7 +248,32 @@ export class Game implements BotHost {
         playKey: { receiverId: this.chain.contractId, methodNames: ['play', 'call'], allowance: nearToYocto(this.cfg.playKeyAllowanceNear).toString() },
         gas: { deposit: (100n * TGAS).toString(), withdraw: (50n * TGAS).toString(), storage: (30n * TGAS).toString() },
       },
+      ...(this.launchOn() ? { launch: { ...this.cfg.launch! } } : {}),
     };
+  }
+
+  /**
+   * The launch page at / (protocol v1.4): while LAUNCH_* is set, until the coin is set on the contract. A test
+   * relay (TEST_MODE=1) always has coins, so there it shows for as long as LAUNCH_* is set (to try the page).
+   */
+  launchOn(): boolean {
+    return !!this.cfg.launch && (this.cfg.testMode || !this.chainCfg.coinsOpen);
+  }
+
+  private logLaunch(): void {
+    const l = this.cfg.launch;
+    if (!l) return;
+    const at = (t?: number) => (t === undefined ? 'not announced' : new Date(t).toISOString());
+    if (this.launchOn()) {
+      log.info(`launch page at / (the game stays at /play): auction ${at(l.auctionStart)} to ${at(l.auctionEnd)}, "Get REAL" ${l.tokenUrl ?? this.cfg.buyUrl ?? 'not set yet'}, demo ${l.demoUrl}`);
+    } else log.info('LAUNCH_* is set, but coins are open: no launch page, the game is at /');
+    let demoHost = '';
+    try {
+      demoHost = new URL(l.demoUrl).hostname;
+    } catch {
+      /* checked in loadConfig */
+    }
+    if (demoHost === this.cfg.authRecipient) log.warn(`LAUNCH_DEMO_URL is this very site (${l.demoUrl}): "Try the demo" on the launch page would link to the page itself; set LAUNCH_* on the mainnet relay only`);
   }
 
   /**
@@ -269,7 +295,7 @@ export class Game implements BotHost {
       this.chainCfg = c;
       this.coinUnit = c.coinUnit;
       this.publicConfig = this.makePublicConfig();
-      if (opened) log.info(`coins are open: ${c.token}, coin unit ${c.coinUnit}`);
+      if (opened) log.info(`coins are open: ${c.token}, coin unit ${c.coinUnit}${this.cfg.launch && !this.launchOn() ? '; the launch page is off, the game is at /' : ''}`);
       if (JSON.stringify(this.publicConfig) !== before) this.broadcast({ t: 'config', config: this.publicConfig });
     } catch (e) {
       log.debug(`get_config: ${errMsg(e)}`);

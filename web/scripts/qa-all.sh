@@ -63,6 +63,15 @@ add playkey-wait   "mock=1&wallet=1&as=sam&qa=key&hold=key" 8000
 add deposit-wallet "mock=1&wallet=1&as=sam&qa=deposit" 9000
 add coins-wallet   "mock=1&wallet=1&as=sam&qa=coins" 10000
 add deposit-closed "mock=1&wallet=1&as=sam&qa=deposit&coins=closed" 8000
+# the launch page at / while REAL is not live (protocol v1.4): the three phases, then "the game is open"
+# (the coin set 2 s in), the lower half, and the game at /play behind it (a mainnet relay: wallet sign-in)
+add launch-soon       "mock=1&launch=soon&qa=top" 6000
+add launch-auction    "mock=1&launch=auction&qa=top" 6000
+add launch-finalizing "mock=1&launch=finalizing&qa=top" 6000
+add launch-open       "mock=1&launch=finalizing&opens=2&qa=top" 7000 "360x640:2 390x844:3 844x390:3 1280x720:1 1920x1080:1"
+add launch-open-bar   "mock=1&launch=finalizing&opens=2&qa=steps" 7000 "390x844:3 1280x720:1"
+add launch-steps      "mock=1&launch=auction&qa=steps" 6000 "360x640:2 390x844:3 844x390:3 768x1024:2 1280x720:1 2560x1440:1"
+add launch-play       "/play?mock=1&launch=soon&qa=top" 6000 "390x844:3 1280x720:1"
 # the pages for AI builders (a path instead of a query: qa-shot.sh loads it as is)
 add agents          "/agents?mock=1&qa=top" 7000
 add agents-form     "/agents?mock=1&qa=form" 7000

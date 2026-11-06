@@ -83,6 +83,10 @@ const doc = {
   },
   createComment: () => new FNode(8, '#comment'),
   body: new FNode(1, 'body'),
+  title: '',
+  visibilityState: 'visible',
+  addEventListener() {},
+  removeEventListener() {},
 };
 const g = globalThis as Record<string, unknown>;
 g.document = doc;
@@ -129,6 +133,8 @@ const { WalletSignInPanel } = await import('../src/screens/SignIn.tsx');
 const { KeySetupDialog } = await import('../src/screens/KeySetup.tsx');
 const { DepositDialog } = await import('../src/screens/Deposit.tsx');
 const { MockWallet } = await import('../src/wallet/mock.ts');
+const { LaunchPage } = await import('../src/launch/LaunchPage.tsx');
+const { mockLaunch } = await import('../src/launch/phase.ts');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EV = join(here, '..', '..', 'experiments', 'near-ai', 'evidence', '2026-11-04');
@@ -286,6 +292,39 @@ try {
   render(null, root as unknown as Element);
   cs.actions.logout();
   closedClient.dispose();
+
+  // the launch page (protocol v1.4), each phase, then the coin set while it is open
+  const launchText: Record<string, string> = {};
+  for (const phase of ['soon', 'auction', 'finalizing'] as const) {
+    const lc = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch(phase), buyUrl: 'https://meme.cooking', storageKey: null, timeScale: 0.02 });
+    render(h(LaunchPage, { client: lc, config: await lc.getConfig(), pollMs: 20 }), root as unknown as Element);
+    await sleep(40);
+    launchText[phase] = root.textContent;
+    render(null, root as unknown as Element);
+    lc.dispose();
+  }
+  const every = (t: string) => /Real or not\?/.test(t) && /two minutes with a stranger/.test(t) && /Watch the trailer/.test(t) && /Try the demo/.test(t) && /testnet/.test(t) && /For AI builders/.test(t) && /Follow on X/.test(t)
+    && /Play coins/.test(t) && /Chat two minutes/.test(t) && /Call: human\?/.test(t) && /NEAR AI enclaves sign every word/.test(t) && /contract on NEAR checks it/.test(t) && /18\+/.test(t) && /Terms/.test(t);
+  ok(every(launchText.soon) && every(launchText.auction) && every(launchText.finalizing), 'launch page: logo line, trailer, the four links, three steps, the proof, 18+ and terms in every phase');
+  ok(/REAL launches on meme\.cooking/.test(launchText.soon) && /Auction opens in/.test(launchText.soon) && /days/.test(launchText.soon) && /Auction opens \w/.test(launchText.soon) && !/Get REAL/.test(launchText.soon), 'soon: the countdown to the start, "Auction opens ..." instead of Get REAL');
+  ok(/REAL is live on meme\.cooking/.test(launchText.auction) && /Auction ends in/.test(launchText.auction) && /Get REAL/.test(launchText.auction) && /hrs/.test(launchText.auction), 'auction: live, the countdown to the end, Get REAL');
+  ok(/The auction is over/.test(launchText.finalizing) && /The game opens in a few minutes/.test(launchText.finalizing) && /updates by itself/.test(launchText.finalizing) && !/Auction ends in/.test(launchText.finalizing), 'finalizing: the game opens in a few minutes');
+  ok(!/wallet/i.test(launchText.soon.replace(/no wallet/g, '')) && !/Sign in/.test(launchText.auction), 'no wallet prompt on the page');
+  const oc = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('finalizing'), storageKey: null, timeScale: 0.02, opensAfterMs: 60 });
+  render(h(LaunchPage, { client: oc, config: await oc.getConfig(), pollMs: 20 }), root as unknown as Element);
+  await sleep(30);
+  ok(/The game opens in a few minutes/.test(root.textContent), 'before the coin: finalizing');
+  await sleep(200);
+  const to = root.textContent;
+  ok(/The game is open/.test(to) && /Play now/.test(to) && /Watch the trailer/.test(to), 'the coin set while the page is up: "The game is open", Play now, and the page stays');
+  render(null, root as unknown as Element);
+  oc.dispose();
+  const noX = new MockGameClient({ wallet: true, coinsOpen: false, launch: { ...mockLaunch('auction'), xUrl: undefined, tokenUrl: undefined }, storageKey: null, timeScale: 0.02 });
+  render(h(LaunchPage, { client: noX, config: await noX.getConfig(), pollMs: 60_000 }), root as unknown as Element);
+  await sleep(30);
+  ok(!/Follow on X/.test(root.textContent) && !/Get REAL/.test(root.textContent) && /Try the demo/.test(root.textContent), 'no X link without LAUNCH_X_URL; no Get REAL without a token page or Buy link');
+  render(null, root as unknown as Element);
+  noX.dispose();
 } catch (e) {
   failures++;
   console.log('  FAIL', e);
@@ -298,6 +337,10 @@ const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
 for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Who.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
+}
+for (const f of ['LaunchPage.tsx', 'Trailer.tsx', 'BigClock.tsx', 'phase.ts', 'index.tsx']) {
+  const src = readFileSync(join(here, '..', 'src', 'launch', f), 'utf8');
+  ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `launch/${f}: no banned vocabulary`);
 }
 console.log(failures ? `${failures} failed` : 'screens smoke passed');
 process.exit(failures ? 1 : 0);

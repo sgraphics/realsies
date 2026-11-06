@@ -8,7 +8,7 @@ import {
   type LeaderRow, type Level, type Me, type Mode, type PlayerStats, type PublicConfig, type RoundResults, type RoundState,
   type RoundStatus, type RoundSummary, type Seat, type ServerMsg, type Skin, type TestUser, type ThemeId, type Truth,
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
-  type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo,
+  type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo, type LaunchConfig,
 } from '../../../shared/protocol.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { verifyNep413 } from '../wallet/nep413.ts';
@@ -70,6 +70,10 @@ export interface MockOptions {
   buyUrl?: string;
   /** ms a browser has to answer sign_tx (default 20000) */
   signTimeoutMs?: number;
+  /** the launch page (protocol v1.4): PublicConfig.launch, until coins open */
+  launch?: LaunchConfig;
+  /** the coin is set this many ms after start (coinsOpen turns true, the launch page goes): QA of "the game is open" */
+  opensAfterMs?: number;
 }
 
 /** The relay's words for bots_unavailable on a search (the web shows its own calm note instead). */
@@ -87,7 +91,7 @@ function apiError(code: string, message: string, status = 400): Error {
 }
 
 /** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
-export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl'> = {}): PublicConfig {
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch'> = {}): PublicConfig {
   return {
     testMode: !opts.wallet,
     network: 'testnet',
@@ -115,6 +119,7 @@ export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds'
       playKey: { receiverId: 'game.realsies.testnet', methodNames: ['play', 'call'], allowance: MOCK_ALLOWANCE },
       gas: { deposit: '100000000000000', withdraw: '50000000000000', storage: '30000000000000' },
     },
+    ...(opts.launch ? { launch: { ...opts.launch } } : {}),
   };
 }
 
@@ -320,6 +325,15 @@ export class MockGameClient implements GameClient, MockLedger {
     this.config = mockConfig(opts);
     this.st = this.load() ?? this.fresh();
     this.resume();
+    if (opts.opensAfterMs !== undefined && this.config.coinsOpen === false) this.later(opts.opensAfterMs, () => this.openCoins());
+  }
+
+  /** The owner sets the coin on the contract: coins open, the launch page goes (like a relay without test mode), every connection hears it. */
+  openCoins(): void {
+    if (this.config.coinsOpen === true && !this.config.launch) return;
+    this.config.coinsOpen = true;
+    if (!this.config.testMode) delete this.config.launch;
+    this.emit({ t: 'config', config: { ...this.config } });
   }
 
   // ======================= persistence =======================

@@ -40,6 +40,14 @@ systemctl daemon-reload
 systemctl enable --quiet realsies
 systemctl enable --quiet --now realsies-mail.path
 systemctl restart realsies
+# the mainnet relay (127.0.0.1:3961) runs only where its overrides exist: /opt/realsies/.env.mainnet (mode 600)
+install -m 644 deploy/realsies-mainnet.service /etc/systemd/system/realsies-mainnet.service
+systemctl daemon-reload
+if [ -f "$APP/.env.mainnet" ]; then
+  chmod 600 "$APP/.env.mainnet"
+  systemctl enable --quiet realsies-mainnet
+  systemctl restart realsies-mainnet
+fi
 sleep 3
 systemctl --no-pager --lines=5 status realsies | head -12
 curl -s -m 5 -o /dev/null -w "local /api/config -> %{http_code}\n" http://127.0.0.1:3960/api/config

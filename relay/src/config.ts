@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { LaunchConfig } from '../../shared/protocol.js';
 
 function findRelayRoot(): string {
   // Works from src/ (tsx) and from dist/ (bundled): walk up to the folder holding personas/.
@@ -115,6 +116,64 @@ export interface Config {
   playGasTgas: number;
   /** seconds a browser has to sign a play or call before the play goes free (or the call is not on chain) */
   signTimeoutSeconds: number;
+  // ---------- the launch page (protocol v1.4) ----------
+  /**
+   * The launch page at / (PublicConfig.launch) while REAL is not live: on when any LAUNCH_* variable is set
+   * (see launchFromEnv). A relay without test mode stops sending it once the coin is set on the contract.
+   */
+  launch?: LaunchConfig;
+}
+
+/** Every variable of the launch page; setting any one of them turns the page on. */
+export const LAUNCH_VARS = ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_DEMO_URL', 'LAUNCH_X_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER'] as const;
+export const LAUNCH_DEFAULTS = { demoUrl: 'https://test.realsies.lol', trailer: '/trailer/realsies-trailer.mp4', poster: '/trailer/poster.png' } as const;
+/** The meme.cooking auction runs this long when LAUNCH_AUCTION_END is not given. */
+export const AUCTION_HOURS = 24;
+
+/** An ISO 8601 time with its zone ("2026-11-08T15:00:00Z", "2026-11-08T16:00+01:00") as ms epoch. */
+export function parseIsoTime(name: string, value: string): number {
+  const v = value.trim();
+  const t = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:?\d{2})$/i.test(v) ? Date.parse(v) : NaN;
+  if (!Number.isFinite(t)) throw new Error(`${name} must be an ISO time with its zone, for example 2026-11-08T15:00:00Z (got ${value})`);
+  return t;
+}
+
+/** The launch page from LAUNCH_* (undefined when none is set): times as ms epoch, defaults filled in. */
+export function launchFromEnv(env: NodeJS.ProcessEnv): LaunchConfig | undefined {
+  const get = (k: (typeof LAUNCH_VARS)[number]) => env[k]?.trim() || undefined;
+  if (!LAUNCH_VARS.some((k) => get(k))) return undefined;
+  const start = get('LAUNCH_AUCTION_START');
+  const end = get('LAUNCH_AUCTION_END');
+  const auctionStart = start === undefined ? undefined : parseIsoTime('LAUNCH_AUCTION_START', start);
+  if (end !== undefined && auctionStart === undefined) throw new Error('LAUNCH_AUCTION_END needs LAUNCH_AUCTION_START');
+  const auctionEnd = end !== undefined ? parseIsoTime('LAUNCH_AUCTION_END', end) : auctionStart !== undefined ? auctionStart + AUCTION_HOURS * 3_600_000 : undefined;
+  const tokenUrl = get('LAUNCH_TOKEN_URL');
+  const xUrl = get('LAUNCH_X_URL');
+  return {
+    ...(auctionStart !== undefined ? { auctionStart } : {}),
+    ...(auctionEnd !== undefined ? { auctionEnd } : {}),
+    ...(tokenUrl ? { tokenUrl } : {}),
+    demoUrl: get('LAUNCH_DEMO_URL') ?? LAUNCH_DEFAULTS.demoUrl,
+    ...(xUrl ? { xUrl } : {}),
+    trailer: get('LAUNCH_TRAILER') ?? LAUNCH_DEFAULTS.trailer,
+    poster: get('LAUNCH_POSTER') ?? LAUNCH_DEFAULTS.poster,
+  };
+}
+
+const HTTPS_URL = /^https:\/\/[^\s"'<>\\]+$/;
+/** A path on this site ("/trailer/poster.png", not "//host") or an https URL. */
+const SITE_OR_HTTPS = /^(https:\/\/[^\s"'<>\\]+|\/(?!\/)[^\s"'<>\\]*)$/;
+
+/** Throws on a launch page the web could not show as meant. */
+export function checkLaunch(l: LaunchConfig): void {
+  if (l.auctionEnd !== undefined && l.auctionStart === undefined) throw new Error('LAUNCH_AUCTION_END needs LAUNCH_AUCTION_START');
+  for (const [k, t] of [['LAUNCH_AUCTION_START', l.auctionStart], ['LAUNCH_AUCTION_END', l.auctionEnd]] as const)
+    if (t !== undefined && !(Number.isFinite(t) && t > Date.UTC(2020, 0, 1) && t < Date.UTC(2100, 0, 1))) throw new Error(`${k} is not a plausible time`);
+  if (l.auctionStart !== undefined && l.auctionEnd !== undefined && !(l.auctionEnd > l.auctionStart)) throw new Error('LAUNCH_AUCTION_END must be after LAUNCH_AUCTION_START');
+  for (const [k, v] of [['LAUNCH_TOKEN_URL', l.tokenUrl], ['LAUNCH_DEMO_URL', l.demoUrl], ['LAUNCH_X_URL', l.xUrl]] as const)
+    if (v !== undefined && !HTTPS_URL.test(v)) throw new Error(`${k} must be an https URL`);
+  for (const [k, v] of [['LAUNCH_TRAILER', l.trailer], ['LAUNCH_POSTER', l.poster]] as const)
+    if (!SITE_OR_HTTPS.test(v)) throw new Error(`${k} must be a path on this site (like /trailer/poster.png) or an https URL`);
 }
 
 function num(name: string, def: number): number {
@@ -178,6 +237,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     playKeyAllowanceNear: num('PLAY_KEY_ALLOWANCE_NEAR', 0.25),
     playGasTgas: num('PLAY_GAS_TGAS', 30),
     signTimeoutSeconds: num('SIGN_TIMEOUT_SECONDS', 20),
+    ...('launch' in overrides ? {} : { launch: launchFromEnv(env) }),
     ...overrides,
   };
   if (!['auto', 'near', 'mock'].includes(cfg.chain)) throw new Error(`CHAIN must be auto, near or mock`);
@@ -194,5 +254,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (!(cfg.playKeyAllowanceNear > 0 && cfg.playKeyAllowanceNear <= 5)) throw new Error('PLAY_KEY_ALLOWANCE_NEAR must be more than 0 and at most 5');
   if (!(cfg.playGasTgas >= 5 && cfg.playGasTgas <= 100)) throw new Error('PLAY_GAS_TGAS must be from 5 to 100');
   if (!(cfg.signTimeoutSeconds >= 3 && cfg.signTimeoutSeconds <= 120)) throw new Error('SIGN_TIMEOUT_SECONDS must be from 3 to 120');
+  if (cfg.launch) checkLaunch(cfg.launch);
+  else delete cfg.launch;
   return cfg;
 }

@@ -4,6 +4,8 @@
 //   &coins=closed               the contract has no coin yet: free play only
 //   &hold=signIn|key|tx         the mock wallet never answers that step (QA: "waiting for your wallet")
 //   &reject=signIn|key|tx       the player closes the mock wallet at that step
+//   &launch=soon|auction|finalizing   a mainnet relay before REAL is live: the launch page at /, the game
+//                               (wallet sign-in, no coin yet) at /play; &opens=5 sets the coin 5 s in
 
 import type { GameClient } from '../../../shared/protocol.ts';
 import { MockGameClient, type MockOptions, resetMockState } from './mock.ts';
@@ -11,6 +13,7 @@ import { RealGameClient } from './real.ts';
 import type { WalletApi } from '../wallet/types.ts';
 import { MockWallet, type MockWalletOptions } from '../wallet/mock.ts';
 import { NearConnectWallet } from '../wallet/near-connect.ts';
+import { mockLaunch, mockLaunchOf } from '../launch/phase.ts';
 
 export { MockGameClient, RealGameClient, resetMockState };
 export type { MockOptions };
@@ -29,6 +32,8 @@ export function createClient(search?: string): GameClient {
     const q = new URLSearchParams(search ?? (globalThis as { location?: Location }).location?.search ?? '');
     const round = Number(q.get('round'));
     const searchMs = Number(q.get('searchms')); // QA: hold the search this long (screenshots of "finding someone")
+    const launch = mockLaunchOf(q.toString());
+    const opens = Number(q.get('opens'));
     const client = new MockGameClient({
       longNames: q.get('longnames') === '1',
       ...(round > 1 ? { startRoundId: round } : {}),
@@ -36,6 +41,12 @@ export function createClient(search?: string): GameClient {
       ...(q.get('nobots') === '1' ? { noBots: true } : {}), // the bots are napping: no new chats (bots_unavailable)
       ...(q.get('wallet') === '1' ? { wallet: true, buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet:v1' } : {}),
       ...(q.get('coins') === 'closed' ? { coinsOpen: false } : {}),
+      ...(launch
+        ? {
+            wallet: true, coinsOpen: false, buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:launch:v1', launch: mockLaunch(launch),
+            ...(opens >= 0 && q.get('opens') !== null ? { opensAfterMs: opens * 1000 } : {}),
+          }
+        : {}),
     });
     (globalThis as { realsiesMock?: MockGameClient }).realsiesMock = client; // console access in mock mode
     return client;

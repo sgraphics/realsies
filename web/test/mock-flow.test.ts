@@ -472,4 +472,6 @@ const smoke = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'screen
 const agents = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'agents.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
 // ---------- 7. wallet sign-in, play keys, wallet deposits (own process) ----------
 const wallet = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'wallet.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
-process.exit(failures || smoke.status !== 0 || agents.status !== 0 || wallet.status !== 0 ? 1 : 0);
+// ---------- 8. the launch page at / before REAL is live (own process) ----------
+const launch = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'launch.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
+process.exit(failures || smoke.status !== 0 || agents.status !== 0 || wallet.status !== 0 || launch.status !== 0 ? 1 : 0);
