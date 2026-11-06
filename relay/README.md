@@ -38,7 +38,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 |---|---|---|
 | `PORT` | 3960 | HTTP and `/ws` |
 | `TEST_MODE` | 1 | test-user screen, faucet, dev endpoints, relay-signed test users, all levels unlocked; wallet sign-in works too. `0`: wallet accounts only (mainnet), no test users, no dev endpoints, no faucet |
-| `AUTH_RECIPIENT` | realsies.lol | NEP-413 recipient every sign-in signature must name: the domain the players see (a testnet relay moved to test.realsies.lol says so here) |
+| `AUTH_RECIPIENT` | realsies.lol | NEP-413 recipient every sign-in signature must name: the domain the players see (a testnet relay moved to testnet.realsies.lol says so here) |
 | `SESSION_DAYS` | 30 | a wallet session lives this long |
 | `BUY_URL` | | "Buy REAL": the meme.cooking page before the launch finalizes, the Rhea swap after; unset = no link |
 | `LAUNCH_AUCTION_START`, `LAUNCH_AUCTION_END` | | the launch (protocol v1.4, `PublicConfig.launch`): REAL's meme.cooking auction, which opens with the mainnet game; ISO times with their zone (`2026-11-08T15:00:00Z`), the end defaulting to 24 hours after the start. Setting any `LAUNCH_*` turns it on. Until the start `/` is the coming-soon page (a countdown to the start and "Get REAL"; the game at `/play`); at the start the page hands over to the game in place, and from then `/` is the game with a banner: "REAL auction is live, ends in hh:mm, Get REAL", after the end "REAL is finalizing, coins open soon". Once the coin is set on the contract (`coinsOpen`, re-read every minute) the relay drops `launch`, pushes the config to every socket and the banner goes, no restart. Ignored with `TEST_MODE=1`: the testnet demo never shows any of it. A bad value stops the relay at boot |
@@ -201,7 +201,7 @@ Same code with `TEST_MODE=0`. It needs, next to the testnet relay (its own unit,
 | `SECRETS` | `relay/.secrets/mainnet.json` (shape below) |
 | `DB` | its own file, for example `relay/data/mainnet.db`: never the testnet DB |
 | `PORT` | its own port if it runs next to the testnet relay, for example 3962 |
-| `AUTH_RECIPIENT` | `realsies.lol` (and `test.realsies.lol` on the testnet relay once it moves there) |
+| `AUTH_RECIPIENT` | `realsies.lol` (and `testnet.realsies.lol` on the testnet relay once it moves there) |
 | `ROUND_MINUTES`, `FREE_CHATS_PER_DAY` | 360 and 3 |
 | `BUY_URL` | the meme.cooking page of REAL now; the Rhea swap after the launch finalizes (a restart) |
 | `LAUNCH_AUCTION_START` (`LAUNCH_AUCTION_END` if not 24 hours), `LAUNCH_TOKEN_URL` | the coming-soon page at `/` until the start (the game at `/play`), then the game with the auction banner until the coin is set. In `.env.mainnet`, and realsies.lol pointed at this relay: a test relay ignores them |

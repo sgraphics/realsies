@@ -51,7 +51,7 @@ test('LAUNCH_* into the launch: nothing set, a 24-hour auction by default, every
   assert.equal(launchFromEnv({}), undefined, 'no LAUNCH_*: nothing');
   assert.equal(launchFromEnv({ LAUNCH_TOKEN_URL: '  ', LAUNCH_AUCTION_START: '' }), undefined, 'empty values count as unset');
   assert.deepEqual(launchFromEnv({ LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/1' }), { tokenUrl: 'https://meme.cooking/meme/1' }, 'any one variable turns it on; no time: coming soon');
-  assert.equal(launchFromEnv({ LAUNCH_X_URL: 'https://x.com/realsies', LAUNCH_DEMO_URL: 'https://test.realsies.lol' }), undefined, 'the retired variables turn nothing on');
+  assert.equal(launchFromEnv({ LAUNCH_X_URL: 'https://x.com/realsies', LAUNCH_DEMO_URL: 'https://testnet.realsies.lol' }), undefined, 'the retired variables turn nothing on');
   assert.deepEqual(launchFromEnv({ LAUNCH_AUCTION_START: START }), { auctionStart: T0, auctionEnd: T0 + AUCTION_HOURS * H }, 'the end defaults to 24 hours after the start');
   assert.deepEqual(
     launchFromEnv({ LAUNCH_AUCTION_START: '2026-11-08T16:00:00+01:00', LAUNCH_AUCTION_END: '2026-11-09T15:30Z', LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/123' }),

@@ -2,7 +2,7 @@
 
 An 8-bit chat game: talk to a stranger for two minutes, then call it: real human or bot? Some characters are other players. Some are AI agents running inside NEAR AI's confidential enclaves, where every word they say is signed. When the round ends, the game contract on NEAR proves who was a bot and pays the players who read the room right.
 
-Demo (testnet, no wallet needed): https://test.realsies.lol · Mainnet: https://realsies.lol · For AI builders: https://realsies.lol/agents · NEAR Hackathon 2026 · Tracks: games, privacy, memecoins, open
+Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https://realsies.lol · For AI builders: https://realsies.lol/agents · NEAR Hackathon 2026 · Tracks: games, privacy, memecoins, open
 
 ## Executive summary
 
@@ -55,7 +55,7 @@ Demo (testnet, no wallet needed): https://test.realsies.lol · Mainnet: https://
 
 | Part | State |
 |---|---|
-| Game on testnet | Live at https://test.realsies.lol: test users or a testnet wallet, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 75 |
+| Game on testnet | Live at https://testnet.realsies.lol: test users or a testnet wallet, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 75 |
 | AI builders side | Live: `/agents` (pitch and access request), `/agents/dashboard` (scorecards, transcripts, export, own NEAR AI key, persona requests), botmaster API, `docs/agents.md` |
 | Mainnet game | `game.realsies.near` deployed with the testnet code and a mainnet relay running; realsies.lol shows a launching-soon page (trailer, countdown, token link) until REAL finalizes, then the game with wallet sign-in; the coin is set when the token launches |
 | REAL coin | Raised on meme.cooking around Nov 10 to 11; mainnet rounds with coins open when it finalizes |
@@ -70,14 +70,14 @@ Realsies adds all three, inside a game people play for fun: coins on every call,
 
 ## Try it now (testnet): do X, see Y
 
-1. Open https://test.realsies.lol. See "Who are you?" with six test users. Pick one, for example Ana.
+1. Open https://testnet.realsies.lol. See "Who are you?" with six test users. Pick one, for example Ana.
 2. See "Deposit to earn". Tap it for 100 test coins, or skip to play free. See your coins, or "Free mode", on the pillar.
 3. See the room: ten characters on pedestals, each with a gamertag and a face generated for you alone. Tap one, choose 5 coins or Play free.
 4. See a full-screen 3, 2, 1, CHAT! countdown, then chat for up to two minutes. Answer Real human? Yes / No. See "Locked until the round ends".
 5. To meet a human instead of a bot, open a second browser window as another test user and tap a character in both windows within a few seconds.
 6. Rounds last 10 minutes on testnet. To skip ahead, open the menu at the top right and choose End round now. See Results: who was who, the persona card of every bot you met, your score and rating, coins won, and a Verify button on every bot chat.
 7. Tap Verify. See every check run in your browser: the on-chain commitment, your handle and chat tag, every enclave signature recovered to the attested signer, the persona prompt hash, your own messages matched byte for byte inside the signed request, and links to each transaction on testnet.nearblocks.io.
-8. Open https://test.realsies.lol/agents. See the pitch for AI builders, a worked Turing bonus example and the access request form. Open https://test.realsies.lol/agents/dashboard?mock=1 and tap "Use the demo token": see a sample builder's scorecard by persona and round, transcripts and setup.
+8. Open https://testnet.realsies.lol/agents. See the pitch for AI builders, a worked Turing bonus example and the access request form. Open https://testnet.realsies.lol/agents/dashboard?mock=1 and tap "Use the demo token": see a sample builder's scorecard by persona and round, transcripts and setup.
 
 Run it locally instead:
 
@@ -87,7 +87,7 @@ cd ../art && npm install
 cd ../relay && npm install && npm run build && npm start   # http://localhost:3960
 ```
 
-The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (82 tests) and `web` (83), `cargo test` in `contracts/game` (16), and `RELAY_URL=https://test.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
+The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (82 tests) and `web` (83), `cargo test` in `contracts/game` (16), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
 
 The trust chain also runs on its own, without the game:
 
