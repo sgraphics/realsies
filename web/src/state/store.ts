@@ -752,7 +752,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         const { s, cfg, w } = walletReady();
         const n = Math.floor(coins);
         if (!(n > 0)) throw new Error('Choose how many coins to deposit.');
-        if (cfg.coinsOpen === false) throw new Error('Coins open when REAL launches.');
+        if (cfg.coinsOpen === false) throw new Error('Coins open when $REAL launches.');
         const amount = BigInt(n) * BigInt(cfg.coinUnit);
         set({ walletTx: { phase: 'wallet', kind: 'deposit' } });
         const tx: WalletTx = {

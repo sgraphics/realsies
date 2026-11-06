@@ -21,7 +21,7 @@ const POLL_MS = 60_000;
 /** CHAT! stays on screen this long before the game takes over (shorter without motion). */
 export const GO_MS = 1700;
 export const GO_MS_CALM = 700;
-export const CAPTION = 'The game and REAL go live in';
+export const CAPTION = 'The game and $REAL go live in';
 /** The teaser: 7 s of the trailer's montage (lobby, 3-2-1 CHAT!, the chat, the call), silent, and its poster. */
 export const TEASER_SRC = '/launch-teaser.mp4';
 export const TEASER_POSTER = '/launch-teaser.png';
@@ -114,7 +114,7 @@ export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive
       <main class="ln-main">
         <Brand w={vp.w} h={vp.h} />
         <h1 class="ln-h1">Real or <span class="ln-hl">not?</span></h1>
-        <p class="ln-cap">{live ? 'The game is open' : start !== undefined ? CAPTION : 'The game and REAL go live soon'}</p>
+        <p class="ln-cap">{live ? 'The game is open' : start !== undefined ? CAPTION : 'The game and $REAL go live soon'}</p>
         <div class={'ln-body' + (teaser ? ' has-teaser' : '')}>
           <div class="ln-hero">
             {(live || start !== undefined) && (
@@ -123,7 +123,7 @@ export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive
               </div>
             )}
             {token ? (
-              <a class="px-btn primary ln-cta" href={token} target="_blank" rel="noopener"><Icon name="coin" /> Get REAL</a>
+              <a class="px-btn primary ln-cta" href={token} target="_blank" rel="noopener"><Icon name="coin" /> Get $REAL</a>
             ) : start !== undefined ? (
               <p class="ln-when">
                 <T text={fmtWhen(start)} />

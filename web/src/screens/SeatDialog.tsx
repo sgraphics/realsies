@@ -53,7 +53,7 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
             </div>
             {closed ? (
               <div class="px-panel tight light">
-                <p class="px-sub" style={{ marginBottom: 0 }}><Icon name="coin" /> Coins open when REAL launches. Until then every chat is free.</p>
+                <p class="px-sub" style={{ marginBottom: 0 }}><Icon name="coin" /> Coins open when $REAL launches. Until then every chat is free.</p>
               </div>
             ) : balance > 0 ? (
               <>

@@ -289,7 +289,7 @@ try {
   render(h(DepositDialog, { store: cs, gate: false, onDone() {} }), root as unknown as Element);
   await sleep(40);
   const ct2 = root.textContent;
-  ok(/Coins open when REAL launches/.test(ct2) && /Get REAL at the launch/.test(ct2) && /everyone plays free/.test(ct2) && /Play free/.test(ct2) && !/Deposit from wallet/.test(ct2), 'no coin yet: free play only, no deposit form');
+  ok(/Coins open when \$REAL launches/.test(ct2) && /Get \$REAL at the launch/.test(ct2) && /everyone plays free/.test(ct2) && /Play free/.test(ct2) && !/Deposit from wallet/.test(ct2), 'no coin yet: free play only, no deposit form');
   render(null, root as unknown as Element);
   cs.actions.logout();
   closedClient.dispose();
@@ -301,7 +301,7 @@ try {
   render(h(LaunchPage, { client: soonClient, config: await soonClient.getConfig(), onLive: () => handed++, pollMs: 20 }), root as unknown as Element);
   await sleep(60);
   const st = root.textContent;
-  ok(/Real or not\?/.test(st) && /The game and REAL go live in/.test(st) && /days/.test(st) && /hrs/.test(st) && /Get REAL/.test(st) && /18\+/.test(st) && /Terms/.test(st), 'coming soon: the headline, the countdown, Get REAL, 18+ and terms: ' + st.slice(0, 90));
+  ok(/Real or not\?/.test(st) && /The game and \$REAL go live in/.test(st) && /days/.test(st) && /hrs/.test(st) && /Get \$REAL/.test(st) && /18\+/.test(st) && /Terms/.test(st), 'coming soon: the headline, the countdown, Get REAL, 18+ and terms: ' + st.slice(0, 90));
   ok(!/Try the demo|demo|For AI builders|Play coins|Chat two minutes|provable|enclave/i.test(st), 'and nothing else: no demo, AI builders, steps or proof');
   ok(!/wallet|Sign in/i.test(st) && handed === 0, 'no wallet prompt; still waiting for the start');
   // the video card: one link to the launch tweet, in a new tab; the teaser loop under it
@@ -329,19 +329,19 @@ try {
   const acct = await cardText({ tweet: false });
   ok(/Follow @realsieslol on X/.test(acct.t) && acct.href === 'https://x.com/realsieslol' && !/Watch the trailer/.test(acct.t), 'no launch tweet yet: the card opens the account');
   const nox = await cardText({ x: false });
-  ok(nox.href === undefined && !/on X/.test(nox.t) && /Get REAL/.test(nox.t), 'no X link: no card, the countdown and Get REAL as before');
+  ok(nox.href === undefined && !/on X/.test(nox.t) && /Get \$REAL/.test(nox.t), 'no X link: no card, the countdown and Get REAL as before');
   const noToken = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), { token: false }), storageKey: null, timeScale: 0.02 });
   render(h(LaunchPage, { client: noToken, config: await noToken.getConfig(), onLive() {}, pollMs: 60_000 }), root as unknown as Element);
   await sleep(40);
   const nt = root.textContent;
-  ok(!/Get REAL/.test(nt) && /\d{1,2}:\d\d/.test(nt) && /The game and REAL go live in/.test(nt), 'no token page yet: the time instead of Get REAL: ' + (nt.match(/[A-Z][a-z]{2}[^]*?UTC|\d{1,2}:\d\d[^]{0,12}/)?.[0] ?? ''));
+  ok(!/Get \$REAL/.test(nt) && /\d{1,2}:\d\d/.test(nt) && /The game and \$REAL go live in/.test(nt), 'no token page yet: the time instead of Get REAL: ' + (nt.match(/[A-Z][a-z]{2}[^]*?UTC|\d{1,2}:\d\d[^]{0,12}/)?.[0] ?? ''));
   render(null, root as unknown as Element);
   noToken.dispose();
   const goClient = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), { startInMs: 150 }), storageKey: null, timeScale: 0.02 });
   let went = 0;
   render(h(LaunchPage, { client: goClient, config: await goClient.getConfig(), onLive: () => went++, pollMs: 60_000 }), root as unknown as Element);
   await sleep(40);
-  ok(/The game and REAL go live in/.test(root.textContent) && went === 0, 'counting down to the start');
+  ok(/The game and \$REAL go live in/.test(root.textContent) && went === 0, 'counting down to the start');
   await sleep(500);
   ok(/The game is open/.test(root.textContent) && went === 0, 'zero: "The game is open" and CHAT!, the page still up');
   ok(!/on X/.test(root.textContent), 'the video card is the coming-soon phase only');
@@ -363,9 +363,9 @@ try {
     return t;
   };
   const ba = await bannerText({ phase: 'auction' });
-  ok(/REAL auction (is )?live/.test(ba) && /\d\d:\d\d/.test(ba) && /Get REAL/.test(ba), 'the game during the auction: "REAL auction is live, ends in hh:mm, Get REAL": ' + ba);
+  ok(/\$REAL auction (is )?live/.test(ba) && /\d\d:\d\d/.test(ba) && /Get \$REAL/.test(ba), 'the game during the auction: "REAL auction is live, ends in hh:mm, Get REAL": ' + ba);
   const bf = await bannerText({ phase: 'finalizing' });
-  ok(/REAL is finalizing/.test(bf) && /coins open soon/.test(bf) && !/Get REAL/.test(bf), 'after it: "REAL is finalizing, coins open soon": ' + bf);
+  ok(/\$REAL is finalizing/.test(bf) && /coins open soon/.test(bf) && !/Get \$REAL/.test(bf), 'after it: "REAL is finalizing, coins open soon": ' + bf);
   ok((await bannerText({ phase: 'soon' })) === '', 'before the start (the game at /play): no banner');
   ok((await bannerText({ phase: 'auction', open: true })) === '', 'coins open: the banner is gone');
   ok((await bannerText({ phase: 'auction', testMode: true })) === '', 'the testnet demo: never');

@@ -63,17 +63,17 @@ export function LaunchBanner(p: { store: Store; chat?: boolean }) {
         <>
           {!narrow && <span class="hud-launch-dot" aria-hidden="true" />}
           <span class="hud-launch-t">
-            <b>{narrow ? 'REAL auction live' : 'REAL auction is live'}</b>
+            <b>{narrow ? '$REAL auction live' : '$REAL auction is live'}</b>
             {left && <span class="hud-launch-sep"> · </span>}
             {left && (narrow ? <><span class="hud-n">{left}</span> left</> : <>ends in <span class="hud-n">{left}</span></>)}
           </span>
-          {token && <a class="hud-launch-cta" href={token} target="_blank" rel="noopener">Get REAL</a>}
+          {token && <a class="hud-launch-cta" href={token} target="_blank" rel="noopener">Get $REAL</a>}
         </>
       ) : (
         <>
           <Icon name="clock" class="hud-launch-icon" />
           <span class="hud-launch-t">
-            <b>REAL is finalizing</b>
+            <b>$REAL is finalizing</b>
             <span class="hud-launch-sep"> · </span>coins open soon
           </span>
         </>

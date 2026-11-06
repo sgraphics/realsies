@@ -1129,7 +1129,7 @@ export class MockGameClient implements GameClient, MockLedger {
     if (seat.state !== 'open') return this.err('seat_taken', 'You already met this character this round.', viewer);
     let n = 0;
     if (mode === 'paid') {
-      if (this.config.coinsOpen === false) return this.err('coins_closed', 'Coins open when REAL launches. Play free for now.', viewer);
+      if (this.config.coinsOpen === false) return this.err('coins_closed', 'Coins open when $REAL launches. Play free for now.', viewer);
       if (this.isWallet(viewer)) {
         const key = this.sessionOf(viewer)?.playKey;
         if (!key) return this.err('play_key_missing', 'Enable coins first: one wallet approval lets this browser send your plays and calls.', viewer);

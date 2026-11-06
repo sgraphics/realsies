@@ -28,10 +28,10 @@ export function coinInTokens(coinUnit: string | undefined, decimals: number | un
 export function CoinsClosed(p: { buyUrl?: string; onDone(): void }) {
   return (
     <>
-      <p class="px-body"><b>Coins open when REAL launches.</b></p>
+      <p class="px-body"><b>Coins open when $REAL launches.</b></p>
       <p class="px-body">Until then everyone plays free: chats, calls and ratings all count, and no coins move.</p>
       {p.buyUrl && (
-        <a class="px-btn buy-link" href={p.buyUrl} target="_blank" rel="noreferrer"><Icon name="coin" /> Get REAL at the launch <Icon name="link" /></a>
+        <a class="px-btn buy-link" href={p.buyUrl} target="_blank" rel="noreferrer"><Icon name="coin" /> Get $REAL at the launch <Icon name="link" /></a>
       )}
       <div class="px-row between">
         <Button kind="primary" onClick={p.onDone}>Play free</Button>

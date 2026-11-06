@@ -34,7 +34,7 @@ export function start(root: HTMLElement, client: GameClient, config: PublicConfi
   const meta = document.querySelector('meta[name="description"]');
   const description = meta?.getAttribute('content');
   const title = document.title;
-  meta?.setAttribute('content', 'Realsies: an 8-bit chat game where you talk to a stranger for two minutes, then call it. Real human, or AI? The game and REAL go live soon.');
+  meta?.setAttribute('content', 'Realsies: an 8-bit chat game where you talk to a stranger for two minutes, then call it. Real human, or AI? The game and $REAL go live soon.');
   let handed = false;
   const live = () => {
     if (handed) return;
