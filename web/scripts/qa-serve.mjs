@@ -3,19 +3,15 @@
 // CSS px. Headless Chrome on Windows will not make a window narrower than 500 px and takes the
 // window frame off the viewport, so phone sizes are emulated by the iframe (its own viewport,
 // media queries and devicePixelRatio), and the screenshot is cropped to w x h afterwards.
-// /trailer/* comes from the local trailer render (QA_TRAILER_DIR, default trailer/out/for-realsies), as nginx
-// serves it on the site; without a render the launch page shows its logo fallback.
 // usage: node scripts/qa-serve.mjs [port=5173]
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const root = join(here, '..', 'dist');
-const trailerDir = resolve(process.env.QA_TRAILER_DIR ?? join(here, '..', '..', 'trailer', 'out', 'for-realsies'));
+const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'dist');
 const port = Number(process.argv[2] ?? process.env.QA_PORT ?? 5173);
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.mp4': 'video/mp4' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml' };
 const FRAME = `<!doctype html><html><head><meta charset="utf-8"><title>qa frame</title>
 <style>html,body{margin:0;padding:0;background:#000;overflow:hidden}iframe{border:0;display:block;position:absolute;left:0;top:0}</style></head>
 <body><iframe id="f"></iframe><script>
@@ -35,16 +31,6 @@ http
       res.writeHead(403);
       return res.end();
     }
-    if (/^trailer[\\/][^\\/]+$/.test(rel)) {
-      try {
-        const body = await readFile(join(trailerDir, rel.slice('trailer/'.length)));
-        res.writeHead(200, { 'content-type': TYPES[extname(rel)] ?? 'application/octet-stream' });
-        return res.end(body);
-      } catch {
-        res.writeHead(404);
-        return res.end();
-      }
-    }
     const file = rel || 'index.html';
     try {
       const body = await readFile(join(root, file));
@@ -56,4 +42,4 @@ http
       res.end(body);
     }
   })
-  .listen(port, () => console.log(`qa server: http://localhost:${port}/ (web/dist; /trailer/ from ${trailerDir})`));
+  .listen(port, () => console.log(`qa server: http://localhost:${port}/ (web/dist)`));

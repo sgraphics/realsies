@@ -7,7 +7,7 @@ promo and test-user keys), scoring and rating, verification bundles, persistence
 hosting of `../web/dist`, the AI builders API (access requests, botmasters, their agents' stats and
 transcripts, their own NEAR AI keys; `docs/agents.md`), and wallet sign-in: NEP-413 sessions, the browser's
 play key, plays and calls signed in the browser and checked here, deposits through the wallet (`docs/spec.md`
-section 7), and the launch page before REAL is live (`LAUNCH_*`, `PublicConfig.launch`). Spec: `docs/spec.md` sections 2 to 4 and 7 (v1.3). Protocol: `shared/protocol.ts` (v1.4).
+section 7), and the launch of REAL and the mainnet game (`LAUNCH_*`, `PublicConfig.launch`: the coming-soon page, then the auction banner). Spec: `docs/spec.md` sections 2 to 4 and 7 (v1.3). Protocol: `shared/protocol.ts` (v1.4).
 
 ## Run
 
@@ -41,11 +41,8 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `AUTH_RECIPIENT` | realsies.lol | NEP-413 recipient every sign-in signature must name: the domain the players see (a testnet relay moved to test.realsies.lol says so here) |
 | `SESSION_DAYS` | 30 | a wallet session lives this long |
 | `BUY_URL` | | "Buy REAL": the meme.cooking page before the launch finalizes, the Rhea swap after; unset = no link |
-| `LAUNCH_AUCTION_START`, `LAUNCH_AUCTION_END` | | the launch page (protocol v1.4, `PublicConfig.launch`): the meme.cooking auction's start and end, ISO times with their zone (`2026-11-08T15:00:00Z`); the end defaults to 24 hours after the start. Setting any `LAUNCH_*` turns the page on: `/` shows it and the game stays at `/play`. Before the start it counts down to it, during the auction it links "Get REAL" and counts down to the end, after the end "the game opens in a few minutes". Once the coin is set on the contract (`coinsOpen`, re-read every minute) the relay drops `launch` and the game takes `/` back by itself, no restart. A test relay (coins always open) keeps the page as long as `LAUNCH_*` is set, so set these on the mainnet relay only. A bad value stops the relay at boot |
-| `LAUNCH_TOKEN_URL` | `BUY_URL` | "Get REAL": the meme.cooking page of REAL (https) |
-| `LAUNCH_DEMO_URL` | https://test.realsies.lol | "Try the demo": the testnet game with test players (https) |
-| `LAUNCH_X_URL` | | "Follow on X" (https); unset = no link |
-| `LAUNCH_TRAILER`, `LAUNCH_POSTER` | /trailer/realsies-trailer.mp4, /trailer/poster.png | the trailer and its poster: a path on the site (nginx serves `/trailer/`, not the relay) or an https URL |
+| `LAUNCH_AUCTION_START`, `LAUNCH_AUCTION_END` | | the launch (protocol v1.4, `PublicConfig.launch`): REAL's meme.cooking auction, which opens with the mainnet game; ISO times with their zone (`2026-11-08T15:00:00Z`), the end defaulting to 24 hours after the start. Setting any `LAUNCH_*` turns it on. Until the start `/` is the coming-soon page (a countdown to the start and "Get REAL"; the game at `/play`); at the start the page hands over to the game in place, and from then `/` is the game with a banner: "REAL auction is live, ends in hh:mm, Get REAL", after the end "REAL is finalizing, coins open soon". Once the coin is set on the contract (`coinsOpen`, re-read every minute) the relay drops `launch`, pushes the config to every socket and the banner goes, no restart. Ignored with `TEST_MODE=1`: the testnet demo never shows any of it. A bad value stops the relay at boot |
+| `LAUNCH_TOKEN_URL` | `BUY_URL` | "Get REAL" (https): the meme.cooking page of REAL, on the coming-soon page (meme.cooking shows its own countdown before the auction) and in the banner; unset and no `BUY_URL`: the page shows the start time instead. `LAUNCH_DEMO_URL`, `LAUNCH_X_URL`, `LAUNCH_TRAILER` and `LAUNCH_POSTER` are no longer read (the relay warns when one is set) |
 | `PLAY_KEY_ALLOWANCE_NEAR` | 0.25 | gas allowance of the play key a browser asks its wallet to add |
 | `PLAY_GAS_TGAS` | 30 | prepaid gas of each browser-signed play and call (only burnt gas is charged; a play burns about 3 Tgas) |
 | `SIGN_TIMEOUT_SECONDS` | 20 | a browser has this long to sign a play or call (`sign_tx`); then the play goes free |
@@ -207,7 +204,7 @@ Same code with `TEST_MODE=0`. It needs, next to the testnet relay (its own unit,
 | `AUTH_RECIPIENT` | `realsies.lol` (and `test.realsies.lol` on the testnet relay once it moves there) |
 | `ROUND_MINUTES`, `FREE_CHATS_PER_DAY` | 360 and 3 |
 | `BUY_URL` | the meme.cooking page of REAL now; the Rhea swap after the launch finalizes (a restart) |
-| `LAUNCH_AUCTION_START` (`LAUNCH_AUCTION_END` if not 24 hours), `LAUNCH_TOKEN_URL`, `LAUNCH_X_URL` | the launch page at `/` until the coin is set (the game at `/play` meanwhile); never on the testnet relay, whose `/` is the judges' demo |
+| `LAUNCH_AUCTION_START` (`LAUNCH_AUCTION_END` if not 24 hours), `LAUNCH_TOKEN_URL` | the coming-soon page at `/` until the start (the game at `/play`), then the game with the auction banner until the coin is set. In `.env.mainnet`, and realsies.lol pointed at this relay: a test relay ignores them |
 | `NEAR_AI_API_KEY`, `NEAR_AI_BUDGET_USD`, `ADMIN_TOKEN`, `RELAY_ENCRYPTION_KEY` | as on testnet; its own NEAR AI budget |
 | `CHAIN` | `near` (or `auto` with the secrets file present) |
 
@@ -280,11 +277,11 @@ settling on its own with the player's results; sign-out closing the socket); bef
 coin showing up pushed to every socket); and test mode (a wallet account next to the test users, the faucet into the game
 and into the wallet, browser-signed plays only).
 
-The launch page (`test/launch.test.ts`): `LAUNCH_*` into `PublicConfig.launch` (nothing set, defaults, the 24-hour end, every
-field), the checks that stop a bad value at boot (a time without its zone, an end before the start or without one, links
-that are not https, media that are neither a site path nor https); then in-process relays: without test mode `launch` is in
-`/api/config` and the welcome until the coin is set, then dropped from both and pushed to every socket; a test relay keeps it;
-no `LAUNCH_*`, no `launch`; `/play` is the app's `index.html` like `/`.
+The launch (`test/launch.test.ts`): `LAUNCH_*` into `PublicConfig.launch` (nothing set, the 24-hour end, every field, the retired
+variables read no more), the checks that stop a bad value at boot (a time without its zone, an end before the start or without one,
+a token page that is not https); then in-process relays: without test mode `launch` is in `/api/config` and the welcome until the
+coin is set, then dropped from both and pushed to every socket; a test relay never sends it, not even with no coin on the contract; no
+`LAUNCH_*`, no `launch`; `/play` is the app's `index.html` like `/`.
 
 `npx tsx tools/wallet-proof.ts` (testnet, a throwaway deployment; 2026-11-05 on `game.rlzw-134fbb.testnet` with its own coin
 `token.rlzw-134fbb.testnet`): passed in about a minute: the sign-in, a replayed sign-in refused, the AddKey, the relay's

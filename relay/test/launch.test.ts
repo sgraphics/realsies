@@ -1,6 +1,6 @@
-// The launch page (protocol v1.4): LAUNCH_* settings into PublicConfig.launch, the checks on them, and an
-// in-process relay that sends `launch` while the contract has no coin and drops it (and tells every connection)
-// once the coin is set; a test relay keeps it while LAUNCH_* is set; no LAUNCH_* means no change; /play is the
+// The launch (protocol v1.4): LAUNCH_* settings into PublicConfig.launch, the checks on them, and in-process
+// relays: without test mode `launch` is sent until the coin is set on the contract, then dropped and pushed to
+// every connection; a test relay never sends it, whatever its env says; no LAUNCH_* means no change; /play is the
 // app's index like any other path.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AuthChallenge, LaunchConfig, PublicConfig } from '../../shared/protocol.js';
-import { AUCTION_HOURS, LAUNCH_DEFAULTS, LAUNCH_VARS, checkLaunch, launchFromEnv, loadConfig, parseIsoTime } from '../src/config.js';
+import { AUCTION_HOURS, LAUNCH_RETIRED, LAUNCH_VARS, checkLaunch, launchFromEnv, loadConfig, parseIsoTime } from '../src/config.js';
 import { createApp, type App } from '../src/app.js';
 import { MockChain } from '../src/chain/mock.js';
 import { WsClient } from './client.js';
@@ -32,95 +32,87 @@ async function startApp(extra: Record<string, unknown>, chain: MockChain): Promi
   );
 }
 
+/** A chain like mainnet before REAL: no test users, no coin on the contract yet. */
+function mainnetBeforeCoin(): MockChain {
+  const c = new MockChain();
+  c.txLatencyMs = 5;
+  c.coinsOpen = false;
+  c.testMode = false;
+  return c;
+}
+
 async function getConfig(base: string): Promise<PublicConfig> {
   const r = await fetch(base + '/api/config');
   assert.equal(r.status, 200);
   return (await r.json()) as PublicConfig;
 }
 
-test('LAUNCH_* into the launch page: nothing set, defaults, a 24-hour auction by default, every field', () => {
-  assert.equal(launchFromEnv({}), undefined, 'no LAUNCH_*: no page');
-  assert.equal(launchFromEnv({ LAUNCH_X_URL: '  ', LAUNCH_TOKEN_URL: '' }), undefined, 'empty values count as unset');
-  assert.deepEqual(launchFromEnv({ LAUNCH_X_URL: 'https://x.com/realsies' }), { demoUrl: LAUNCH_DEFAULTS.demoUrl, xUrl: 'https://x.com/realsies', trailer: LAUNCH_DEFAULTS.trailer, poster: LAUNCH_DEFAULTS.poster }, 'any one variable turns the page on; no times: not announced yet');
-  const l = launchFromEnv({ LAUNCH_AUCTION_START: START })!;
-  assert.equal(l.auctionStart, T0);
-  assert.equal(l.auctionEnd, T0 + AUCTION_HOURS * H, 'the end defaults to 24 hours after the start');
-  assert.equal(l.demoUrl, 'https://test.realsies.lol');
-  assert.equal(l.trailer, '/trailer/realsies-trailer.mp4');
-  assert.equal(l.poster, '/trailer/poster.png');
-  assert.ok(!('tokenUrl' in l) && !('xUrl' in l), 'no token page and no X link unless given');
-  const all = launchFromEnv({
-    LAUNCH_AUCTION_START: '2026-11-08T16:00:00+01:00', LAUNCH_AUCTION_END: '2026-11-09T15:30Z', LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/123',
-    LAUNCH_DEMO_URL: 'https://demo.example', LAUNCH_X_URL: 'https://x.com/realsies', LAUNCH_TRAILER: 'https://cdn.example/t.mp4', LAUNCH_POSTER: '/p.png',
-  })!;
-  assert.deepEqual(all, {
-    auctionStart: T0, auctionEnd: T0 + 24.5 * H, tokenUrl: 'https://meme.cooking/meme/123', demoUrl: 'https://demo.example', xUrl: 'https://x.com/realsies', trailer: 'https://cdn.example/t.mp4', poster: '/p.png',
-  });
-  assert.equal(LAUNCH_VARS.length, 7);
+test('LAUNCH_* into the launch: nothing set, a 24-hour auction by default, every field', () => {
+  assert.equal(launchFromEnv({}), undefined, 'no LAUNCH_*: nothing');
+  assert.equal(launchFromEnv({ LAUNCH_TOKEN_URL: '  ', LAUNCH_AUCTION_START: '' }), undefined, 'empty values count as unset');
+  assert.deepEqual(launchFromEnv({ LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/1' }), { tokenUrl: 'https://meme.cooking/meme/1' }, 'any one variable turns it on; no time: coming soon');
+  assert.equal(launchFromEnv({ LAUNCH_X_URL: 'https://x.com/realsies', LAUNCH_DEMO_URL: 'https://test.realsies.lol' }), undefined, 'the retired variables turn nothing on');
+  assert.deepEqual(launchFromEnv({ LAUNCH_AUCTION_START: START }), { auctionStart: T0, auctionEnd: T0 + AUCTION_HOURS * H }, 'the end defaults to 24 hours after the start');
+  assert.deepEqual(
+    launchFromEnv({ LAUNCH_AUCTION_START: '2026-11-08T16:00:00+01:00', LAUNCH_AUCTION_END: '2026-11-09T15:30Z', LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/123' }),
+    { auctionStart: T0, auctionEnd: T0 + 24.5 * H, tokenUrl: 'https://meme.cooking/meme/123' },
+  );
+  assert.deepEqual([...LAUNCH_VARS], ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL']);
+  assert.deepEqual([...LAUNCH_RETIRED], ['LAUNCH_DEMO_URL', 'LAUNCH_X_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER']);
 });
 
-test('the launch settings are checked: times with a zone, the end after the start, https links, site paths for the media', () => {
+test('the launch settings are checked: times with their zone, the end after the start, an https token page', () => {
   assert.equal(parseIsoTime('X', '2026-11-08T15:00:00.000Z'), T0);
   assert.equal(parseIsoTime('X', '2026-11-08T17:00+0200'), T0);
   for (const bad of ['2026-11-08T15:00:00', '2026-11-08', 'Sunday 3pm', '2026-11-08 15:00Z', ''])
     assert.throws(() => parseIsoTime('LAUNCH_AUCTION_START', bad), /LAUNCH_AUCTION_START must be an ISO time with its zone/, bad);
   assert.throws(() => launchFromEnv({ LAUNCH_AUCTION_END: START }), /LAUNCH_AUCTION_END needs LAUNCH_AUCTION_START/);
-  const ok: LaunchConfig = { auctionStart: T0, auctionEnd: T0 + H, demoUrl: 'https://test.realsies.lol', trailer: '/trailer/realsies-trailer.mp4', poster: '/trailer/poster.png' };
+  const ok: LaunchConfig = { auctionStart: T0, auctionEnd: T0 + H, tokenUrl: 'https://meme.cooking/meme/1' };
   checkLaunch(ok);
+  checkLaunch({});
   assert.throws(() => checkLaunch({ ...ok, auctionEnd: T0 }), /must be after/);
   assert.throws(() => checkLaunch({ ...ok, auctionStart: undefined }), /needs LAUNCH_AUCTION_START/);
   assert.throws(() => checkLaunch({ ...ok, auctionStart: 1_000 }), /plausible/);
   assert.throws(() => checkLaunch({ ...ok, tokenUrl: 'http://meme.cooking' }), /LAUNCH_TOKEN_URL must be an https URL/);
-  assert.throws(() => checkLaunch({ ...ok, xUrl: 'javascript:alert(1)' }), /LAUNCH_X_URL must be an https URL/);
-  assert.throws(() => checkLaunch({ ...ok, demoUrl: 'test.realsies.lol' }), /LAUNCH_DEMO_URL/);
-  assert.throws(() => checkLaunch({ ...ok, trailer: '//evil.example/t.mp4' }), /LAUNCH_TRAILER must be a path on this site/);
-  assert.throws(() => checkLaunch({ ...ok, poster: 'poster.png' }), /LAUNCH_POSTER/);
-  checkLaunch({ ...ok, trailer: 'https://cdn.example/t.mp4', poster: '/p.png?v=2' });
+  assert.throws(() => checkLaunch({ ...ok, tokenUrl: 'javascript:alert(1)' }), /LAUNCH_TOKEN_URL must be an https URL/);
 });
 
 test('loadConfig reads LAUNCH_* from the env and refuses a bad one at boot', () => {
-  const saved = Object.fromEntries(LAUNCH_VARS.map((k) => [k, process.env[k]]));
+  const names = [...LAUNCH_VARS, ...LAUNCH_RETIRED];
+  const saved = Object.fromEntries(names.map((k) => [k, process.env[k]]));
   try {
-    for (const k of LAUNCH_VARS) delete process.env[k];
-    assert.equal(loadConfig({}).launch, undefined, 'nothing set: no launch page');
-    assert.ok(!('launch' in loadConfig({})), 'and no key either');
+    for (const k of names) delete process.env[k];
+    assert.ok(!('launch' in loadConfig({})), 'nothing set: no launch');
     process.env.LAUNCH_AUCTION_START = START;
     process.env.LAUNCH_TOKEN_URL = 'https://meme.cooking/meme/123';
+    process.env.LAUNCH_X_URL = 'https://x.com/realsies';
     const cfg = loadConfig({});
-    assert.equal(cfg.launch?.auctionStart, T0);
-    assert.equal(cfg.launch?.auctionEnd, T0 + 24 * H);
-    assert.equal(cfg.launch?.tokenUrl, 'https://meme.cooking/meme/123');
+    assert.deepEqual(cfg.launch, { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123' }, 'a retired variable is not read');
     assert.equal(loadConfig({ launch: undefined }).launch, undefined, 'an override wins over the env');
     process.env.LAUNCH_AUCTION_END = '2026-11-08T14:00:00Z';
     assert.throws(() => loadConfig({}), /LAUNCH_AUCTION_END must be after LAUNCH_AUCTION_START/);
     process.env.LAUNCH_AUCTION_END = '2026-11-09T15:00';
     assert.throws(() => loadConfig({}), /LAUNCH_AUCTION_END must be an ISO time with its zone/);
   } finally {
-    for (const k of LAUNCH_VARS) {
+    for (const k of names) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
     }
   }
 });
 
-const LAUNCH: LaunchConfig = {
-  auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123', demoUrl: 'https://test.realsies.lol',
-  xUrl: 'https://x.com/realsies', trailer: '/trailer/realsies-trailer.mp4', poster: '/trailer/poster.png',
-};
+const LAUNCH: LaunchConfig = { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123' };
 
-test('a mainnet-like relay sends the launch page until the coin is set, then drops it and tells every connection', { timeout: 60_000 }, async () => {
-  const chain = new MockChain();
-  chain.txLatencyMs = 5;
-  chain.coinsOpen = false;
-  chain.testMode = false;
+test('a mainnet-like relay sends the launch until the coin is set, then drops it and tells every connection', { timeout: 60_000 }, async () => {
+  const chain = mainnetBeforeCoin();
   const app = await startApp({ testMode: false, roundMinutes: 5, buyUrl: 'https://meme.cooking/meme/123', launch: LAUNCH }, chain);
   const base = `http://localhost:${app.port}`;
   try {
     const cfg = await getConfig(base);
     assert.equal(cfg.coinsOpen, false);
-    assert.deepEqual(cfg.launch, LAUNCH, 'the launch page, times as ms epoch');
+    assert.deepEqual(cfg.launch, LAUNCH, 'the launch, times as ms epoch');
     assert.equal(app.game.launchOn(), true);
-    // a wallet player on the game at /play meanwhile: free play, and the socket hears about the coin
+    // a wallet player in the game meanwhile (free play, the auction banner): the socket hears about the coin
     const acct = 'early.testnet';
     const key = newKey();
     chain.addKey(acct, key.publicKey, 'FullAccess');
@@ -137,9 +129,8 @@ test('a mainnet-like relay sends the launch page until the coin is set, then dro
     await app.game.refreshChainConfig();
     const pushed = await ws.waitT('config', 5000);
     assert.equal(pushed.config.coinsOpen, true);
-    assert.ok(!('launch' in pushed.config), 'coins are open: no launch page in the pushed config');
-    const after = await getConfig(base);
-    assert.ok(!('launch' in after), 'nor in /api/config: the game takes over /');
+    assert.ok(!('launch' in pushed.config), 'coins are open: no launch in the pushed config (the banner goes)');
+    assert.ok(!('launch' in (await getConfig(base))), 'nor in /api/config');
     assert.equal(app.game.launchOn(), false);
     ws.close();
   } finally {
@@ -147,37 +138,39 @@ test('a mainnet-like relay sends the launch page until the coin is set, then dro
   }
 });
 
-test('a test relay keeps the launch page while LAUNCH_* is set (its coins are always open); without LAUNCH_* nothing changes', { timeout: 60_000 }, async () => {
-  const chain = new MockChain();
-  const app = await startApp({ testMode: true, launch: LAUNCH }, chain);
+test('a test relay never sends the launch, whatever its env says; without LAUNCH_* nothing changes', { timeout: 60_000 }, async () => {
+  const testRelay = await startApp({ testMode: true, launch: LAUNCH }, new MockChain());
   try {
-    const cfg = await getConfig(`http://localhost:${app.port}`);
+    const cfg = await getConfig(`http://localhost:${testRelay.port}`);
     assert.equal(cfg.testMode, true);
-    assert.equal(cfg.coinsOpen, true);
-    assert.deepEqual(cfg.launch, LAUNCH, 'to try the page on a test relay');
+    assert.ok(!('launch' in cfg), 'the testnet demo shows none of it');
+    assert.equal(testRelay.game.launchOn(), false);
   } finally {
-    await app.close();
+    await testRelay.close();
   }
-  const plain = await startApp({ testMode: false, launch: undefined }, (() => {
-    const c = new MockChain();
-    c.coinsOpen = false;
-    c.testMode = false;
-    return c;
-  })());
+  const closed = mainnetBeforeCoin();
+  closed.testMode = true;
+  const testBeforeCoin = await startApp({ testMode: true, launch: LAUNCH }, closed);
+  try {
+    assert.ok(!('launch' in (await getConfig(`http://localhost:${testBeforeCoin.port}`))), 'not even with no coin on the contract');
+  } finally {
+    await testBeforeCoin.close();
+  }
+  const plain = await startApp({ testMode: false, launch: undefined }, mainnetBeforeCoin());
   try {
     const cfg = await getConfig(`http://localhost:${plain.port}`);
     assert.equal(cfg.coinsOpen, false);
-    assert.ok(!('launch' in cfg), 'no LAUNCH_*: no launch page, even before the coin');
+    assert.ok(!('launch' in cfg), 'no LAUNCH_*: no launch, even before the coin');
     assert.equal(plain.game.launchOn(), false);
   } finally {
     await plain.close();
   }
 });
 
-test('/play is the web app like / (the game stays reachable while the launch page is up)', { timeout: 60_000 }, async () => {
+test('/play is the web app like / (the game stays reachable before the start)', { timeout: 60_000 }, async () => {
   const dist = tmpDir('realsies-launch-dist-');
   fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><title>Realsies</title><div id="app"></div>');
-  const app = await startApp({ testMode: false, launch: LAUNCH, webDist: dist }, new MockChain());
+  const app = await startApp({ testMode: false, launch: LAUNCH, webDist: dist }, mainnetBeforeCoin());
   try {
     for (const p of ['/', '/play', '/play/', '/agents']) {
       const r = await fetch(`http://localhost:${app.port}${p}`);

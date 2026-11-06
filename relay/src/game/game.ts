@@ -7,7 +7,7 @@ import {
   type TestUser, type VerifyBundle,
 } from '../../../shared/protocol.js';
 import { gamertag } from '../../../shared/names.js';
-import type { Config } from '../config.js';
+import { LAUNCH_RETIRED, type Config } from '../config.js';
 import type { Db } from '../db.js';
 import type { ChainAdapter, ChainConfig, Opening, TxOutcome } from '../chain/types.js';
 import type { AuthService, SessionRec } from '../auth/service.js';
@@ -253,27 +253,26 @@ export class Game implements BotHost {
   }
 
   /**
-   * The launch page at / (protocol v1.4): while LAUNCH_* is set, until the coin is set on the contract. A test
-   * relay (TEST_MODE=1) always has coins, so there it shows for as long as LAUNCH_* is set (to try the page).
+   * The launch (protocol v1.4): while LAUNCH_* is set, until the coin is set on the contract, and never with test
+   * mode on (the testnet demo shows none of it, whatever its env says).
    */
   launchOn(): boolean {
-    return !!this.cfg.launch && (this.cfg.testMode || !this.chainCfg.coinsOpen);
+    return !!this.cfg.launch && !this.cfg.testMode && !this.chainCfg.coinsOpen;
   }
 
   private logLaunch(): void {
+    const retired = LAUNCH_RETIRED.filter((k) => process.env[k]?.trim());
+    if (retired.length) log.warn(`${retired.join(', ')}: no longer read (the coming-soon page is the countdown and Get REAL only)`);
     const l = this.cfg.launch;
     if (!l) return;
     const at = (t?: number) => (t === undefined ? 'not announced' : new Date(t).toISOString());
-    if (this.launchOn()) {
-      log.info(`launch page at / (the game stays at /play): auction ${at(l.auctionStart)} to ${at(l.auctionEnd)}, "Get REAL" ${l.tokenUrl ?? this.cfg.buyUrl ?? 'not set yet'}, demo ${l.demoUrl}`);
-    } else log.info('LAUNCH_* is set, but coins are open: no launch page, the game is at /');
-    let demoHost = '';
-    try {
-      demoHost = new URL(l.demoUrl).hostname;
-    } catch {
-      /* checked in loadConfig */
-    }
-    if (demoHost === this.cfg.authRecipient) log.warn(`LAUNCH_DEMO_URL is this very site (${l.demoUrl}): "Try the demo" on the launch page would link to the page itself; set LAUNCH_* on the mainnet relay only`);
+    if (this.cfg.testMode) log.warn('LAUNCH_* is ignored in test mode: the testnet demo never shows the coming-soon page or the auction banner');
+    else if (this.launchOn()) {
+      log.info(
+        `launch: / is the coming-soon page until ${at(l.auctionStart)} (the game at /play meanwhile), then the game with the auction banner ` +
+          `until ${at(l.auctionEnd)} and "coins open soon" until the coin is set; "Get REAL" ${l.tokenUrl ?? this.cfg.buyUrl ?? 'not set yet'}`,
+      );
+    } else log.info('LAUNCH_* is set, but coins are open: no coming-soon page or banner, the game is at /');
   }
 
   /**
@@ -295,7 +294,7 @@ export class Game implements BotHost {
       this.chainCfg = c;
       this.coinUnit = c.coinUnit;
       this.publicConfig = this.makePublicConfig();
-      if (opened) log.info(`coins are open: ${c.token}, coin unit ${c.coinUnit}${this.cfg.launch && !this.launchOn() ? '; the launch page is off, the game is at /' : ''}`);
+      if (opened) log.info(`coins are open: ${c.token}, coin unit ${c.coinUnit}${this.cfg.launch && !this.launchOn() ? '; the launch banner is gone' : ''}`);
       if (JSON.stringify(this.publicConfig) !== before) this.broadcast({ t: 'config', config: this.publicConfig });
     } catch (e) {
       log.debug(`get_config: ${errMsg(e)}`);

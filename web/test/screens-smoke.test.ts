@@ -135,6 +135,7 @@ const { DepositDialog } = await import('../src/screens/Deposit.tsx');
 const { MockWallet } = await import('../src/wallet/mock.ts');
 const { LaunchPage } = await import('../src/launch/LaunchPage.tsx');
 const { mockLaunch } = await import('../src/launch/phase.ts');
+const { LaunchBanner } = await import('../src/ui/LaunchBanner.tsx');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EV = join(here, '..', '..', 'experiments', 'near-ai', 'evidence', '2026-11-04');
@@ -293,38 +294,62 @@ try {
   cs.actions.logout();
   closedClient.dispose();
 
-  // the launch page (protocol v1.4), each phase, then the coin set while it is open
-  const launchText: Record<string, string> = {};
-  for (const phase of ['soon', 'auction', 'finalizing'] as const) {
-    const lc = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch(phase), buyUrl: 'https://meme.cooking', storageKey: null, timeScale: 0.02 });
-    render(h(LaunchPage, { client: lc, config: await lc.getConfig(), pollMs: 20 }), root as unknown as Element);
-    await sleep(40);
-    launchText[phase] = root.textContent;
+  // the launch (protocol v1.4): the coming-soon page, minimal; the time instead of Get REAL without a token page;
+  // the moment it goes live (CHAT!, then the game in place); then the banner in the game, phase by phase
+  const soonClient = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon'), buyUrl: 'https://meme.cooking', storageKey: null, timeScale: 0.02 });
+  let handed = 0;
+  render(h(LaunchPage, { client: soonClient, config: await soonClient.getConfig(), onLive: () => handed++, pollMs: 20 }), root as unknown as Element);
+  await sleep(60);
+  const st = root.textContent;
+  ok(/Real or not\?/.test(st) && /The game and REAL go live in/.test(st) && /days/.test(st) && /hrs/.test(st) && /Get REAL/.test(st) && /18\+/.test(st) && /Terms/.test(st), 'coming soon: the headline, the countdown, Get REAL, 18+ and terms: ' + st.slice(0, 90));
+  ok(!/Try the demo|demo|For AI builders|Follow on X|trailer|Play coins|Chat two minutes|provable|enclave/i.test(st), 'and nothing else: no demo, AI builders, X, trailer, steps or proof');
+  ok(!/wallet|Sign in/i.test(st) && handed === 0, 'no wallet prompt; still waiting for the start');
+  render(null, root as unknown as Element);
+  soonClient.dispose();
+  const noToken = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), { token: false }), storageKey: null, timeScale: 0.02 });
+  render(h(LaunchPage, { client: noToken, config: await noToken.getConfig(), onLive() {}, pollMs: 60_000 }), root as unknown as Element);
+  await sleep(40);
+  const nt = root.textContent;
+  ok(!/Get REAL/.test(nt) && /\d{1,2}:\d\d/.test(nt) && /The game and REAL go live in/.test(nt), 'no token page yet: the time instead of Get REAL: ' + (nt.match(/[A-Z][a-z]{2}[^]*?UTC|\d{1,2}:\d\d[^]{0,12}/)?.[0] ?? ''));
+  render(null, root as unknown as Element);
+  noToken.dispose();
+  const goClient = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), { startInMs: 150 }), storageKey: null, timeScale: 0.02 });
+  let went = 0;
+  render(h(LaunchPage, { client: goClient, config: await goClient.getConfig(), onLive: () => went++, pollMs: 60_000 }), root as unknown as Element);
+  await sleep(40);
+  ok(/The game and REAL go live in/.test(root.textContent) && went === 0, 'counting down to the start');
+  await sleep(500);
+  ok(/The game is open/.test(root.textContent) && went === 0, 'zero: "The game is open" and CHAT!, the page still up');
+  await sleep(1800);
+  ok(went === 1, 'then it hands over to the game in place (no reload)');
+  render(null, root as unknown as Element);
+  goClient.dispose();
+
+  const bannerText = async (o: { phase?: 'soon' | 'auction' | 'finalizing'; testMode?: boolean; chat?: boolean; open?: boolean }) => {
+    const bc = new MockGameClient({ wallet: !o.testMode, coinsOpen: false, ...(o.phase ? { launch: mockLaunch(o.phase) } : {}), buyUrl: 'https://meme.cooking', storageKey: null, timeScale: 0.02 });
+    if (o.open) bc.openCoins();
+    const bs = createStore(bc);
+    await bs.actions.loadConfig();
+    render(h(LaunchBanner, { store: bs, chat: o.chat }), root as unknown as Element);
+    await sleep(20);
+    const t = root.textContent;
     render(null, root as unknown as Element);
-    lc.dispose();
-  }
-  const every = (t: string) => /Real or not\?/.test(t) && /two minutes with a stranger/.test(t) && /Watch the trailer/.test(t) && /Try the demo/.test(t) && /testnet/.test(t) && /For AI builders/.test(t) && /Follow on X/.test(t)
-    && /Play coins/.test(t) && /Chat two minutes/.test(t) && /Call: human\?/.test(t) && /NEAR AI enclaves sign every word/.test(t) && /contract on NEAR checks it/.test(t) && /18\+/.test(t) && /Terms/.test(t);
-  ok(every(launchText.soon) && every(launchText.auction) && every(launchText.finalizing), 'launch page: logo line, trailer, the four links, three steps, the proof, 18+ and terms in every phase');
-  ok(/REAL launches on meme\.cooking/.test(launchText.soon) && /Auction opens in/.test(launchText.soon) && /days/.test(launchText.soon) && /Auction opens \w/.test(launchText.soon) && !/Get REAL/.test(launchText.soon), 'soon: the countdown to the start, "Auction opens ..." instead of Get REAL');
-  ok(/REAL is live on meme\.cooking/.test(launchText.auction) && /Auction ends in/.test(launchText.auction) && /Get REAL/.test(launchText.auction) && /hrs/.test(launchText.auction), 'auction: live, the countdown to the end, Get REAL');
-  ok(/The auction is over/.test(launchText.finalizing) && /The game opens in a few minutes/.test(launchText.finalizing) && /updates by itself/.test(launchText.finalizing) && !/Auction ends in/.test(launchText.finalizing), 'finalizing: the game opens in a few minutes');
-  ok(!/wallet/i.test(launchText.soon.replace(/no wallet/g, '')) && !/Sign in/.test(launchText.auction), 'no wallet prompt on the page');
-  const oc = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('finalizing'), storageKey: null, timeScale: 0.02, opensAfterMs: 60 });
-  render(h(LaunchPage, { client: oc, config: await oc.getConfig(), pollMs: 20 }), root as unknown as Element);
-  await sleep(30);
-  ok(/The game opens in a few minutes/.test(root.textContent), 'before the coin: finalizing');
-  await sleep(200);
-  const to = root.textContent;
-  ok(/The game is open/.test(to) && /Play now/.test(to) && /Watch the trailer/.test(to), 'the coin set while the page is up: "The game is open", Play now, and the page stays');
-  render(null, root as unknown as Element);
-  oc.dispose();
-  const noX = new MockGameClient({ wallet: true, coinsOpen: false, launch: { ...mockLaunch('auction'), xUrl: undefined, tokenUrl: undefined }, storageKey: null, timeScale: 0.02 });
-  render(h(LaunchPage, { client: noX, config: await noX.getConfig(), pollMs: 60_000 }), root as unknown as Element);
-  await sleep(30);
-  ok(!/Follow on X/.test(root.textContent) && !/Get REAL/.test(root.textContent) && /Try the demo/.test(root.textContent), 'no X link without LAUNCH_X_URL; no Get REAL without a token page or Buy link');
-  render(null, root as unknown as Element);
-  noX.dispose();
+    bc.dispose();
+    return t;
+  };
+  const ba = await bannerText({ phase: 'auction' });
+  ok(/REAL auction (is )?live/.test(ba) && /\d\d:\d\d/.test(ba) && /Get REAL/.test(ba), 'the game during the auction: "REAL auction is live, ends in hh:mm, Get REAL": ' + ba);
+  const bf = await bannerText({ phase: 'finalizing' });
+  ok(/REAL is finalizing/.test(bf) && /coins open soon/.test(bf) && !/Get REAL/.test(bf), 'after it: "REAL is finalizing, coins open soon": ' + bf);
+  ok((await bannerText({ phase: 'soon' })) === '', 'before the start (the game at /play): no banner');
+  ok((await bannerText({ phase: 'auction', open: true })) === '', 'coins open: the banner is gone');
+  ok((await bannerText({ phase: 'auction', testMode: true })) === '', 'the testnet demo: never');
+  ok((await bannerText({})) === '', 'no launch: no banner');
+  g.innerWidth = 390;
+  ok((await bannerText({ phase: 'auction', chat: true })) === '', 'in a chat on a phone it steps aside (the chat input keeps its room)');
+  g.innerWidth = 1280;
+  ok(/REAL auction is live/.test(await bannerText({ phase: 'auction', chat: true })), 'in a chat on a wide screen it stays');
+  g.innerWidth = 390;
 } catch (e) {
   failures++;
   console.log('  FAIL', e);
@@ -338,7 +363,7 @@ for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx',
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }
-for (const f of ['LaunchPage.tsx', 'Trailer.tsx', 'BigClock.tsx', 'phase.ts', 'index.tsx']) {
+for (const f of ['LaunchPage.tsx', 'BigClock.tsx', 'phase.ts', 'index.tsx', '../ui/LaunchBanner.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'launch', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `launch/${f}: no banned vocabulary`);
 }

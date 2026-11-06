@@ -116,17 +116,18 @@ export interface Config {
   playGasTgas: number;
   /** seconds a browser has to sign a play or call before the play goes free (or the call is not on chain) */
   signTimeoutSeconds: number;
-  // ---------- the launch page (protocol v1.4) ----------
+  // ---------- the launch (protocol v1.4) ----------
   /**
-   * The launch page at / (PublicConfig.launch) while REAL is not live: on when any LAUNCH_* variable is set
-   * (see launchFromEnv). A relay without test mode stops sending it once the coin is set on the contract.
+   * The launch of REAL and the mainnet game (PublicConfig.launch): on when any LAUNCH_* variable is set (see
+   * launchFromEnv). Sent only without test mode, and only until the coin is set on the contract.
    */
   launch?: LaunchConfig;
 }
 
-/** Every variable of the launch page; setting any one of them turns the page on. */
-export const LAUNCH_VARS = ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_DEMO_URL', 'LAUNCH_X_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER'] as const;
-export const LAUNCH_DEFAULTS = { demoUrl: 'https://test.realsies.lol', trailer: '/trailer/realsies-trailer.mp4', poster: '/trailer/poster.png' } as const;
+/** Every variable of the launch; setting any one of them turns it on. */
+export const LAUNCH_VARS = ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL'] as const;
+/** Variables of the first launch page (demo, AI builders, X, trailer), no longer read: the relay warns when one is set. */
+export const LAUNCH_RETIRED = ['LAUNCH_DEMO_URL', 'LAUNCH_X_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER'] as const;
 /** The meme.cooking auction runs this long when LAUNCH_AUCTION_END is not given. */
 export const AUCTION_HOURS = 24;
 
@@ -138,7 +139,7 @@ export function parseIsoTime(name: string, value: string): number {
   return t;
 }
 
-/** The launch page from LAUNCH_* (undefined when none is set): times as ms epoch, defaults filled in. */
+/** The launch from LAUNCH_* (undefined when none is set): times as ms epoch, the end defaulting to 24 hours on. */
 export function launchFromEnv(env: NodeJS.ProcessEnv): LaunchConfig | undefined {
   const get = (k: (typeof LAUNCH_VARS)[number]) => env[k]?.trim() || undefined;
   if (!LAUNCH_VARS.some((k) => get(k))) return undefined;
@@ -148,32 +149,22 @@ export function launchFromEnv(env: NodeJS.ProcessEnv): LaunchConfig | undefined 
   if (end !== undefined && auctionStart === undefined) throw new Error('LAUNCH_AUCTION_END needs LAUNCH_AUCTION_START');
   const auctionEnd = end !== undefined ? parseIsoTime('LAUNCH_AUCTION_END', end) : auctionStart !== undefined ? auctionStart + AUCTION_HOURS * 3_600_000 : undefined;
   const tokenUrl = get('LAUNCH_TOKEN_URL');
-  const xUrl = get('LAUNCH_X_URL');
   return {
     ...(auctionStart !== undefined ? { auctionStart } : {}),
     ...(auctionEnd !== undefined ? { auctionEnd } : {}),
     ...(tokenUrl ? { tokenUrl } : {}),
-    demoUrl: get('LAUNCH_DEMO_URL') ?? LAUNCH_DEFAULTS.demoUrl,
-    ...(xUrl ? { xUrl } : {}),
-    trailer: get('LAUNCH_TRAILER') ?? LAUNCH_DEFAULTS.trailer,
-    poster: get('LAUNCH_POSTER') ?? LAUNCH_DEFAULTS.poster,
   };
 }
 
 const HTTPS_URL = /^https:\/\/[^\s"'<>\\]+$/;
-/** A path on this site ("/trailer/poster.png", not "//host") or an https URL. */
-const SITE_OR_HTTPS = /^(https:\/\/[^\s"'<>\\]+|\/(?!\/)[^\s"'<>\\]*)$/;
 
-/** Throws on a launch page the web could not show as meant. */
+/** Throws on launch settings the web could not show as meant. */
 export function checkLaunch(l: LaunchConfig): void {
   if (l.auctionEnd !== undefined && l.auctionStart === undefined) throw new Error('LAUNCH_AUCTION_END needs LAUNCH_AUCTION_START');
   for (const [k, t] of [['LAUNCH_AUCTION_START', l.auctionStart], ['LAUNCH_AUCTION_END', l.auctionEnd]] as const)
     if (t !== undefined && !(Number.isFinite(t) && t > Date.UTC(2020, 0, 1) && t < Date.UTC(2100, 0, 1))) throw new Error(`${k} is not a plausible time`);
   if (l.auctionStart !== undefined && l.auctionEnd !== undefined && !(l.auctionEnd > l.auctionStart)) throw new Error('LAUNCH_AUCTION_END must be after LAUNCH_AUCTION_START');
-  for (const [k, v] of [['LAUNCH_TOKEN_URL', l.tokenUrl], ['LAUNCH_DEMO_URL', l.demoUrl], ['LAUNCH_X_URL', l.xUrl]] as const)
-    if (v !== undefined && !HTTPS_URL.test(v)) throw new Error(`${k} must be an https URL`);
-  for (const [k, v] of [['LAUNCH_TRAILER', l.trailer], ['LAUNCH_POSTER', l.poster]] as const)
-    if (!SITE_OR_HTTPS.test(v)) throw new Error(`${k} must be a path on this site (like /trailer/poster.png) or an https URL`);
+  if (l.tokenUrl !== undefined && !HTTPS_URL.test(l.tokenUrl)) throw new Error('LAUNCH_TOKEN_URL must be an https URL');
 }
 
 function num(name: string, def: number): number {

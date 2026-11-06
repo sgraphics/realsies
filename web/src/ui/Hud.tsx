@@ -18,6 +18,7 @@ import { Logo } from './Logo.tsx';
 import { setHudHeight } from './hudSize.ts';
 import { DevMenu } from '../screens/DevMenu.tsx';
 import { agentsHref } from '../agents/route.ts';
+import { LaunchBanner } from './LaunchBanner.tsx';
 
 export type HudKind = 'lobby' | 'chat' | 'call' | 'who';
 
@@ -236,6 +237,8 @@ export function Hud(p: HudProps) {
   const shortAccount = walletAccount && walletAccount.length > 22 ? `${walletAccount.slice(0, 8)}…${walletAccount.slice(-8)}` : walletAccount;
   return (
     <header ref={ref} class={'hud hud-' + kind} role="banner">
+      {/* REAL's auction (mainnet): measured with the HUD, so the world lays out under it */}
+      <LaunchBanner store={store} chat={kind === 'chat'} />
       <div class="hud-bar">
         {cells}
         <span class="hud-break" aria-hidden="true" />

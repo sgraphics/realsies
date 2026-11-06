@@ -4,8 +4,10 @@
 //   &coins=closed               the contract has no coin yet: free play only
 //   &hold=signIn|key|tx         the mock wallet never answers that step (QA: "waiting for your wallet")
 //   &reject=signIn|key|tx       the player closes the mock wallet at that step
-//   &launch=soon|auction|finalizing   a mainnet relay before REAL is live: the launch page at /, the game
-//                               (wallet sign-in, no coin yet) at /play; &opens=5 sets the coin 5 s in
+//   &launch=soon|auction|finalizing   a mainnet relay before REAL is live (wallet sign-in, no coin yet): soon is
+//                               the coming-soon page at / (the game at /play), auction and finalizing the game
+//                               with its banner; &startin=3 starts the auction 3 s in (the page turns into the
+//                               game), &opens=5 sets the coin 5 s in (the banner goes), &notoken=1 no token page
 
 import type { GameClient } from '../../../shared/protocol.ts';
 import { MockGameClient, type MockOptions, resetMockState } from './mock.ts';
@@ -34,6 +36,8 @@ export function createClient(search?: string): GameClient {
     const searchMs = Number(q.get('searchms')); // QA: hold the search this long (screenshots of "finding someone")
     const launch = mockLaunchOf(q.toString());
     const opens = Number(q.get('opens'));
+    const startIn = Number(q.get('startin'));
+    const token = q.get('notoken') !== '1';
     const client = new MockGameClient({
       longNames: q.get('longnames') === '1',
       ...(round > 1 ? { startRoundId: round } : {}),
@@ -43,7 +47,8 @@ export function createClient(search?: string): GameClient {
       ...(q.get('coins') === 'closed' ? { coinsOpen: false } : {}),
       ...(launch
         ? {
-            wallet: true, coinsOpen: false, buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:launch:v1', launch: mockLaunch(launch),
+            wallet: true, mainnet: true, coinsOpen: false, storageKey: 'realsies:mock:launch:v1', ...(token ? { buyUrl: MOCK_BUY_URL } : {}),
+            launch: mockLaunch(launch, Date.now(), { token, ...(q.get('startin') !== null && startIn >= 0 ? { startInMs: startIn * 1000 } : {}) }),
             ...(opens >= 0 && q.get('opens') !== null ? { opensAfterMs: opens * 1000 } : {}),
           }
         : {}),
@@ -61,7 +66,7 @@ export function createWallet(client: GameClient, network: () => 'mainnet' | 'tes
     const step = (v: string | null): MockWalletOptions['hold'] => (v === 'signIn' || v === 'key' || v === 'tx' ? v : v === '1' ? true : undefined);
     const as = q.get('as');
     const wallet = new MockWallet(client, {
-      ...(as && q.get('wallet') === '1' ? { accountId: as.includes('.') ? as : `${as}.testnet` } : {}),
+      ...(as && (q.get('wallet') === '1' || mockLaunchOf(q.toString())) ? { accountId: as.includes('.') ? as : `${as}.testnet` } : {}),
       hold: step(q.get('hold')),
       reject: step(q.get('reject')),
     });

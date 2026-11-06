@@ -72,8 +72,10 @@ export interface MockOptions {
   signTimeoutMs?: number;
   /** the launch page (protocol v1.4): PublicConfig.launch, until coins open */
   launch?: LaunchConfig;
-  /** the coin is set this many ms after start (coinsOpen turns true, the launch page goes): QA of "the game is open" */
+  /** the coin is set this many ms after start (coinsOpen turns true, the launch banner goes) */
   opensAfterMs?: number;
+  /** the public config says mainnet (REAL, mainnet explorer links): the launch mock; the ledger is the same */
+  mainnet?: boolean;
 }
 
 /** The relay's words for bots_unavailable on a search (the web shows its own calm note instead). */
@@ -91,13 +93,13 @@ function apiError(code: string, message: string, status = 400): Error {
 }
 
 /** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
-export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch'> = {}): PublicConfig {
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet'> = {}): PublicConfig {
   return {
     testMode: !opts.wallet,
-    network: 'testnet',
+    network: opts.mainnet ? 'mainnet' : 'testnet',
     contractId: 'game.realsies.testnet',
     tokenId: 'real.realsies.testnet',
-    tokenSymbol: 'tREAL',
+    tokenSymbol: opts.mainnet ? 'REAL' : 'tREAL',
     coinUnit: '1000000000000000000',
     usdPerCoin: 0.01,
     presets: { 1: [5, 10, 25], 2: [25, 50, 100], 3: [100, 250, 500] },
@@ -109,8 +111,8 @@ export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds'
     feeBps: 500,
     freeChatsPerDay: 0,
     countdownSeconds: opts.countdownSeconds ?? 3,
-    explorerTx: 'https://testnet.nearblocks.io/txns/{hash}',
-    explorerAccount: 'https://testnet.nearblocks.io/address/{account}',
+    explorerTx: `https://${opts.mainnet ? '' : 'testnet.'}nearblocks.io/txns/{hash}`,
+    explorerAccount: `https://${opts.mainnet ? '' : 'testnet.'}nearblocks.io/address/{account}`,
     coinsOpen: opts.coinsOpen ?? true,
     ...(opts.buyUrl ? { buyUrl: opts.buyUrl } : {}),
     tokenDecimals: 18,

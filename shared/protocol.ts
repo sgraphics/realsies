@@ -1,4 +1,4 @@
-// Realsies relay <-> web protocol, v1.4 (2026-11-06: PublicConfig.launch, the launch page at / before REAL is live; additive).
+// Realsies relay <-> web protocol, v1.4 (2026-11-06: PublicConfig.launch, the coming-soon page and the auction banner; additive).
 // v1.3 (2026-11-05): wallet sign-in with NEP-413 sessions, play keys, player-signed plays and calls, wallet deposits; all additive.
 // v1.2 (2026-11-05): chat countdown, persona cards, AI builders.
 // Authoritative. Owned by the lead; workstreams import it and do not edit it.
@@ -85,32 +85,25 @@ export interface PublicConfig {
   wallet?: WalletConfig;
   // ----- v1.4, optional -----
   /**
-   * The launch page: while set, `/` shows it instead of the game (the game stays at `/play`). Sent by a relay
-   * with LAUNCH_* settings until the coin is set on the contract; a relay without test mode drops it once
-   * `coinsOpen` is true, and the web treats `coinsOpen` on such a relay as the end of the launch either way.
+   * The launch of REAL and the mainnet game: sent by a relay without test mode that has LAUNCH_* settings, until
+   * the coin is set on the contract (`coinsOpen`). A test relay never sends it, and the web ignores it on one.
    */
   launch?: LaunchConfig;
 }
 
-// ---------- the launch page (v1.4) ----------
-// REAL is raised in a meme.cooking auction. Before it opens the page counts down to its start, while it runs
-// it links "Get REAL" and counts down to its end; after the end, until the coin is set on the game contract,
-// the game "opens in a few minutes". The phase follows the visitor's clock; the page re-reads the config.
+// ---------- the launch (v1.4) ----------
+// REAL is raised in a meme.cooking auction, and the auction and the mainnet game open at the same moment. Before
+// it, `/` is a coming-soon page: a countdown to the start and "Get REAL" (the game is at `/play` all along). From
+// the start `/` is the game, with a banner while the auction runs ("ends in hh:mm · Get REAL") and after it until
+// coins open ("coins open soon"). The phase follows the visitor's clock.
 
 export interface LaunchConfig {
-  /** ms epoch the auction opens; absent = not announced yet */
+  /** ms epoch the auction opens, and the game at `/` with it; absent = not announced yet (coming soon) */
   auctionStart?: number;
   /** ms epoch it ends (the relay's default: 24 hours after the start) */
   auctionEnd?: number;
   /** the meme.cooking page of REAL; absent = PublicConfig.buyUrl, if any */
   tokenUrl?: string;
-  /** the testnet demo with test players, e.g. "https://test.realsies.lol" */
-  demoUrl: string;
-  /** the game's X profile; absent = no "Follow on X" */
-  xUrl?: string;
-  /** the trailer (MP4) and its poster: a path on this site or an https URL */
-  trailer: string;
-  poster: string;
 }
 
 // ---------- wallet sign-in (v1.3) ----------

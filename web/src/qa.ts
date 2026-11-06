@@ -21,7 +21,7 @@
 //   &as=sam&qa=deposit             the wallet deposit dialog (200 test coins in the wallet, none in the game)
 //   &as=sam&qa=coins               coins enabled and 45 deposited: deposit, withdraw, key status
 //   &coins=closed                  the contract has no coin yet: "Coins open when REAL launches"
-// The launch page at / before REAL is live (?mock=1&launch=soon|auction|finalizing): see src/launch/index.tsx.
+// The launch (?mock=1&launch=soon|auction|finalizing): the coming-soon page, then the game with its auction banner; see src/net/index.ts.
 // Only active together with ?mock=1.
 
 import type { Level } from '../../shared/protocol.ts';
@@ -29,6 +29,7 @@ import type { Store, AppState } from './state/store.ts';
 import { acceptTerms } from './state/consent.ts';
 import { isCounting } from './state/countdown.ts';
 import { EVIDENCE_CHAT_ID } from './net/mock/evidence.ts';
+import { mockLaunchOf } from './launch/phase.ts';
 
 export interface QaPlan {
   step: string;
@@ -90,7 +91,8 @@ export async function runQa(store: Store, search: string, open: (what: string, a
     open('terms');
     return;
   }
-  const walletMode = q.get('mock') === '1' && q.get('wallet') === '1';
+  // a mainnet-like mock (&wallet=1, or &launch=: before REAL) signs in with the mock wallet
+  const walletMode = q.get('mock') === '1' && (q.get('wallet') === '1' || mockLaunchOf(search) !== null);
   if (walletMode && !q.get('as')) {
     // the sign-in screens: waiting for the wallet, or the wallet closed
     if (q.get('qa') === 'signin-wait' || q.get('qa') === 'signin-error') {

@@ -17,7 +17,7 @@ import { applyUiScale } from './ui/theme.ts';
 import { chooseScale } from '../../art/src/scene/layout.ts';
 import { hudHeight } from './ui/hudSize.ts';
 import { routeOf } from './agents/route.ts';
-import { isPlayPath, launchShown } from './launch/phase.ts';
+import { comingSoon, isPlayPath } from './launch/phase.ts';
 
 if (/[?&]qa=|[?&]as=/.test(location.search)) document.documentElement.classList.add('qa');
 const route = routeOf(location.pathname);
@@ -63,11 +63,12 @@ if (route === 'game') {
   const client = createClient();
   if (isPlayPath(location.pathname)) startGame(client);
   else {
-    // `/` is the launch page while the relay sends one (mainnet before REAL is live), else the game
+    // `/` is the coming-soon page until REAL's auction opens (mainnet), then the game; when the countdown runs
+    // out the page hands over to the game in place, no reload
     void firstConfig(client).then((cfg) => {
-      if (!launchShown(cfg)) return startGame(client);
+      if (!cfg || !comingSoon(cfg, Date.now())) return startGame(client);
       import('./launch/index.tsx')
-        .then((m) => m.start(root, client, cfg))
+        .then((m) => m.start(root, client, cfg, () => startGame(client)))
         .catch((e) => {
           console.error(e);
           root.textContent = 'This page did not load. Please reload.';
