@@ -93,7 +93,8 @@ export interface PublicConfig {
 
 // ---------- the launch (v1.4) ----------
 // REAL is raised in a meme.cooking auction, and the auction and the mainnet game open at the same moment. Before
-// it, `/` is a coming-soon page: a countdown to the start and "Get REAL" (the game is at `/play` all along). From
+// it, `/` is a coming-soon page: a countdown to the start, "Get REAL", and a silent trailer teaser that opens the launch
+// tweet on X (or the account until there is one; the game is at `/play` all along). From
 // the start `/` is the game, with a banner while the auction runs ("ends in hh:mm · Get REAL") and after it until
 // coins open ("coins open soon"). The phase follows the visitor's clock.
 
@@ -104,6 +105,10 @@ export interface LaunchConfig {
   auctionEnd?: number;
   /** the meme.cooking page of REAL; absent = PublicConfig.buyUrl, if any */
   tokenUrl?: string;
+  /** the launch tweet with the trailer (x.com or twitter.com): where the coming-soon page's video card goes */
+  videoUrl?: string;
+  /** the game's X account: where the video card goes until there is a launch tweet; neither = no card */
+  xUrl?: string;
 }
 
 // ---------- wallet sign-in (v1.3) ----------

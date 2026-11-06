@@ -302,10 +302,34 @@ try {
   await sleep(60);
   const st = root.textContent;
   ok(/Real or not\?/.test(st) && /The game and REAL go live in/.test(st) && /days/.test(st) && /hrs/.test(st) && /Get REAL/.test(st) && /18\+/.test(st) && /Terms/.test(st), 'coming soon: the headline, the countdown, Get REAL, 18+ and terms: ' + st.slice(0, 90));
-  ok(!/Try the demo|demo|For AI builders|Follow on X|trailer|Play coins|Chat two minutes|provable|enclave/i.test(st), 'and nothing else: no demo, AI builders, X, trailer, steps or proof');
+  ok(!/Try the demo|demo|For AI builders|Play coins|Chat two minutes|provable|enclave/i.test(st), 'and nothing else: no demo, AI builders, steps or proof');
   ok(!/wallet|Sign in/i.test(st) && handed === 0, 'no wallet prompt; still waiting for the start');
+  // the video card: one link to the launch tweet, in a new tab; the teaser loop under it
+  const nodes = (n: FNode, out: FNode[] = []): FNode[] => {
+    out.push(n);
+    for (const c of n.childNodes) nodes(c, out);
+    return out;
+  };
+  const card = nodes(root).find((n) => String(n.attrs.class ?? n.className).split(' ').includes('ln-teaser'));
+  const vid = card && nodes(card).find((n) => n.localName === 'video');
+  ok(/Watch the trailer on X/.test(st) && card?.attrs.href === mockLaunch('soon').videoUrl && card?.attrs.target === '_blank' && card?.attrs.rel === 'noopener', 'the video card opens the launch tweet in a new tab, rel noopener: ' + card?.attrs.href);
+  ok(vid?.attrs.src === '/launch-teaser.mp4' && vid?.attrs.poster === '/launch-teaser.png' && vid?.attrs.preload === 'metadata', 'the teaser and its poster, preload metadata');
   render(null, root as unknown as Element);
   soonClient.dispose();
+  const cardText = async (o: { tweet?: boolean; x?: boolean }) => {
+    const c = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), o), storageKey: null, timeScale: 0.02 });
+    render(h(LaunchPage, { client: c, config: await c.getConfig(), onLive() {}, pollMs: 60_000 }), root as unknown as Element);
+    await sleep(30);
+    const t = root.textContent;
+    const a = nodes(root).find((n) => String(n.attrs.class ?? n.className).split(' ').includes('ln-teaser'));
+    render(null, root as unknown as Element);
+    c.dispose();
+    return { t, href: a?.attrs.href };
+  };
+  const acct = await cardText({ tweet: false });
+  ok(/Follow @realsieslol on X/.test(acct.t) && acct.href === 'https://x.com/realsieslol' && !/Watch the trailer/.test(acct.t), 'no launch tweet yet: the card opens the account');
+  const nox = await cardText({ x: false });
+  ok(nox.href === undefined && !/on X/.test(nox.t) && /Get REAL/.test(nox.t), 'no X link: no card, the countdown and Get REAL as before');
   const noToken = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), { token: false }), storageKey: null, timeScale: 0.02 });
   render(h(LaunchPage, { client: noToken, config: await noToken.getConfig(), onLive() {}, pollMs: 60_000 }), root as unknown as Element);
   await sleep(40);
@@ -320,6 +344,7 @@ try {
   ok(/The game and REAL go live in/.test(root.textContent) && went === 0, 'counting down to the start');
   await sleep(500);
   ok(/The game is open/.test(root.textContent) && went === 0, 'zero: "The game is open" and CHAT!, the page still up');
+  ok(!/on X/.test(root.textContent), 'the video card is the coming-soon phase only');
   await sleep(1800);
   ok(went === 1, 'then it hands over to the game in place (no reload)');
   render(null, root as unknown as Element);

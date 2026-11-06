@@ -48,6 +48,34 @@ export function tokenUrlOf(cfg: PublicConfig | null | undefined): string | undef
   return cfg?.launch?.tokenUrl ?? cfg?.buyUrl;
 }
 
+/** The video card on the coming-soon page: where it opens and what it says. */
+export interface TeaserLink {
+  href: string;
+  /** the launch tweet (true) or, until there is one, the account */
+  tweet: boolean;
+  caption: string;
+}
+
+/** The account's handle from its X link ("https://x.com/realsieslol" -> "realsieslol"), or null. */
+export function xHandle(url: string): string | null {
+  try {
+    const seg = new URL(url).pathname.split('/').filter(Boolean)[0];
+    return seg && /^[A-Za-z0-9_]{1,15}$/.test(seg) ? seg : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The launch tweet ("Watch the trailer on X"), else the account ("Follow @realsieslol on X"), else no card. */
+export function teaserOf(l: LaunchConfig | null | undefined): TeaserLink | null {
+  if (l?.videoUrl) return { href: l.videoUrl, tweet: true, caption: 'Watch the trailer on X' };
+  if (l?.xUrl) {
+    const h = xHandle(l.xUrl);
+    return { href: l.xUrl, tweet: false, caption: h ? `Follow @${h} on X` : 'Follow us on X' };
+  }
+  return null;
+}
+
 export interface Parts {
   d: number;
   h: number;
@@ -107,18 +135,30 @@ export function fmtUtc(at: number, o: { timeZone?: string } = {}): string {
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`;
 }
 
+/** The mock's X links: the account the owner named, and a stand-in for the launch tweet. */
+export const MOCK_X_URL = 'https://x.com/realsieslol';
+export const MOCK_VIDEO_URL = 'https://x.com/realsieslol/status/1';
+
 /**
  * The mock relay's launch (?mock=1&launch=soon|auction|finalizing), on the hour like the real one: soon opens in
  * two days and some hours (or `startInMs` from now: QA of the moment it goes live), auction ends in about 17 hours,
- * finalizing ended 6 minutes ago. `token: false`: no meme.cooking page yet.
+ * finalizing ended 6 minutes ago. `token: false`: no meme.cooking page yet; `tweet: false`: no launch tweet yet
+ * (the card goes to the account); `x: false`: no X link at all (no card).
  */
-export function mockLaunch(phase: MockLaunch, now = Date.now(), o: { startInMs?: number; token?: boolean } = {}): LaunchConfig {
+export function mockLaunch(phase: MockLaunch, now = Date.now(), o: { startInMs?: number; token?: boolean; tweet?: boolean; x?: boolean } = {}): LaunchConfig {
   const hour = Math.floor(now / HOUR) * HOUR;
   const start =
     phase === 'soon' ? (o.startInMs !== undefined ? now + o.startInMs : hour + 2 * DAY + 6 * HOUR)
     : phase === 'auction' ? hour - 7 * HOUR
     : Math.floor((now - 6 * MIN) / MIN) * MIN - DAY;
-  return { auctionStart: start, auctionEnd: start + DAY, ...(o.token === false ? {} : { tokenUrl: 'https://meme.cooking' }) };
+  const x = o.x !== false;
+  return {
+    auctionStart: start,
+    auctionEnd: start + DAY,
+    ...(o.token === false ? {} : { tokenUrl: 'https://meme.cooking' }),
+    ...(x && o.tweet !== false ? { videoUrl: MOCK_VIDEO_URL } : {}),
+    ...(x ? { xUrl: MOCK_X_URL } : {}),
+  };
 }
 
 /** ?mock=1&launch=... */

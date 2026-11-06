@@ -125,9 +125,9 @@ export interface Config {
 }
 
 /** Every variable of the launch; setting any one of them turns it on. */
-export const LAUNCH_VARS = ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL'] as const;
-/** Variables of the first launch page (demo, AI builders, X, trailer), no longer read: the relay warns when one is set. */
-export const LAUNCH_RETIRED = ['LAUNCH_DEMO_URL', 'LAUNCH_X_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER'] as const;
+export const LAUNCH_VARS = ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_VIDEO_URL', 'LAUNCH_X_URL'] as const;
+/** Variables of the first launch page (demo, trailer), no longer read: the relay warns when one is set. */
+export const LAUNCH_RETIRED = ['LAUNCH_DEMO_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER'] as const;
 /** The meme.cooking auction runs this long when LAUNCH_AUCTION_END is not given. */
 export const AUCTION_HOURS = 24;
 
@@ -149,14 +149,29 @@ export function launchFromEnv(env: NodeJS.ProcessEnv): LaunchConfig | undefined 
   if (end !== undefined && auctionStart === undefined) throw new Error('LAUNCH_AUCTION_END needs LAUNCH_AUCTION_START');
   const auctionEnd = end !== undefined ? parseIsoTime('LAUNCH_AUCTION_END', end) : auctionStart !== undefined ? auctionStart + AUCTION_HOURS * 3_600_000 : undefined;
   const tokenUrl = get('LAUNCH_TOKEN_URL');
+  const videoUrl = get('LAUNCH_VIDEO_URL');
+  const xUrl = get('LAUNCH_X_URL');
   return {
     ...(auctionStart !== undefined ? { auctionStart } : {}),
     ...(auctionEnd !== undefined ? { auctionEnd } : {}),
     ...(tokenUrl ? { tokenUrl } : {}),
+    ...(videoUrl ? { videoUrl } : {}),
+    ...(xUrl ? { xUrl } : {}),
   };
 }
 
 const HTTPS_URL = /^https:\/\/[^\s"'<>\\]+$/;
+
+/** An https link on X: x.com or twitter.com (and their subdomains, e.g. mobile.twitter.com). */
+export function isXUrl(v: string): boolean {
+  if (!HTTPS_URL.test(v)) return false;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port && /(^|\.)(x|twitter)\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
 
 /** Throws on launch settings the web could not show as meant. */
 export function checkLaunch(l: LaunchConfig): void {
@@ -165,6 +180,8 @@ export function checkLaunch(l: LaunchConfig): void {
     if (t !== undefined && !(Number.isFinite(t) && t > Date.UTC(2020, 0, 1) && t < Date.UTC(2100, 0, 1))) throw new Error(`${k} is not a plausible time`);
   if (l.auctionStart !== undefined && l.auctionEnd !== undefined && !(l.auctionEnd > l.auctionStart)) throw new Error('LAUNCH_AUCTION_END must be after LAUNCH_AUCTION_START');
   if (l.tokenUrl !== undefined && !HTTPS_URL.test(l.tokenUrl)) throw new Error('LAUNCH_TOKEN_URL must be an https URL');
+  for (const [k, v] of [['LAUNCH_VIDEO_URL', l.videoUrl], ['LAUNCH_X_URL', l.xUrl]] as const)
+    if (v !== undefined && !isXUrl(v)) throw new Error(`${k} must be an https link on x.com or twitter.com`);
 }
 
 function num(name: string, def: number): number {

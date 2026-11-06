@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'dist');
 const port = Number(process.argv[2] ?? process.env.QA_PORT ?? 5173);
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.mp4': 'video/mp4' };
 const FRAME = `<!doctype html><html><head><meta charset="utf-8"><title>qa frame</title>
 <style>html,body{margin:0;padding:0;background:#000;overflow:hidden}iframe{border:0;display:block;position:absolute;left:0;top:0}</style></head>
 <body><iframe id="f"></iframe><script>

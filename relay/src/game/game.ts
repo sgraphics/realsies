@@ -262,7 +262,7 @@ export class Game implements BotHost {
 
   private logLaunch(): void {
     const retired = LAUNCH_RETIRED.filter((k) => process.env[k]?.trim());
-    if (retired.length) log.warn(`${retired.join(', ')}: no longer read (the coming-soon page is the countdown and Get REAL only)`);
+    if (retired.length) log.warn(`${retired.join(', ')}: no longer read (the coming-soon page has no demo or trailer settings now)`);
     const l = this.cfg.launch;
     if (!l) return;
     const at = (t?: number) => (t === undefined ? 'not announced' : new Date(t).toISOString());
@@ -270,7 +270,7 @@ export class Game implements BotHost {
     else if (this.launchOn()) {
       log.info(
         `launch: / is the coming-soon page until ${at(l.auctionStart)} (the game at /play meanwhile), then the game with the auction banner ` +
-          `until ${at(l.auctionEnd)} and "coins open soon" until the coin is set; "Get REAL" ${l.tokenUrl ?? this.cfg.buyUrl ?? 'not set yet'}`,
+          `until ${at(l.auctionEnd)} and "coins open soon" until the coin is set; "Get REAL" ${l.tokenUrl ?? this.cfg.buyUrl ?? 'not set yet'}; video card ${l.videoUrl ?? l.xUrl ?? 'none (no LAUNCH_VIDEO_URL or LAUNCH_X_URL)'}`,
       );
     } else log.info('LAUNCH_* is set, but coins are open: no coming-soon page or banner, the game is at /');
   }

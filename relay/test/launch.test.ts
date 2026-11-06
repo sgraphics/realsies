@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AuthChallenge, LaunchConfig, PublicConfig } from '../../shared/protocol.js';
-import { AUCTION_HOURS, LAUNCH_RETIRED, LAUNCH_VARS, checkLaunch, launchFromEnv, loadConfig, parseIsoTime } from '../src/config.js';
+import { AUCTION_HOURS, LAUNCH_RETIRED, LAUNCH_VARS, checkLaunch, isXUrl, launchFromEnv, loadConfig, parseIsoTime } from '../src/config.js';
 import { createApp, type App } from '../src/app.js';
 import { MockChain } from '../src/chain/mock.js';
 import { WsClient } from './client.js';
@@ -51,17 +51,23 @@ test('LAUNCH_* into the launch: nothing set, a 24-hour auction by default, every
   assert.equal(launchFromEnv({}), undefined, 'no LAUNCH_*: nothing');
   assert.equal(launchFromEnv({ LAUNCH_TOKEN_URL: '  ', LAUNCH_AUCTION_START: '' }), undefined, 'empty values count as unset');
   assert.deepEqual(launchFromEnv({ LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/1' }), { tokenUrl: 'https://meme.cooking/meme/1' }, 'any one variable turns it on; no time: coming soon');
-  assert.equal(launchFromEnv({ LAUNCH_X_URL: 'https://x.com/realsies', LAUNCH_DEMO_URL: 'https://testnet.realsies.lol' }), undefined, 'the retired variables turn nothing on');
+  assert.equal(launchFromEnv({ LAUNCH_DEMO_URL: 'https://test.realsies.lol', LAUNCH_TRAILER: '/t.mp4', LAUNCH_POSTER: '/p.png' }), undefined, 'the retired variables turn nothing on');
+  assert.deepEqual(launchFromEnv({ LAUNCH_X_URL: 'https://x.com/realsieslol' }), { xUrl: 'https://x.com/realsieslol' }, 'the X account alone: coming soon with the video card');
+  assert.deepEqual(
+    launchFromEnv({ LAUNCH_VIDEO_URL: 'https://x.com/realsieslol/status/1', LAUNCH_X_URL: 'https://x.com/realsieslol' }),
+    { videoUrl: 'https://x.com/realsieslol/status/1', xUrl: 'https://x.com/realsieslol' },
+    'the launch tweet and the account',
+  );
   assert.deepEqual(launchFromEnv({ LAUNCH_AUCTION_START: START }), { auctionStart: T0, auctionEnd: T0 + AUCTION_HOURS * H }, 'the end defaults to 24 hours after the start');
   assert.deepEqual(
     launchFromEnv({ LAUNCH_AUCTION_START: '2026-11-08T16:00:00+01:00', LAUNCH_AUCTION_END: '2026-11-09T15:30Z', LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/123' }),
     { auctionStart: T0, auctionEnd: T0 + 24.5 * H, tokenUrl: 'https://meme.cooking/meme/123' },
   );
-  assert.deepEqual([...LAUNCH_VARS], ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL']);
-  assert.deepEqual([...LAUNCH_RETIRED], ['LAUNCH_DEMO_URL', 'LAUNCH_X_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER']);
+  assert.deepEqual([...LAUNCH_VARS], ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_VIDEO_URL', 'LAUNCH_X_URL']);
+  assert.deepEqual([...LAUNCH_RETIRED], ['LAUNCH_DEMO_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER']);
 });
 
-test('the launch settings are checked: times with their zone, the end after the start, an https token page', () => {
+test('the launch settings are checked: times with their zone, the end after the start, an https token page, X links on X', () => {
   assert.equal(parseIsoTime('X', '2026-11-08T15:00:00.000Z'), T0);
   assert.equal(parseIsoTime('X', '2026-11-08T17:00+0200'), T0);
   for (const bad of ['2026-11-08T15:00:00', '2026-11-08', 'Sunday 3pm', '2026-11-08 15:00Z', ''])
@@ -75,6 +81,13 @@ test('the launch settings are checked: times with their zone, the end after the 
   assert.throws(() => checkLaunch({ ...ok, auctionStart: 1_000 }), /plausible/);
   assert.throws(() => checkLaunch({ ...ok, tokenUrl: 'http://meme.cooking' }), /LAUNCH_TOKEN_URL must be an https URL/);
   assert.throws(() => checkLaunch({ ...ok, tokenUrl: 'javascript:alert(1)' }), /LAUNCH_TOKEN_URL must be an https URL/);
+  for (const good of ['https://x.com/realsieslol', 'https://x.com/realsieslol/status/1854000000000000000', 'https://twitter.com/realsieslol', 'https://www.x.com/a', 'https://mobile.twitter.com/a'])
+    assert.ok(isXUrl(good), good);
+  for (const bad of ['http://x.com/realsieslol', 'https://example.com/x.com', 'https://evilx.com/a', 'https://x.com.evil.io/a', 'https://x.com:8443/a', 'https://user@x.com/a', 'x.com/realsieslol', 'javascript:alert(1)'])
+    assert.ok(!isXUrl(bad), bad);
+  checkLaunch({ ...ok, videoUrl: 'https://x.com/realsieslol/status/1', xUrl: 'https://twitter.com/realsieslol' });
+  assert.throws(() => checkLaunch({ ...ok, videoUrl: 'https://youtube.com/watch?v=1' }), /LAUNCH_VIDEO_URL must be an https link on x.com or twitter.com/);
+  assert.throws(() => checkLaunch({ ...ok, xUrl: 'http://x.com/realsieslol' }), /LAUNCH_X_URL must be an https link on x.com or twitter.com/);
 });
 
 test('loadConfig reads LAUNCH_* from the env and refuses a bad one at boot', () => {
@@ -85,9 +98,13 @@ test('loadConfig reads LAUNCH_* from the env and refuses a bad one at boot', () 
     assert.ok(!('launch' in loadConfig({})), 'nothing set: no launch');
     process.env.LAUNCH_AUCTION_START = START;
     process.env.LAUNCH_TOKEN_URL = 'https://meme.cooking/meme/123';
-    process.env.LAUNCH_X_URL = 'https://x.com/realsies';
+    process.env.LAUNCH_X_URL = 'https://x.com/realsieslol';
+    process.env.LAUNCH_TRAILER = '/trailer/realsies-trailer.mp4';
     const cfg = loadConfig({});
-    assert.deepEqual(cfg.launch, { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123' }, 'a retired variable is not read');
+    assert.deepEqual(cfg.launch, { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123', xUrl: 'https://x.com/realsieslol' }, 'the X account is read, a retired variable is not');
+    process.env.LAUNCH_VIDEO_URL = 'https://www.youtube.com/watch?v=1';
+    assert.throws(() => loadConfig({}), /LAUNCH_VIDEO_URL must be an https link on x.com or twitter.com/);
+    delete process.env.LAUNCH_VIDEO_URL;
     assert.equal(loadConfig({ launch: undefined }).launch, undefined, 'an override wins over the env');
     process.env.LAUNCH_AUCTION_END = '2026-11-08T14:00:00Z';
     assert.throws(() => loadConfig({}), /LAUNCH_AUCTION_END must be after LAUNCH_AUCTION_START/);
@@ -101,7 +118,7 @@ test('loadConfig reads LAUNCH_* from the env and refuses a bad one at boot', () 
   }
 });
 
-const LAUNCH: LaunchConfig = { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123' };
+const LAUNCH: LaunchConfig = { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123', videoUrl: 'https://x.com/realsieslol/status/1', xUrl: 'https://x.com/realsieslol' };
 
 test('a mainnet-like relay sends the launch until the coin is set, then drops it and tells every connection', { timeout: 60_000 }, async () => {
   const chain = mainnetBeforeCoin();

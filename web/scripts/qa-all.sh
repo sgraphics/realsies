@@ -64,9 +64,12 @@ add deposit-wallet "mock=1&wallet=1&as=sam&qa=deposit" 9000
 add coins-wallet   "mock=1&wallet=1&as=sam&qa=coins" 10000
 add deposit-closed "mock=1&wallet=1&as=sam&qa=deposit&coins=closed" 8000
 # the launch (protocol v1.4), a mainnet-like mock (wallet sign-in, no coin yet): the coming-soon page until REAL's
+# (its video card opens the launch tweet; -account: no tweet yet, the account; -nox: no X link, no card)
 # auction and the game open (Get REAL, or the time without a token page), the moment it goes live (CHAT!, then the
 # game in place), then the game with its banner: the auction, finalizing, gone once coins open; and /play before
 add launch-soon          "mock=1&launch=soon&qa=top" 6000
+add launch-soon-account  "mock=1&launch=soon&tweet=0&qa=top" 6000
+add launch-soon-nox      "mock=1&launch=soon&nox=1&qa=top" 6000 "360x640:2 390x844:3 844x390:3 1280x720:1"
 add launch-auction       "mock=1&launch=auction&qa=top" 6000
 add launch-finalizing    "mock=1&launch=finalizing&qa=top" 6000
 add launch-soon-notoken  "mock=1&launch=soon&notoken=1&qa=top" 6000 "360x640:2 390x844:3 844x390:3 1280x720:1"

@@ -1,6 +1,8 @@
 // The coming-soon page at / until REAL's meme.cooking auction and the mainnet game open (PublicConfig.launch):
 // the logo, one headline, the countdown as the hero, "Get REAL" (the meme.cooking page, which shows its own
-// countdown before the auction), and the 18+ terms. No wallet, nothing else. At zero the countdown turns into the
+// countdown before the auction), a silent trailer teaser under a big PLAY icon that opens the launch tweet on X (the
+// account until there is one; beside the countdown on wide screens), and the 18+ terms. No wallet, nothing else.
+// At zero the countdown turns into the
 // game's own CHAT! and the page hands over to the game in place (`onLive`), no reload. The config is re-read every
 // minute (the start may move), and the page also steps aside if coins open first.
 
@@ -13,13 +15,16 @@ import { Icon } from '../ui/kit.tsx';
 import { useNow } from '../ui/hooks.ts';
 import { TermsScreen } from '../screens/Terms.tsx';
 import { BigClock } from './BigClock.tsx';
-import { comingSoon, fmtUtc, fmtWhen, tokenUrlOf } from './phase.ts';
+import { comingSoon, fmtUtc, fmtWhen, teaserOf, tokenUrlOf, type TeaserLink } from './phase.ts';
 
 const POLL_MS = 60_000;
 /** CHAT! stays on screen this long before the game takes over (shorter without motion). */
 export const GO_MS = 1700;
 export const GO_MS_CALM = 700;
 export const CAPTION = 'The game and REAL go live in';
+/** The teaser: 7 s of the trailer's montage (lobby, 3-2-1 CHAT!, the chat, the call), silent, and its poster. */
+export const TEASER_SRC = '/launch-teaser.mp4';
+export const TEASER_POSTER = '/launch-teaser.png';
 
 /** Text whose numbers are set in the pixel font: at reading sizes Pixelify Sans draws a 5 like an S and a 2 like an 8. */
 export function T(p: { text: string }) {
@@ -101,6 +106,8 @@ export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive
   const maxHeight = Math.round(vp.h * (landscape ? 0.3 : vp.w < 600 ? 0.36 : 0.3));
   const maxCss = vp.w >= 1800 && vp.h >= 900 ? 5 : vp.w >= 1000 ? 4 : 3;
   const utc = start !== undefined ? fmtUtc(start) : '';
+  // the video card: the coming-soon phase only, while there is an X link to open
+  const teaser = live ? null : teaserOf(cfg.launch ?? last.current);
   return (
     <div class={'ln' + (live ? ' is-live' : '')}>
       <Sky />
@@ -108,19 +115,24 @@ export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive
         <Brand w={vp.w} h={vp.h} />
         <h1 class="ln-h1">Real or <span class="ln-hl">not?</span></h1>
         <p class="ln-cap">{live ? 'The game is open' : start !== undefined ? CAPTION : 'The game and REAL go live soon'}</p>
-        {(live || start !== undefined) && (
-          <div class="ln-stage">
-            <BigClock ms={start !== undefined ? start - now : 0} tone="gold" label={CAPTION} maxCss={maxCss} maxHeight={maxHeight} go={live} />
+        <div class={'ln-body' + (teaser ? ' has-teaser' : '')}>
+          <div class="ln-hero">
+            {(live || start !== undefined) && (
+              <div class="ln-stage">
+                <BigClock ms={start !== undefined ? start - now : 0} tone="gold" label={CAPTION} maxCss={maxCss} maxHeight={maxHeight} go={live} />
+              </div>
+            )}
+            {token ? (
+              <a class="px-btn primary ln-cta" href={token} target="_blank" rel="noopener"><Icon name="coin" /> Get REAL</a>
+            ) : start !== undefined ? (
+              <p class="ln-when">
+                <T text={fmtWhen(start)} />
+                {utc && <span class="ln-when-utc"><span class="ln-when-dot"> · </span><T text={utc} /></span>}
+              </p>
+            ) : null}
           </div>
-        )}
-        {token ? (
-          <a class="px-btn primary ln-cta" href={token} target="_blank" rel="noopener"><Icon name="coin" /> Get REAL</a>
-        ) : start !== undefined ? (
-          <p class="ln-when">
-            <T text={fmtWhen(start)} />
-            {utc && <span class="ln-when-utc"><span class="ln-when-dot"> · </span><T text={utc} /></span>}
-          </p>
-        ) : null}
+          {teaser && <Teaser link={teaser} />}
+        </div>
       </main>
       <footer class="ln-foot">
         <span class="ln-18">18+</span>
@@ -130,6 +142,57 @@ export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive
       {live && <div class="ln-flash" aria-hidden="true" />}
       {terms && <TermsScreen testnet={false} onClose={() => setTerms(false)} />}
     </div>
+  );
+}
+
+/** May the teaser play by itself? Not for screenshots, not with reduced motion, not on a data saver. */
+function mayAutoplay(): boolean {
+  if (typeof document === 'undefined' || document.documentElement.classList.contains('qa')) return false;
+  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
+  return !saveData && !prefersReducedMotion();
+}
+
+/**
+ * The video card: the teaser loop (muted, autoplay, loop, inline; the poster where autoplay is blocked) under a big
+ * pixel PLAY icon, and its caption. The whole card is one link to X, in a new tab.
+ */
+function Teaser(p: { link: TeaserLink }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [auto] = useState(mayAutoplay);
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    // autoplay needs muted as the element's own state, not only a property set later
+    v.muted = true;
+    v.defaultMuted = true;
+    v.setAttribute('muted', '');
+    // the browser may say no (the poster stays, the card still links); an old one may not return a promise
+    if (auto) void Promise.resolve(v.play?.()).catch(() => {});
+  }, []);
+  return (
+    <a class={'ln-teaser' + (p.link.tweet ? ' tweet' : ' account')} href={p.link.href} target="_blank" rel="noopener" aria-label={`${p.link.caption} (opens in a new tab)`}>
+      <span class="ln-teaser-screen">
+        <video ref={video} class="ln-teaser-video" src={TEASER_SRC} poster={TEASER_POSTER} muted autoPlay={auto} loop playsInline preload="metadata" aria-hidden="true" tabIndex={-1} />
+        <PlayIcon />
+      </span>
+      <span class="ln-teaser-cap">
+        <span class="ln-teaser-x" aria-hidden="true">X</span>
+        {p.link.caption}
+      </span>
+    </a>
+  );
+}
+
+/** A big PLAY button in the game's pixel style: a gold chamfered tile, lit top left, shaded bottom right. */
+function PlayIcon() {
+  return (
+    <svg class="ln-play-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
+      <path fill="#0d0b14" d="M2 0h12v1h1v1h1v12h-1v1h-1v1H2v-1H1v-1H0V2h1V1h1z" />
+      <path fill="#feae34" d="M2 1h12v1h1v12h-1v1H2v-1H1V2h1z" />
+      <path fill="#fee761" d="M2 1h12v1H2zM1 2h1v11H1z" />
+      <path fill="#f77622" d="M2 14h12v1H2zM14 3h1v11h-1z" />
+      <path fill="#3e2731" d="M6 3h1v1h1v1h1v1h1v1h1v2h-1v1h-1v1h-1v1h-1v1h-1z" />
+    </svg>
   );
 }
 

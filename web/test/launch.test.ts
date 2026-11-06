@@ -81,6 +81,22 @@ console.log('phases and the banner in the game');
   ok(L.mockLaunchOf('?mock=1&launch=auction') === 'auction' && L.mockLaunchOf('?mock=1&launch=nope') === null && L.mockLaunchOf('') === null, '?launch= read');
 }
 
+console.log('the video card');
+{
+  ok(L.xHandle('https://x.com/realsieslol') === 'realsieslol' && L.xHandle('https://x.com/realsieslol/status/1') === 'realsieslol' && L.xHandle('https://x.com') === null && L.xHandle('nope') === null, 'the handle from an X link');
+  const tweet = L.teaserOf({ ...LAUNCH, videoUrl: 'https://x.com/realsieslol/status/9', xUrl: 'https://x.com/realsieslol' });
+  ok(tweet?.href === 'https://x.com/realsieslol/status/9' && tweet.tweet && tweet.caption === 'Watch the trailer on X', 'the launch tweet first: "Watch the trailer on X"');
+  const account = L.teaserOf({ ...LAUNCH, xUrl: 'https://x.com/realsieslol' });
+  ok(account?.href === 'https://x.com/realsieslol' && !account.tweet && account.caption === 'Follow @realsieslol on X', 'until then the account: ' + account?.caption);
+  ok(L.teaserOf({ ...LAUNCH, xUrl: 'https://twitter.com' })?.caption === 'Follow us on X', 'an account link without a handle');
+  ok(L.teaserOf(LAUNCH) === null && L.teaserOf(undefined) === null, 'neither: no card');
+  const m = L.mockLaunch('soon', T0);
+  ok(m.videoUrl === L.MOCK_VIDEO_URL && m.xUrl === L.MOCK_X_URL && L.MOCK_X_URL === 'https://x.com/realsieslol', 'the mock: the tweet and the account');
+  ok(!('videoUrl' in L.mockLaunch('soon', T0, { tweet: false })) && L.mockLaunch('soon', T0, { tweet: false }).xUrl === L.MOCK_X_URL, '&tweet=0: the account only');
+  const none = L.mockLaunch('soon', T0, { x: false });
+  ok(!('videoUrl' in none) && !('xUrl' in none), '&nox=1: no X link');
+}
+
 console.log('the countdown');
 {
   ok(JSON.stringify(L.countdownParts(1)) === '{"d":0,"h":0,"m":0,"s":1}', 'rounded up: one second shows until the very end');
@@ -126,6 +142,13 @@ console.log('the mock relay before REAL is live');
   const nc = await n.getConfig();
   ok(L.tokenUrlOf(nc) === undefined && L.comingSoon(nc, Date.now()), '&notoken=1: no token page and no Buy link');
   n.dispose();
+  const tw = createClient('?mock=1&launch=soon') as InstanceType<typeof MockGameClient>;
+  const acc = createClient('?mock=1&launch=soon&tweet=0') as InstanceType<typeof MockGameClient>;
+  const nx = createClient('?mock=1&launch=soon&nox=1') as InstanceType<typeof MockGameClient>;
+  ok(L.teaserOf((await tw.getConfig()).launch)?.tweet === true && L.teaserOf((await acc.getConfig()).launch)?.tweet === false && L.teaserOf((await nx.getConfig()).launch) === null, 'soon: the card to the tweet; &tweet=0 to the account; &nox=1 none');
+  tw.dispose();
+  acc.dispose();
+  nx.dispose();
   const g = createClient('?mock=1&launch=soon&startin=2') as InstanceType<typeof MockGameClient>;
   const gc = await g.getConfig();
   ok(L.comingSoon(gc, Date.now()) && !L.comingSoon(gc, Date.now() + 2500), '&startin=2: the game 2 s in');
