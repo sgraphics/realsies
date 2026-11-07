@@ -20,6 +20,7 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
   const usd = cfg?.usdPerCoin ?? 0.01;
   const balance = me?.balanceCoins ?? 0;
   const [custom, setCustom] = useState('');
+  const [other, setOther] = useState(false); // the "..." button opens the custom amount row
   const customN = Math.floor(Number(custom));
   const customOk = custom !== '' && Number.isFinite(customN) && customN >= min && customN <= max && customN <= balance;
   const freeLeft = me?.freeChatsLeft;
@@ -65,11 +66,16 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
                       <span class="usd">{dollars(c)}</span>
                     </Button>
                   ))}
+                  <Button kind={other ? 'primary' : 'default'} class="preset other" onClick={() => setOther((v) => !v)} title="Other amount" aria-label="Other amount" aria-expanded={other}>
+                    <span>...</span>
+                  </Button>
                 </div>
-                <form class="custom-row" onSubmit={(e) => { e.preventDefault(); if (customOk) pick('paid', customN); }}>
-                  <input class="px-input" type="number" inputMode="numeric" min={min} max={Math.min(max, balance)} placeholder={`${min}-${Math.min(max, balance)}`} value={custom} onInput={(e) => setCustom((e.target as HTMLInputElement).value)} aria-label="Custom amount of coins" />
-                  <Button type="submit" disabled={!customOk}>{customOk ? `Play ${customN} (${dollars(customN)})` : 'Custom'}</Button>
-                </form>
+                {other && (
+                  <form class="custom-row" onSubmit={(e) => { e.preventDefault(); if (customOk) pick('paid', customN); }}>
+                    <input class="px-input" type="number" inputMode="numeric" autoFocus min={min} max={Math.min(max, balance)} placeholder={`${min}-${Math.min(max, balance)}`} value={custom} onInput={(e) => setCustom((e.target as HTMLInputElement).value)} aria-label="Other amount of coins" />
+                    <Button type="submit" disabled={!customOk}>{customOk ? `Play ${customN} (${dollars(customN)})` : `${min} to ${Math.min(max, balance)}`}</Button>
+                  </form>
+                )}
                 <p class="px-dim" style={{ fontSize: '13px', margin: 0 }}>Right calls share the coins of wrong ones. You have <Icon name="coin" /> {balance}.{needsKey ? ' Your first coin chat asks your wallet once.' : ''}</p>
               </>
             ) : (

@@ -222,7 +222,8 @@ canvas.pixel { image-rendering: pixelated; image-rendering: crisp-edges; }
 .seat-dialog { display: grid; grid-template-columns: auto 1fr; gap: calc(var(--b) * 5); align-items: start; }
 @media (max-width: 560px) { .seat-dialog { grid-template-columns: 1fr; justify-items: center; } }
 .seat-portrait { background: var(--panel-2); border: var(--b) solid var(--edge); padding: 6px; display: flex; align-items: flex-end; justify-content: center; }
-.preset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: calc(var(--b) * 2.5); }
+.preset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 0.55fr); gap: calc(var(--b) * 2.5); }
+.preset.other { justify-content: center; letter-spacing: 2px; }
 .preset { display: flex; flex-direction: column; gap: 4px; padding: 10px 6px; }
 .preset .usd { font-family: var(--font-body); font-size: 13px; text-transform: none; opacity: 0.85; }
 .custom-row { display: flex; gap: 8px; align-items: stretch; }
