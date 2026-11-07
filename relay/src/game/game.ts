@@ -4,7 +4,7 @@ import {
   LEVELS, themeFor,
   type ActiveChat, type ChatInfo, type ChatMessage, type ClientMsg, type LeaderRow, type Level, type Me, type Mode,
   type PublicConfig, type RoundResults, type RoundState, type RoundSummary, type Seat, type ServerMsg, type Skin,
-  type TestUser, type VerifyBundle,
+  type TestUser, type VerifyBundle, type WalletInfo,
 } from '../../../shared/protocol.js';
 import { gamertag } from '../../../shared/names.js';
 import { LAUNCH_RETIRED, type Config } from '../config.js';
@@ -2257,11 +2257,23 @@ export class Game implements BotHost {
     return { me, bonusTx };
   }
 
-  /** The coin's view of a wallet account: can it receive withdrawals (registered), and what registering costs. */
-  async walletInfo(account: string): Promise<{ accountId: string; coinsOpen: boolean; tokenId: string; tokenRegistered: boolean; storageDeposit: string }> {
-    if (!this.chainCfg.coinsOpen) return { accountId: account, coinsOpen: false, tokenId: this.chain.tokenId, tokenRegistered: false, storageDeposit: '0' };
-    const st = await this.chain.tokenStorage(account);
-    return { accountId: account, coinsOpen: true, tokenId: this.chain.tokenId, tokenRegistered: st.registered, storageDeposit: st.minDeposit };
+  /**
+   * The coin's view of a wallet account: what the wallet itself holds (so the screen never offers a deposit
+   * that can only fail), whether it can receive withdrawals (registered), and what registering costs.
+   */
+  async walletInfo(account: string): Promise<WalletInfo> {
+    if (!this.chainCfg.coinsOpen) return { accountId: account, coinsOpen: false, tokenId: this.chain.tokenId, tokenRegistered: false, storageDeposit: '0', walletBalance: '0' };
+    const [st, bal] = await Promise.all([
+      this.chain.tokenStorage(account),
+      this.chain.tokenBalance(account).catch((e) => {
+        log.warn(`ft_balance_of ${account}: ${errMsg(e)}`);
+        return null;
+      }),
+    ]);
+    return {
+      accountId: account, coinsOpen: true, tokenId: this.chain.tokenId, tokenRegistered: st.registered, storageDeposit: st.minDeposit,
+      ...(bal === null ? {} : { walletBalance: bal.toString() }),
+    };
   }
 
   /** Test mode: test coins into a wallet account's own wallet, so it can try a deposit from the wallet. */

@@ -315,6 +315,7 @@ The relay could hold a signed play and submit it later in the chat (section 6, t
 
 ### Deposits and withdrawals
 
+- What the wallet holds: `WalletInfo.walletBalance` (v1.5) is the coin's `ft_balance_of` for the account, in base units; the coins screen shows it ("In your wallet: N tREAL") and refreshes it after every deposit, withdrawal and test faucet. A deposit the wallet cannot cover is never sent (the coin would panic, an empty wallet is not even registered on it): the button is off and the reason sits in its place, "Your wallet has no tREAL yet." with "Get 100 tREAL to your wallet" in test mode or "Buy REAL" otherwise, or "Your wallet holds N tREAL, enough for M coins."; the store refuses it too, before any popup.
 - Deposit: the wallet sends `ft_transfer_call` on the coin, `{receiver_id: <game>, amount: coins x coin_unit, msg: ""}`, 1 yoctoNEAR, 100 Tgas. Then `POST /api/session/deposit {txHash}`: the relay reads the transaction (signer, the coin as receiver, `ft_transfer_call` to the game, the game's `deposit` event for the account), counts it once, and pays any locked Turing bonus from promo.
 - Withdraw: the wallet sends `withdraw {amount}` on the game contract, 50 Tgas. The coin pays out only to registered accounts, so when `GET /api/session/wallet` says `tokenRegistered: false` the same approval first sends `storage_deposit {account_id, registration_only: true}` on the coin. The relay-signed `POST /api/withdraw` stays for test users only (`withdraw_in_wallet` otherwise).
 - "Buy REAL": `BUY_URL` (the meme.cooking page before the launch finalizes, the Rhea swap after), `PublicConfig.buyUrl`.
@@ -346,7 +347,7 @@ The relay could hold a signed play and submit it later in the chat (section 6, t
 | `POST /api/session/ticket` | Bearer | `{ticket, expiresAt}` for `/ws?ticket=` |
 | `POST /api/session/play-key` `{publicKey}` | Bearer | `PlayKeyInfo` |
 | `DELETE /api/session/play-key` | Bearer | `{ok: true}` |
-| `GET /api/session/wallet` | Bearer | `WalletInfo` |
+| `GET /api/session/wallet` | Bearer | `WalletInfo`, with `walletBalance` (v1.5) |
 | `POST /api/session/deposit` `{txHash}` | Bearer | `{me, bonusTx?}` |
 | `POST /api/session/faucet-wallet` `{coins?}` | Bearer, test mode | `{tx}` |
 

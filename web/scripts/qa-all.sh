@@ -63,6 +63,10 @@ add playkey-wait   "mock=1&wallet=1&as=sam&qa=key&hold=key" 8000
 add deposit-wallet "mock=1&wallet=1&as=sam&qa=deposit" 9000
 add coins-wallet   "mock=1&wallet=1&as=sam&qa=coins" 10000
 add deposit-closed "mock=1&wallet=1&as=sam&qa=deposit&coins=closed" 8000
+# the coins screen of a wallet player on the testnet relay (test mode), 20 coins typed: an empty wallet, a short one, enough
+add coins-empty    "mock=1&wallet=test&as=sam&qa=deposit&wcoins=0&dep=20" 9000
+add coins-short    "mock=1&wallet=test&as=sam&qa=deposit&wcoins=3&dep=20" 9000
+add coins-enough   "mock=1&wallet=test&as=sam&qa=deposit&wcoins=200&dep=20" 9000
 # the launch (protocol v1.4), a mainnet-like mock (wallet sign-in, no coin yet): the coming-soon page until REAL's
 # (its video card opens the launch tweet; -account: no tweet yet, the account; -nox: no X link, no card)
 # auction and the game open (Get REAL, or the time without a token page), the moment it goes live (CHAT!, then the

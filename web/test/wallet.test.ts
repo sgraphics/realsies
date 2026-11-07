@@ -379,6 +379,38 @@ console.log('what the browser signs');
   storage.clear();
 }
 
+// ---------- 4b. what the wallet holds: an empty wallet, a short one, enough ----------
+console.log('what the wallet holds');
+{
+  const { fmtTokens, depositCheck, shortWalletText } = await import('../src/state/walletFunds.ts');
+  ok(fmtTokens(0n, 18) === '0' && fmtTokens(3n * 10n ** 18n, 18) === '3' && fmtTokens(35n * 10n ** 17n, 18) === '3.5' && fmtTokens(1_250_250_000_000_000_000_000n, 18) === '1,250.25', 'token amounts read like money: 0, 3, 3.5, 1,250.25');
+  ok(shortWalletText('REAL', 10n ** 18n, 18, 1n) === 'Your wallet holds 1 REAL, enough for 1 coin.', 'one coin, singular');
+  ok(depositCheck(undefined, 20, '1').ok && depositCheck({ accountId: 'a', coinsOpen: true, tokenId: 't', tokenRegistered: false, storageDeposit: '0' }, 20, '1').ok, 'an older relay without walletBalance blocks nothing');
+  const { client, wallet, store, done } = setup();
+  try {
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+    await waitFor(store, (s) => s.welcomed, 'welcome');
+    const empty = await store.actions.refreshWalletInfo();
+    ok(empty?.walletBalance === '0' && empty.tokenRegistered === false, 'a new wallet: nothing on the coin, not even registered');
+    ok(!(await store.actions.walletDeposit(20)) && store.get().walletTx.error === 'Your wallet has no tREAL yet.', 'empty: the deposit is refused in place: ' + store.get().walletTx.error);
+    ok(!wallet.calls.includes('tx'), 'and never sent to the wallet (it could only fail)');
+    await store.actions.faucetToWallet(3);
+    ok(store.get().walletInfo?.walletBalance === (3n * 10n ** 18n).toString(), 'the faucet into the wallet refreshes what it holds');
+    ok(!(await store.actions.walletDeposit(20)) && store.get().walletTx.error === 'Your wallet holds 3 tREAL, enough for 3 coins.', 'short: ' + store.get().walletTx.error);
+    ok(!wallet.calls.includes('tx'), 'still nothing sent');
+    await store.actions.faucetToWallet(197);
+    ok(await store.actions.walletDeposit(20), 'enough: the deposit goes to the wallet');
+    ok(wallet.calls.filter((c) => c === 'tx').length === 1 && store.get().me?.balanceCoins === 20, 'one wallet approval, 20 coins in the game');
+    ok(store.get().walletInfo?.walletBalance === (180n * 10n ** 18n).toString(), 'after the deposit: 180 left in the wallet, refreshed');
+    ok(await store.actions.walletWithdraw(5), 'a withdrawal');
+    ok(store.get().walletInfo?.walletBalance === (185n * 10n ** 18n).toString() && client.walletCoinsOf('sam.testnet') === 185, 'after the withdrawal: 185 in the wallet, refreshed');
+  } finally {
+    done();
+    storage.clear();
+  }
+}
+
 // ---------- 5. before REAL launches ----------
 console.log('no coin yet');
 {

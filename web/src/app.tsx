@@ -23,7 +23,7 @@ import { runQa } from './qa.ts';
 
 type Overlay =
   | { kind: 'seat'; level: Level; seat: Seat }
-  | { kind: 'deposit'; gate: boolean; then?: Overlay | null }
+  | { kind: 'deposit'; gate: boolean; then?: Overlay | null; prefill?: string }
   | { kind: 'results'; roundId: number }
   | { kind: 'rounds' }
   // enable coins (the browser's play key); `pick` goes on with the seat once it is on chain
@@ -46,7 +46,7 @@ export function App({ store }: { store: Store }) {
     // mock-mode screenshot hooks (?mock=1&as=ana&qa=chat ...)
     runQa(store, location.search, (what, arg) => {
       if (what === 'seat') setOverlay({ kind: 'seat', ...(arg as { level: Level; seat: Seat }) });
-      if (what === 'deposit') setOverlay({ kind: 'deposit', gate: false });
+      if (what === 'deposit') setOverlay({ kind: 'deposit', gate: false, prefill: (arg as { prefill?: string } | undefined)?.prefill });
       if (what === 'key') setOverlay({ kind: 'key' });
       if (what === 'rounds') setOverlay({ kind: 'rounds' });
       if (what === 'results') setOverlay({ kind: 'results', roundId: arg as number });
@@ -161,6 +161,7 @@ export function App({ store }: { store: Store }) {
         <DepositDialog
           store={store}
           gate={overlay.gate}
+          prefill={overlay.prefill}
           onDone={() => setOverlay(overlay.then ?? null)}
           onEnableCoins={() => setOverlay({ kind: 'key', back: overlay })}
         />

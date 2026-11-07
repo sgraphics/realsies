@@ -746,7 +746,11 @@ export class MockGameClient implements GameClient, MockLedger {
       const s = this.token ? this.st.sessions?.[this.token] : undefined;
       if (!s) throw apiError('unauthorized', 'Sign in first.', 401);
       const open = this.config.coinsOpen !== false;
-      return { accountId: s.account, coinsOpen: open, tokenId: this.config.tokenId, tokenRegistered: open && (this.st.registered ?? []).includes(s.account), storageDeposit: open ? '1250000000000000000000' : '0' };
+      const held = open ? this.st.walletCoins?.[s.account] ?? 0 : 0;
+      return {
+        accountId: s.account, coinsOpen: open, tokenId: this.config.tokenId, tokenRegistered: open && (this.st.registered ?? []).includes(s.account),
+        storageDeposit: open ? '1250000000000000000000' : '0', walletBalance: ((BigInt(Math.round(held * 10_000)) * COIN_UNIT) / 10_000n).toString(),
+      };
     });
   }
 

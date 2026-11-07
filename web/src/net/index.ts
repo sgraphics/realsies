@@ -1,6 +1,7 @@
 // Picks the game client: MockGameClient with ?mock=1 (an in-browser relay), else the real relay. And the
 // wallet: NEAR Connect against a real relay, the simulated MockWallet in mock mode.
 //   ?mock=1&wallet=1            like a mainnet relay: no test users, sign in with the (mock) wallet
+//   ?mock=1&wallet=test         like the testnet relay: test mode (test users, faucet), and QA signs in with the mock wallet
 //   &coins=closed               the contract has no coin yet: free play only
 //   &hold=signIn|key|tx         the mock wallet never answers that step (QA: "waiting for your wallet")
 //   &reject=signIn|key|tx       the player closes the mock wallet at that step
@@ -46,6 +47,7 @@ export function createClient(search?: string): GameClient {
       ...(searchMs > 0 ? { searchMs: [searchMs, searchMs] as [number, number] } : {}),
       ...(q.get('nobots') === '1' ? { noBots: true } : {}), // the bots are napping: no new chats (bots_unavailable)
       ...(q.get('wallet') === '1' ? { wallet: true, buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet:v1' } : {}),
+      ...(q.get('wallet') === 'test' ? { buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet-test:v1' } : {}),
       ...(q.get('coins') === 'closed' ? { coinsOpen: false } : {}),
       ...(launch
         ? {
@@ -68,7 +70,7 @@ export function createWallet(client: GameClient, network: () => 'mainnet' | 'tes
     const step = (v: string | null): MockWalletOptions['hold'] => (v === 'signIn' || v === 'key' || v === 'tx' ? v : v === '1' ? true : undefined);
     const as = q.get('as');
     const wallet = new MockWallet(client, {
-      ...(as && (q.get('wallet') === '1' || mockLaunchOf(q.toString())) ? { accountId: as.includes('.') ? as : `${as}.testnet` } : {}),
+      ...(as && (q.get('wallet') === '1' || q.get('wallet') === 'test' || mockLaunchOf(q.toString())) ? { accountId: as.includes('.') ? as : `${as}.testnet` } : {}),
       hold: step(q.get('hold')),
       reject: step(q.get('reject')),
     });

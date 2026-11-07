@@ -10,9 +10,9 @@ import { useEscape } from '../ui/hooks.ts';
 import { txUrl } from '../state/format.ts';
 import { WalletCoinsDialog } from './WalletCoins.tsx';
 
-export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void; onEnableCoins?(): void }) {
+export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void; onEnableCoins?(): void; prefill?: string }) {
   const s = useStore(p.store);
-  if (s.session || s.config?.coinsOpen === false) return <WalletCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} onEnableCoins={p.onEnableCoins ?? (() => {})} />;
+  if (s.session || s.config?.coinsOpen === false) return <WalletCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} onEnableCoins={p.onEnableCoins ?? (() => {})} prefill={p.prefill} />;
   return <TestCoinsDialog {...p} />;
 }
 

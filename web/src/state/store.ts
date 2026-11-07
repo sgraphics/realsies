@@ -12,6 +12,7 @@ import type { WalletApi, WalletTx } from '../wallet/types.ts';
 import { forgetPlayKey, loadPlayKey, newPlayKey, savePlayKey } from '../wallet/keys.ts';
 import { parsePublicKey, signTransaction } from '../wallet/tx.ts';
 import { base58Decode, base64Decode, base64Encode } from '../wallet/base58.ts';
+import { depositCheck, emptyWalletText, shortWalletText, symbolOf } from './walletFunds.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -754,6 +755,14 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         if (!(n > 0)) throw new Error('Choose how many coins to deposit.');
         if (cfg.coinsOpen === false) throw new Error('Coins open when $REAL launches.');
         const amount = BigInt(n) * BigInt(cfg.coinUnit);
+        // never send a deposit that can only fail: the wallet must hold the coins (an empty wallet is not even
+        // registered on the coin, and the token panics)
+        set({ walletTx: { phase: 'checking', kind: 'deposit' } });
+        const chk = depositCheck(await actions.refreshWalletInfo(), n, cfg.coinUnit);
+        if (!chk.ok) {
+          const sym = symbolOf(cfg);
+          throw new Error(chk.reason === 'empty' ? emptyWalletText(sym) : shortWalletText(sym, chk.walletUnits!, cfg.tokenDecimals ?? 18, chk.fits!));
+        }
         set({ walletTx: { phase: 'wallet', kind: 'deposit' } });
         const tx: WalletTx = {
           receiverId: cfg.tokenId,
@@ -773,6 +782,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         }
         if (me) set({ me });
         else await actions.refreshMe().catch(() => undefined);
+        await actions.refreshWalletInfo();
         set({ walletTx: { phase: 'done', kind: 'deposit', tx: hash } });
         return true;
       } catch (e) {
@@ -808,7 +818,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
           if (me && me.balanceCoins <= before - n + 1e-6) break;
           await sleep(1500);
         }
-        void actions.refreshWalletInfo();
+        await actions.refreshWalletInfo();
         set({ walletTx: { phase: 'done', kind: 'withdraw', tx: hash } });
         return true;
       } catch (e) {
@@ -821,6 +831,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         if (!client.faucetToWallet) throw new Error('No faucet here.');
         set({ walletTx: { phase: 'checking', kind: 'faucet' } });
         const r = await client.faucetToWallet(coins);
+        await actions.refreshWalletInfo();
         set({ walletTx: { phase: 'done', kind: 'faucet', tx: r.tx } });
         return true;
       } catch (e) {

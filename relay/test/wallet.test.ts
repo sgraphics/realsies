@@ -120,10 +120,16 @@ test('wallet players without test mode: sign-in, session, ticketed socket, walle
     await assert.rejects(WsClient.connectTicket(base, t1.ticket, acct), 'a ticket works once');
     assert.equal((await api(base, 'POST', '/api/session/ticket', {})).status, 401, 'no ticket without a session');
 
+    // ----- what the wallet itself holds: nothing yet, not even registered on the coin -----
+    const empty = (await api(base, 'GET', '/api/session/wallet', undefined, token)).body;
+    assert.equal(empty.walletBalance, '0', 'an empty wallet');
+    assert.equal(empty.tokenRegistered, false);
+
     // ----- a deposit from the wallet, and the locked Turing bonus it unlocks -----
     assert.ok((await chain.faucetDeposit(chain.accounts.promo, 50n * chain.coinUnit)).ok);
     app.game.users.get(acct)!.lockedBonus = (3n * chain.coinUnit).toString();
     chain.mintToWallet(acct, 200n * chain.coinUnit);
+    assert.equal((await api(base, 'GET', '/api/session/wallet', undefined, token)).body.walletBalance, (200n * chain.coinUnit).toString(), 'the wallet holds 200 coins');
     const dep = await chain.walletDeposit(acct, 100n * chain.coinUnit);
     assert.ok(dep.ok);
     const rep = await api(base, 'POST', '/api/session/deposit', { txHash: dep.hash }, token);
@@ -136,6 +142,7 @@ test('wallet players without test mode: sign-in, session, ticketed socket, walle
     const info = (await api(base, 'GET', '/api/session/wallet', undefined, token)).body;
     assert.equal(info.tokenRegistered, true);
     assert.equal(info.coinsOpen, true);
+    assert.equal(info.walletBalance, (100n * chain.coinUnit).toString(), 'after the deposit: 100 coins left in the wallet');
 
     // ----- coins need the play key; the relay never signs for a wallet account -----
     ws.send({ t: 'enter_room', level: 1 });
@@ -221,6 +228,11 @@ test('wallet players without test mode: sign-in, session, ticketed socket, walle
     assert.equal(res.body.chats.length, 3);
     assert.equal((await api(base, 'GET', `/api/rounds/${ready.roundId}/results/${acct}`)).status, 401, 'results need the session');
 
+    // ----- a withdrawal from the wallet: walletInfo shows the coins back in the wallet -----
+    const before = BigInt((await api(base, 'GET', '/api/session/wallet', undefined, token)).body.walletBalance);
+    assert.ok((await chain.walletWithdraw(acct, 10n * chain.coinUnit)).ok);
+    assert.equal(BigInt((await api(base, 'GET', '/api/session/wallet', undefined, token)).body.walletBalance), before + 10n * chain.coinUnit, 'after a withdrawal');
+
     // ----- sign out: the socket closes, the token stops working -----
     assert.equal((await api(base, 'DELETE', '/api/session', undefined, token)).status, 200);
     for (let i = 0; i < 40 && !ws.isClosed; i++) await new Promise((r) => setTimeout(r, 50));
@@ -250,7 +262,9 @@ test('before REAL launches: no coin on the contract means free play only, and th
     await ws.waitT('room', 5000);
     ws.send({ t: 'pick_seat', level: 1, seatIndex: 0, mode: 'paid', coins: 10 });
     assert.equal((await ws.waitT('error', 5000)).code, 'coins_closed');
-    assert.equal((await api(base, 'GET', '/api/session/wallet', undefined, session.token)).body.coinsOpen, false);
+    const closedInfo = (await api(base, 'GET', '/api/session/wallet', undefined, session.token)).body;
+    assert.equal(closedInfo.coinsOpen, false);
+    assert.equal(closedInfo.walletBalance, '0', 'no coin, nothing in the wallet');
     ws.send({ t: 'pick_seat', level: 1, seatIndex: 0, mode: 'free' });
     assert.equal((await ws.waitT('matched', 15_000)).chat.mode, 'free', 'free play works');
     // the owner sets the coin at the launch: the relay notices and tells everyone
@@ -283,6 +297,7 @@ test('test mode: a wallet account plays next to the test users; the faucet serve
     const fw = await api(base, 'POST', '/api/session/faucet-wallet', { coins: 30 }, token);
     assert.equal(fw.status, 200);
     assert.equal(chain.walletBalance(acct), 30n * chain.coinUnit, 'test coins into the wallet itself, to try a wallet deposit');
+    assert.equal((await api(base, 'GET', '/api/session/wallet', undefined, token)).body.walletBalance, (30n * chain.coinUnit).toString(), 'walletInfo shows them');
     const pk = await enableCoins(base, chain, token, acct);
     const ws = await socket(base, token, acct);
     await ws.waitT('welcome', 5000);

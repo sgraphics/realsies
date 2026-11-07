@@ -189,4 +189,6 @@ export interface ChainAdapter {
   txDetails(hash: string, signerId: string): Promise<TxDetails | null>;
   /** NEP-145 on the coin: whether the account is registered, and the deposit that registers one (yoctoNEAR). */
   tokenStorage(accountId: string): Promise<{ registered: boolean; minDeposit: string }>;
+  /** ft_balance_of on the coin: what the wallet itself holds, base units (0 when not registered or no coin yet). */
+  tokenBalance(accountId: string): Promise<bigint>;
 }

@@ -268,6 +268,10 @@ export class MockChain implements ChainAdapter {
     return t && t.signerId === signerId ? { ...t, actions: t.actions.map((a) => ({ ...a })), logs: [...t.logs] } : null;
   }
 
+  async tokenBalance(accountId: string): Promise<bigint> {
+    return this.coinsOpen ? this.walletBalance(accountId) : 0n;
+  }
+
   async tokenStorage(accountId: string): Promise<{ registered: boolean; minDeposit: string }> {
     return { registered: this.tokenRegistered.has(accountId), minDeposit: '1250000000000000000000' };
   }

@@ -272,6 +272,12 @@ export class NearChain implements ChainAdapter {
     return { registered: bal !== null && bal !== undefined, minDeposit: this.storageMin! };
   }
 
+  async tokenBalance(accountId: string): Promise<bigint> {
+    if (!this.tokenId) return 0n;
+    const v = await this.view<string | null>(this.tokenId, 'ft_balance_of', { account_id: accountId });
+    return BigInt(v ?? '0');
+  }
+
   async txDetails(hash: string, signerId: string): Promise<TxDetails | null> {
     let r: any;
     try {

@@ -18,7 +18,8 @@
 //   &qa=signin-wait&hold=signIn    the sign-in waiting for the wallet
 //   &qa=signin-error&reject=signIn the player closed the wallet
 //   &as=sam&qa=key                 signed in as sam.testnet: the "Enable coins" dialog (&hold=key: waiting)
-//   &as=sam&qa=deposit             the wallet deposit dialog (200 test coins in the wallet, none in the game)
+//   &as=sam&qa=deposit             the wallet deposit dialog (200 test coins in the wallet, none in the game);
+//                                  &wcoins=0|3 for an empty or a thin wallet, &dep=20 for 20 coins typed in
 //   &as=sam&qa=coins               coins enabled and 45 deposited: deposit, withdraw, key status
 //   &coins=closed                  the contract has no coin yet: "Coins open when REAL launches"
 // The launch (?mock=1&launch=soon|auction|finalizing): the coming-soon page, then the game with its auction banner; see src/net/index.ts.
@@ -92,7 +93,7 @@ export async function runQa(store: Store, search: string, open: (what: string, a
     return;
   }
   // a mainnet-like mock (&wallet=1, or &launch=: before REAL) signs in with the mock wallet
-  const walletMode = q.get('mock') === '1' && (q.get('wallet') === '1' || mockLaunchOf(search) !== null);
+  const walletMode = q.get('mock') === '1' && (q.get('wallet') === '1' || q.get('wallet') === 'test' || mockLaunchOf(search) !== null);
   if (walletMode && !q.get('as')) {
     // the sign-in screens: waiting for the wallet, or the wallet closed
     if (q.get('qa') === 'signin-wait' || q.get('qa') === 'signin-error') {
@@ -120,13 +121,17 @@ export async function runQa(store: Store, search: string, open: (what: string, a
     return;
   }
   if (walletMode && (plan.step === 'deposit' || plan.step === 'coins') && store.get().config?.coinsOpen !== false) {
-    await store.actions.faucetToWallet(200);
+    // &wcoins=N: the wallet holds N test coins first (0: an empty wallet, not even registered on the coin)
+    const wcoins = q.get('wcoins') === null ? 200 : Number(q.get('wcoins'));
+    if (wcoins > 0) await store.actions.faucetToWallet(wcoins);
     if (plan.step === 'coins') {
       await store.actions.enableCoins();
       await store.actions.walletDeposit(45);
     }
+    await store.actions.refreshWalletInfo();
     store.actions.resetFlow('walletTx');
-    open('deposit');
+    // &dep=20: the deposit field holds 20 coins, as typed
+    open('deposit', { prefill: q.get('dep') ?? undefined });
     return;
   }
   store.actions.enterRoom(plan.level);

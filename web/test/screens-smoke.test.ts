@@ -278,8 +278,40 @@ try {
   render(h(DepositDialog, { store: ws, gate: false, onDone() {}, onEnableCoins() {} }), root as unknown as Element);
   await sleep(40);
   const dt = root.textContent;
-  ok(/Deposit to earn/.test(dt) && /Deposit from wallet/.test(dt) && /Buy tREAL/.test(dt) && /Enable coins/.test(dt) && !/Get 100 test coins/.test(dt), 'wallet deposit: from the wallet, Buy link, enable coins, no faucet without test mode');
+  ok(/Deposit to earn/.test(dt) && /Deposit from wallet/.test(dt) && /Buy tREAL/.test(dt) && /Enable coins/.test(dt) && !/test coins in the game|to test deposits/.test(dt), 'wallet deposit: from the wallet, Buy link, enable coins, no faucet without test mode');
+  ok(/Your wallet has no tREAL yet\./.test(dt) && !/Get 100 tREAL to your wallet/.test(dt), 'without test mode an empty wallet is pointed at Buy, not at a faucet');
   render(null, root as unknown as Element);
+  // the coins screen in test mode, by what the wallet holds: empty, short for 20 coins, enough
+  const findButton = (n: { childNodes: unknown[]; nodeName?: string; textContent: string; attrs?: Record<string, string> }, text: RegExp): { attrs: Record<string, string> } | null => {
+    if (n.nodeName === 'BUTTON' && text.test(n.textContent)) return n as { attrs: Record<string, string> };
+    for (const c of n.childNodes as (typeof n)[]) {
+      const f = findButton(c, text);
+      if (f) return f;
+    }
+    return null;
+  };
+  const disabled = (b: { attrs: Record<string, string> } | null) => !!b && b.attrs.disabled !== undefined && b.attrs.disabled !== 'false';
+  const tc = new MockGameClient({ storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
+  const ts = createStore(tc, new MockWallet(tc, { accountId: 'tess.testnet', delayMs: 2 }));
+  await ts.actions.loadConfig();
+  await ts.actions.walletSignIn();
+  const states: [string, number][] = [['empty', 0], ['short', 3], ['enough', 197]];
+  for (const [state, add] of states) {
+    if (add) await ts.actions.faucetToWallet(add);
+    await ts.actions.refreshWalletInfo();
+    ts.actions.resetFlow('walletTx');
+    render(h(DepositDialog, { key: state, store: ts, gate: false, onDone() {}, onEnableCoins() {}, prefill: '20' }), root as unknown as Element);
+    await sleep(40);
+    const t = root.textContent;
+    const dep = findButton(root as never, /Deposit from wallet/);
+    if (state === 'empty') ok(/In your wallet: 0 tREAL/.test(t) && /Your wallet has no tREAL yet\./.test(t) && /Get 100 tREAL to your wallet/.test(t) && disabled(dep), 'coins screen, empty wallet: says so, offers test coins, the deposit is off');
+    if (state === 'short') ok(/In your wallet: 3 tREAL/.test(t) && /Your wallet holds 3 tREAL, enough for 3 coins\./.test(t) && disabled(dep), 'coins screen, 3 in the wallet and 20 typed: enough for 3 coins, the deposit is off');
+    if (state === 'enough') ok(/In your wallet: 200 tREAL/.test(t) && !/no tREAL yet|enough for/.test(t) && !!dep && !disabled(dep), 'coins screen, 200 in the wallet: the deposit is on');
+    ok(/100 test coins in the game/.test(t) && /100 tREAL to my wallet \(to test deposits\)/.test(t), `coins screen (${state}): the two test buttons say where the coins go`);
+  }
+  render(null, root as unknown as Element);
+  ts.actions.logout();
+  tc.dispose();
   ws.actions.logout();
   wc.dispose();
   const closedClient = new MockGameClient({ wallet: true, coinsOpen: false, storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });

@@ -287,8 +287,12 @@ test('mock chain: a play key signs plays and calls with fresh nonces; other meth
   const acct = 'player.testnet';
   const secret = 'f'.repeat(64);
   assert.ok((await chain.startRound(1, sha256Hex(secret), Date.now() + 60_000)).ok);
+  assert.equal(await chain.tokenBalance(acct), 0n, 'nothing in the wallet yet');
   chain.mintToWallet(acct, 100n * chain.coinUnit);
+  assert.equal(await chain.tokenBalance(acct), 100n * chain.coinUnit, 'ft_balance_of: what the wallet holds');
   assert.ok((await chain.walletDeposit(acct, 50n * chain.coinUnit)).ok, 'a deposit from the wallet');
+  assert.equal(await chain.tokenBalance(acct), 50n * chain.coinUnit, 'less after a deposit');
+  assert.ok(!(await chain.walletDeposit(acct, 60n * chain.coinUnit)).ok, 'a deposit above what the wallet holds fails, as on NEAR');
   assert.equal(await chain.balanceOf(acct), 50n * chain.coinUnit);
   const k = newKey();
   chain.addKey(acct, k.publicKey, { receiverId: chain.contractId, methodNames: ['play', 'call'], allowance: '250000000000000000000000' });

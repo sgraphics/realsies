@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.4 (2026-11-06: PublicConfig.launch, the coming-soon page and the auction banner; additive).
+// Realsies relay <-> web protocol, v1.5 (2026-11-07: WalletInfo.walletBalance, the coin in the wallet itself; additive).
+// v1.4 (2026-11-06): PublicConfig.launch, the coming-soon page and the auction banner; additive.
 // v1.3 (2026-11-05): wallet sign-in with NEP-413 sessions, play keys, player-signed plays and calls, wallet deposits; all additive.
 // v1.2 (2026-11-05): chat countdown, persona cards, AI builders.
 // Authoritative. Owned by the lead; workstreams import it and do not edit it.
@@ -170,6 +171,7 @@ export interface WalletInfo {
   tokenId: string;
   tokenRegistered: boolean; // NEP-145: the account can receive the coin (withdrawals need it)
   storageDeposit: string; // yoctoNEAR to register on the coin, if needed
+  walletBalance?: string; // v1.5: the coin held by the wallet itself (ft_balance_of), base units; absent if unreadable
 }
 
 /** The one transaction the relay asks the browser to sign with its play key; every field is fixed. */
