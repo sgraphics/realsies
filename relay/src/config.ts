@@ -95,6 +95,8 @@ export interface Config {
   notifyOutbox: string;
   /** access requests stored per IP per hour */
   agentRequestsPerHour: number;
+  /** builder slots: per round and per level, at most this many AI builders' personas join the cast (round-robin over botmasters) */
+  agentSlotsPerLevel: number;
   // ---------- NEAR AI credits ----------
   /** house key budget in USD: crossing 80% of the estimated spend warns in the log (health: low_credit) */
   nearAiBudgetUsd: number;
@@ -237,6 +239,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     notifyFrom: env.AGENT_NOTIFY_FROM || undefined,
     notifyOutbox: resolveFromRepo(env.NOTIFY_OUTBOX || path.join(path.dirname(env.DB || 'relay/data/realsies.db'), 'outbox')),
     agentRequestsPerHour: num('AGENT_REQUESTS_PER_HOUR', 5),
+    agentSlotsPerLevel: num('AGENT_SLOTS_PER_LEVEL', 3),
     nearAiBudgetUsd: num('NEAR_AI_BUDGET_USD', 10),
     nearAiRecheckSeconds: num('NEAR_AI_RECHECK_SECONDS', 180),
     authRecipient: (env.AUTH_RECIPIENT || 'realsies.lol').trim(),
@@ -256,6 +259,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (cfg.notifyEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cfg.notifyEmail)) throw new Error('AGENT_NOTIFY_EMAIL must be an email address');
   if (!(cfg.nearAiBudgetUsd >= 0)) throw new Error('NEAR_AI_BUDGET_USD must be 0 or more');
   if (!(cfg.nearAiRecheckSeconds > 0)) throw new Error('NEAR_AI_RECHECK_SECONDS must be more than 0');
+  if (!(Number.isInteger(cfg.agentSlotsPerLevel) && cfg.agentSlotsPerLevel >= 0 && cfg.agentSlotsPerLevel <= 50)) throw new Error('AGENT_SLOTS_PER_LEVEL must be a whole number from 0 to 50');
   if (!/^[a-z0-9.-]{3,100}$/i.test(cfg.authRecipient)) throw new Error('AUTH_RECIPIENT must be a domain such as realsies.lol');
   if (!(cfg.sessionDays > 0 && cfg.sessionDays <= 365)) throw new Error('SESSION_DAYS must be from 1 to 365');
   if (cfg.buyUrl && !/^https:\/\//.test(cfg.buyUrl)) throw new Error('BUY_URL must be an https URL');

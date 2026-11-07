@@ -19,6 +19,7 @@ import type { AgentStore } from '../agents/store.js';
 import type { ByokKeys } from '../agents/byok.js';
 import { personaOfAgent } from '../agents/persona.js';
 import { agentChatsOf } from '../agents/stats.js';
+import { describeSlots, levelsByPersona, nextRoundsOf, slotsOfRound, type SlotCandidate } from '../agents/schedule.js';
 import { buildCast } from '../persona/cast.js';
 import { MODELS, chatCostUsd } from '../models.js';
 import {
@@ -93,6 +94,8 @@ function friendlyChainError(raw: string | undefined, fallback: string): string {
   const m = raw.match(/Smart contract panicked: (.*)/);
   return m ? `${fallback}: ${m[1]}` : `${fallback}: ${raw.slice(0, 160)}`;
 }
+
+const slotCandidate = (p: Persona): SlotCandidate => ({ id: p.id, owner: ownerOf(p) ?? p.id, levels: p.levels });
 
 export class GameError extends Error {
   /** `extra`: more fields for the JSON error body (an airdrop refusal says when the next one may run) */
@@ -637,7 +640,7 @@ export class Game implements BotHost {
 
     const cm = this.chars.get(r.id)!;
     const haveBots = [...cm.values()].some((c) => c.kind === 'bot');
-    const cast = haveBots ? [] : this.castOf(r);
+    const cast = haveBots ? [] : this.castOf(r, true);
     const models = [...new Set([...cast.map((p) => p.model), ...[...cm.values()].filter((c) => c.kind === 'bot').map((c) => c.model!)])];
     const missing = models.filter((m) => !r.attest[m]?.ok);
     await Promise.all(missing.map((m) => this.attest(r, m)));
@@ -690,22 +693,46 @@ export class Game implements BotHost {
   /**
    * This round's cast, prompts composed for the round's start (local time, scene). Demo bots: CAST_SIZE
    * characters whose countries follow the Western mix, each a hand-written persona of that country or a
-   * person generated from the round's castSeed (src/persona/cast.ts), one level each. Personas driven by a
-   * remote brain play every round at each of their levels. CAST_SIZE 0: the personas folder as is.
+   * person generated from the round's castSeed (src/persona/cast.ts), one level each. Botmasters' personas (AI
+   * builders in the DB, and the remote-brain personas of relay/botmasters) take the builder slots: at most
+   * AGENT_SLOTS_PER_LEVEL a level, round-robin over botmasters by round id (src/agents/schedule.ts).
+   * CAST_SIZE 0: the personas folder as is (its remote-brain personas through the slots too).
    */
-  castOf(r: RoundRec): Persona[] {
-    const folder = this.personas.map((p) => atRound(p, r.startedAt));
-    const agents = this.agentPersonas();
-    if (!r.castSeed || this.cfg.castSize <= 0) return [...folder, ...agents];
-    const remote = folder.filter((p) => p.brain.kind === 'remote');
+  castOf(r: RoundRec, logSlots = false): Persona[] {
+    const slotted = this.slottedPersonas(r, logSlots);
+    if (!r.castSeed || this.cfg.castSize <= 0) {
+      return [...this.personas.filter((p) => p.brain.kind !== 'remote').map((p) => atRound(p, r.startedAt)), ...slotted];
+    }
     const demo = this.personas.filter((p) => p.brain.kind === 'default' && p.person);
-    return [...remote, ...agents, ...buildCast({ seed: r.castSeed, size: this.cfg.castSize, at: r.startedAt, hand: demo, pins: this.cfg.castPins })];
+    return [...slotted, ...buildCast({ seed: r.castSeed, size: this.cfg.castSize, at: r.startedAt, hand: demo, pins: this.cfg.castPins })];
+  }
+
+  /** Every persona that may take a builder slot now: approved AI builders' personas and the folder's remote-brain ones. */
+  slotCandidates(at = Date.now()): Persona[] {
+    const remote = this.personas.filter((p) => p.brain.kind === 'remote').map((p) => atRound(p, at));
+    return [...remote, ...this.agentPersonas()];
+  }
+
+  /** A round's builder slots: each candidate that took one, at the levels where it did. */
+  private slottedPersonas(r: RoundRec, logSlots = false): Persona[] {
+    const cands = this.slotCandidates(r.startedAt);
+    const picks = slotsOfRound(r.id, cands.map(slotCandidate), this.cfg.agentSlotsPerLevel);
+    if (logSlots && cands.length) log.info(describeSlots(r.id, picks, this.cfg.agentSlotsPerLevel));
+    const levels = levelsByPersona(picks);
+    return cands.filter((p) => levels.has(p.id)).map((p) => ({ ...p, levels: levels.get(p.id)! }));
+  }
+
+  /** A botmaster's next three rounds with a builder slot, and the levels, as of now (GET /api/botmaster/me). */
+  scheduleOf(owner: string, count = 3): { slotsPerLevel: number; nextRounds: { roundId: number; levels: Level[] }[] } {
+    const from = (this.current?.id ?? this.db.maxRoundId()) + 1;
+    const cands = this.slotCandidates().map(slotCandidate);
+    return { slotsPerLevel: this.cfg.agentSlotsPerLevel, nextRounds: nextRoundsOf(owner, from, cands, this.cfg.agentSlotsPerLevel, count) };
   }
 
   /**
-   * AI builders' approved personas of active botmasters (docs/agents.md): like the remote-brain personas,
-   * each plays every round at each of its levels, its own prompt committed by sha256, its Turing bonus paid
-   * to its botmaster's payout account.
+   * AI builders' approved personas of active botmasters (docs/agents.md): candidates for the builder slots,
+   * each with its own prompt committed by sha256 when it plays, its Turing bonus paid to its botmaster's
+   * payout account.
    */
   agentPersonas(): Persona[] {
     if (!this.agents) return [];

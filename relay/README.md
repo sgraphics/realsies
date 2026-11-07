@@ -70,6 +70,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `AGENT_REQUEST_WEBHOOK` | | every access request is POSTed here as JSON (with Slack `text` and Discord `content`) |
 | `AGENT_NOTIFY_EMAIL`, `AGENT_NOTIFY_FROM`, `NOTIFY_OUTBOX` | | operator emails for every access request and every persona to review (`src/agents/notify.ts`): queued as files in the outbox, sent through Amazon SES by the root-only `deploy/realsies-mail.py`; off unless the address is set |
 | `AGENT_REQUESTS_PER_HOUR` | 5 | access requests per IP per hour |
+| `AGENT_SLOTS_PER_LEVEL` | 3 | builder slots: per round and per level, at most this many AI builders' (and remote-brain botmasters') personas join the cast, round-robin over botmasters by round id; 0 = none |
 | `NEAR_AI_BUDGET_USD` | 10 | the relay's own key: 80% of the estimated spend warns in the log, `/api/health` `ai.status` `low_credit` (spend in `GET /api/admin/health`) |
 | `NEAR_AI_RECHECK_SECONDS` | 180 | a key out of credits is retried with a one-token completion this often; any success recovers it |
 | `REMOTE_SILENCE_SECONDS` | 20 | a remote brain silent this long is replaced by the default brain |
@@ -87,7 +88,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `src/auth/nep413.ts` | NEP-413 payloads (borsh with the 2^31+413 tag), ed25519 verification, the signature encodings wallets use (base64, base64url, `ed25519:` base58, hex), account id rules |
 | `src/auth/service.ts` | sign-in: one-use 32-byte nonces, the signature for `AUTH_RECIPIENT`, `view_access_key` must say FullAccess; sessions (table `sessions`, token sha256 only), one-time WebSocket tickets, sign-out; the browser's play key checked on chain (the game contract, exactly `play` and `call`) and kept on the session |
 | `src/auth/tx.ts` | the transaction a browser is asked to sign (`sign_tx`) and the check of what comes back: byte for byte that transaction, canonical, under the play key's ed25519 signature |
-| `src/agents/` | AI builders (`docs/agents.md`): `store.ts` the tables (access requests, DB botmasters with token sha256 only, personas, sealed keys, settled chat records), `api.ts` the HTTP API (`/api/agents`, `/api/admin`, `/api/botmaster`), `admin.ts` operator actions shared with `tools/botmaster-admin.ts`, `validate.ts` input checks and the model check against `/v1/models`, `stats.ts` the settled chat records (anonymised players, the chat's share of the Turing bonus from chain plays) and scorecards, `byok.ts` botmasters' own NEAR AI keys, `persona.ts` an approved persona as a round persona |
+| `src/agents/` | AI builders (`docs/agents.md`): `store.ts` the tables (access requests, DB botmasters with token sha256 only, personas, sealed keys, settled chat records), `api.ts` the HTTP API (`/api/agents`, `/api/admin`, `/api/botmaster`), `admin.ts` operator actions shared with `tools/botmaster-admin.ts`, `validate.ts` input checks and the model check against `/v1/models`, `stats.ts` the settled chat records (anonymised players, the chat's share of the Turing bonus from chain plays) and scorecards, `byok.ts` botmasters' own NEAR AI keys, `persona.ts` an approved persona as a round persona, `schedule.ts` the builder slots (round-robin over botmasters by round id, pure) |
 | `src/nearai/credits.ts` | spend per key from `usage` times price, the house budget, credit-failure detection (402; 400 or 403 about credits, balance, quota or billing; 401; never 429 or 5xx), keys out of credits, one-token rechecks, recovery; `TrackedAi` wraps a client |
 | `src/secretbox.ts` | AES-256-GCM sealing with RELAY_ENCRYPTION_KEY, bound to the owner |
 | `src/game/game.ts` | the engine: rounds, characters, commits, matchmaking, chats, calls, settlement, results, views |
@@ -120,7 +121,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `tools/wallet-proof.ts` | wallet sign-in and the play key end to end on testnet, against a relay on a throwaway deployment (it refuses `game.realsies.testnet` and `game.realsies.near`): the account's full-access key from the legacy keychain signs the NEP-413 sign-in, the near CLI does what a wallet popup would (AddKey, deposit, withdraw), the web app's encoder signs the play and the call; gas and allowance measured; a report in `data/` |
 
 Round lifecycle: start (secret, cast seed, `start_round`, attestation per model of the round's cast, `CAST_SIZE` demo bot
-characters, one level each, plus remote-brain personas at each of their levels, each storing the persona it plays, `commit_characters` FINAL) -> humans committed on first connect (batched) ->
+characters, one level each, plus the builder slots (remote-brain and AI builders' personas, at most `AGENT_SLOTS_PER_LEVEL` a level, round-robin over botmasters), each storing the persona it plays, `commit_characters` FINAL) -> humans committed on first connect (batched) ->
 accepting until `endsAt - CHAT - CALL - 15 s` -> at `endsAt` the next round starts and the old one
 settles in the background: wait for calls, `reveal_round` after `endsAt + 60 s`, wait for bot
 signatures, `open_characters` (bots: one proof per paid viewer; humans: paid viewers; everyone else
@@ -169,8 +170,10 @@ Reasoning off (measured with `tools/probe-nearai.mjs`): GLM 5.3 Flash `reasoning
 (0 to 6 reasoning tokens, about 1 s), DeepSeek V4.1 Flash `chat_template_kwargs.enable_thinking:
 false` (0 tokens, 1 to 2 s). Qwen 3.8 and 3.6 reject a second system message, so no persona uses them.
 
-AI builders (`docs/agents.md`): an approved botmaster's personas play every round at each of their levels
-like the remote-brain personas, the prompt committed by sha256 and the payout to the botmaster's account; at
+AI builders (`docs/agents.md`): an approved botmaster's personas take the builder slots with the remote-brain
+personas (`src/agents/schedule.ts`: at most `AGENT_SLOTS_PER_LEVEL` a level a round, round-robin over botmasters
+by round id, one persona each before a second, personas rotating within a botmaster; one log line a round;
+`GET /api/botmaster/me` `schedule`), the prompt committed by sha256 and the payout to the botmaster's account; at
 settlement one record per chat of theirs is stored (`agent_chats`) with the player anonymised and the chat's
 share of the bonus computed from `get_round_plays` before pruning. Matching skips characters of revoked
 botmasters and disabled personas, and every bot whose NEAR AI key is out of credits (the relay's key, or the

@@ -271,8 +271,10 @@ Policy knobs (`DEFAULT_POLICY`): `probeShare` 0.5, `directShare` 0.7, `balance` 
 sends `POST /api/botmaster/personas` (`docs/agents.md` section 4) with the same fields as below (`model`,
 `prompt`, `levels`, `brain` `"default"` or `"remote"`, `traits`, `languages`, `interests`, `typing`), and the
 operator approves it (admin API or `relay/tools/botmaster-admin.ts`). The relay keeps it in its DB, under
-the id `<botmaster>-<id>`. From the next round it plays every round at each of its levels, and its `payout`
-is the botmaster's payout account. Nothing needs a file or a restart.
+the id `<botmaster>-<id>`. From the next round it takes part in the builder slots (at most
+`AGENT_SLOTS_PER_LEVEL` builder personas a level a round, round-robin over botmasters by round id;
+`docs/agents.md` section 10), and its `payout` is the botmaster's payout account. Nothing needs a file or a
+restart.
 
 The operator can still add a persona by hand as `relay/personas/<id>.json`. A persona driven by a remote
 brain may bring its own prompt:
@@ -455,8 +457,8 @@ Canada, Australia, Ireland and New Zealand 13.8%, Western and Northern Europe 25
 the rest 10.0%; hand-written personas fill 16.8% of the characters (6.6 a round: the three Americans and
 the barista from Leeds in most rounds, Busan, Osaka, Pune, Lagos and Tallinn in fewer than one in four).
 `CAST_SIZE=0` plays the personas folder as is (every persona at each of its levels, nobody generated);
-`CAST_PINS` (tests and smoke runs) forces hand-written personas in. Personas driven by a remote brain play
-every round at each of their levels, on top. The generator is deterministic: the same seed, index, country
+`CAST_PINS` (tests and smoke runs) forces hand-written personas in. Personas driven by a remote brain and AI
+builders' personas take the builder slots on top (`docs/agents.md` section 10). The generator is deterministic: the same seed, index, country
 and start time give the same person and prompt. Ages run 16 to 70, most 20 to 40; about 60% native English
 speakers; the job fits the age, names fit the culture and the age, the languages fit the place, the age
 and the schooling the job implies (school French in the UK, Irish in Ireland, Russian for older Estonians,

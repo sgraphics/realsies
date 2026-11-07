@@ -655,3 +655,46 @@ test('a level where no bot can talk is paused on its own; the other levels play 
     await app.close();
   }
 });
+
+test('builder slots: round-robin over botmasters across real rounds, me.schedule predicts them, a disabled persona drops out', { timeout: 120_000 }, async () => {
+  const { app, base } = await setup({ adminToken: ADMIN, agentSlotsPerLevel: 1 });
+  try {
+    const tokenOf = async (name: string) => (await api(base, 'POST', '/api/admin/botmasters', { token: ADMIN, body: { name, payoutAccount: `${name}.testnet` } })).body.token as string;
+    const TA = await tokenOf('acme');
+    const TB = await tokenOf('bolt');
+    for (const [t, id, levels] of [[TA, 'zed', [1, 2]], [TB, 'ray', [1]]] as const) {
+      const sub = await api(base, 'POST', '/api/botmaster/personas', { token: t, body: { id, model: 'z-ai/glm-5.3-flash', prompt: PROMPT, levels } });
+      assert.equal(sub.status, 200, sub.text);
+      assert.equal((await api(base, 'POST', `/api/admin/personas/${sub.body.id}/approve`, { token: ADMIN })).status, 200);
+    }
+    // one slot a level: at level 1 acme and bolt alternate by round id (acme on even ids); at level 2 acme is alone
+    const meA = (await api(base, 'GET', '/api/botmaster/me', { token: TA })).body;
+    const meB = (await api(base, 'GET', '/api/botmaster/me', { token: TB })).body;
+    assert.equal(meA.schedule.slotsPerLevel, 1);
+    assert.equal(meA.schedule.nextRounds.length, 3);
+    const next = (await state(base)).round.roundId + 1;
+    assert.deepEqual(meA.schedule.nextRounds, [0, 1, 2].map((k) => ({ roundId: next + k, levels: (next + k) % 2 === 0 ? [1, 2] : [2] })));
+    assert.deepEqual(meB.schedule.nextRounds.map((x: any) => x.levels), [[1], [1], [1]]);
+    assert.ok(meB.schedule.nextRounds.every((x: any) => x.roundId % 2 === 1 && x.roundId >= next));
+
+    // the rounds as they run: one builder persona a level, as predicted
+    const builders = (R: number) => [...app.game.chars.get(R)!.values()].filter((x: CharacterRec) => x.kind === 'bot' && x.persona?.owner).map((x) => `${x.personaId}@L${x.level}`).sort();
+    const R1 = await newRound(base);
+    const R2 = await newRound(base);
+    assert.equal(R1, next);
+    for (const R of [R1, R2]) {
+      const want = R % 2 === 0 ? ['acme-zed@L1', 'acme-zed@L2'] : ['acme-zed@L2', 'bolt-ray@L1'];
+      assert.deepEqual(builders(R), want, `round ${R}`);
+    }
+    assert.ok(new Set([R1, R2].map((R) => builders(R).find((x) => x.endsWith('@L1')))).size === 2, 'both botmasters got a turn at level 1');
+
+    // bolt's only persona is disabled: no more turns for bolt; acme takes level 1 every round
+    assert.equal((await api(base, 'POST', '/api/admin/personas/bolt-ray/disable', { token: ADMIN, body: { reason: 'test' } })).status, 200);
+    assert.deepEqual((await api(base, 'GET', '/api/botmaster/me', { token: TB })).body.schedule.nextRounds, []);
+    assert.ok((await api(base, 'GET', '/api/botmaster/me', { token: TA })).body.schedule.nextRounds.every((x: any) => x.levels.join() === '1,2'));
+    const R3 = await newRound(base);
+    assert.deepEqual(builders(R3), ['acme-zed@L1', 'acme-zed@L2']);
+  } finally {
+    await app.close();
+  }
+});

@@ -152,6 +152,8 @@ export function createAgentApi(d: AgentApiDeps) {
       silenceMs: d.hub.silenceMsOf(bm.name),
       online: d.hub.online(bm.name),
       ai: ai ? { status: ai.status, since: ai.since, spendUsd: ai.spendUsd, reason: ai.reason } : undefined,
+      // builder slots: its next three rounds with a slot and the levels (src/agents/schedule.ts); BotmasterProfile.schedule in protocol v1.7
+      schedule: d.game.scheduleOf(bm.name),
     };
   }
 

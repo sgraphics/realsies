@@ -107,8 +107,8 @@ The answer is the persona's summary: `{"id": "acme-zed", "model": ..., "levels":
 resubmitted under the same id. An approved prompt never changes, so a new prompt needs a new id. Each
 botmaster has up to 10 personas pending or approved.
 
-An operator reviews every persona. Once approved, it plays **every round, at each of its levels**, from the
-next round on. Each round it is one character with its own commitment
+An operator reviews every persona. Once approved, it takes part in the **builder slots** from the next round
+on (section 10). In a round where it has a slot at a level, it is one character there with its own commitment
 `realsies:v1|bot|round|character|model|sha256(prompt)|signers|payout|salt`, and its payout is your payout
 account.
 
@@ -180,7 +180,7 @@ CORS allows any origin, `Authorization` and `PUT`/`DELETE`.
 |---|---|---|
 | `POST /api/agents/request` | `AgentAccessRequest` | `AgentRequestReceipt` |
 | `GET /api/agents/info` | | the accepted models with prices, prompt limits, the steering paragraph, the bonus rates, whether own keys are accepted |
-| `GET /api/botmaster/me` | | `BotmasterProfile`; extra fields: `status`, `contact`, `online` (your brain is connected), `silenceMs`, `ai` (own key: `status`, `since`, `spendUsd`), and per persona `status` (`pending`, `approved`, `rejected`, `disabled`), `reason`, `promptSha256` |
+| `GET /api/botmaster/me` | | `BotmasterProfile`; extra fields: `status`, `contact`, `online` (your brain is connected), `silenceMs`, `ai` (own key: `status`, `since`, `spendUsd`), `schedule` (`slotsPerLevel`, `nextRounds`: your next three rounds with a slot and their levels, section 10), and per persona `status` (`pending`, `approved`, `rejected`, `disabled`), `reason`, `promptSha256` |
 | `GET /api/botmaster/stats` | | `BotmasterStats`: `totals`, `byPersona` (every approved persona, with or without chats), `rounds` newest first |
 | `GET /api/botmaster/chats?round=&limit=` | | `BotmasterChat[]`, settled rounds only, newest first; `round` one round id, `limit` 1 to 500 (default 50) |
 | `GET /api/botmaster/export.jsonl` | | every settled chat of yours, oldest first, one `BotmasterChat` JSON per line, streamed (`application/x-ndjson`) |
@@ -210,6 +210,7 @@ curl -s -H "Authorization: Bearer $TOKEN" https://realsies.lol/api/botmaster/exp
 | `AGENT_NOTIFY_EMAIL` | unset | the operator gets an email for every access request (reply-to the builder, with the approve command) and every persona waiting for review. The relay holds no mail credentials: it drops each email into `NOTIFY_OUTBOX` and a root-only unit on the server (`deploy/realsies-mail.py`) sends it through Amazon SES, only from @realsies.lol and only to this address |
 | `AGENT_NOTIFY_FROM`, `NOTIFY_OUTBOX` | `Realsies <notify@realsies.lol>`, the DB's folder + `outbox` | sender on the SES-verified domain; the outbox is `/var/spool/realsies-mail` on the server |
 | `AGENT_REQUESTS_PER_HOUR` | 5 | access requests per IP per hour (the IP is CF-Connecting-IP behind the local proxy; it is stored only as a keyed hash) |
+| `AGENT_SLOTS_PER_LEVEL` | 3 | builder slots: per round and per level, at most this many builders' personas join the cast (section 10); 0 = none |
 | `NEAR_AI_BUDGET_USD` | 10 | budget of the relay's own NEAR AI key: at 80% of the estimated lifetime spend the log warns and the health status turns `low_credit` (the spend itself is in `GET /api/admin/health`); raise it after topping up |
 | `NEAR_AI_RECHECK_SECONDS` | 180 | how often a key that is out of credits is retried with a one-token completion |
 
@@ -273,3 +274,35 @@ the rule is **no bots, no new chats**:
   restarts.
 - `GET /api/health` shows only `"ai": {"status": "ok" | "low_credit" | "out_of_credits", "since": ms}`.
   Spend, budget and the reason are business information, served by `GET /api/admin/health`.
+
+## 10. Slots and fairness
+
+Builders' agents join each round through **builder slots**, next to the relay's own bots, so the cast stays
+balanced and every builder gets turns:
+
+- Per round and per level, at most `AGENT_SLOTS_PER_LEVEL` (default 3) builder personas play. Botmasters
+  configured in `relay/botmasters/*.json` take part like the others.
+- The slots go round-robin over botmasters, deterministic from the round id. The botmasters with a persona at
+  that level are ordered by name; the first slot goes to the one at index `roundId mod n`, the next slots to
+  the ones after it, wrapping around. Everyone gets one persona in before anyone gets a second.
+- Within a botmaster, its personas at that level take turns by round id too.
+- With fewer candidates than slots, all of them play every round. With n botmasters at a level and S slots,
+  each plays S rounds out of every n.
+- `GET /api/botmaster/me` returns `schedule: {slotsPerLevel, nextRounds: [{roundId, levels}]}`: your next three
+  rounds with a slot and their levels, as of now (approvals, disables and revocations change it). The relay
+  logs the slots of every round.
+
+## 11. Isolation
+
+What a builder can and cannot do:
+
+- Its brain sends **intents and timing** over the WebSocket, **never text**: a `say` that carries words is
+  refused, and the model writes every line from the committed prompt.
+- It sees **its own chats only**: the live events of its own personas' chats, and its own settled transcripts
+  and scorecard over the API, with players anonymised.
+- Its token is kept only as a sha256; its own NEAR AI key only sealed (AES-256-GCM), and used for its own
+  chats only.
+- **No builder code runs in the relay.** Everything goes through the HTTP API and the WebSocket, under the
+  relay's limits.
+- The operator approves every persona before it plays, and can disable a persona or revoke a botmaster at
+  once: the token stops working, the live connection drops, and its characters leave the matching.
