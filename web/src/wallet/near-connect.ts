@@ -2,7 +2,8 @@
 // runs each wallet's connector in a sandboxed iframe from the wallet manifest, and lets the game ask for:
 //   sign-in with a signed NEP-413 message   connect({ signMessageParams })            one approval, no gas
 //   a function-call key for this browser    connect({ walletId, addFunctionCallKey }) one approval, the wallet adds the key
-//   transactions                            wallet.signAndSendTransaction(s)          deposit, withdraw, AddKey fallback
+//   transactions                            wallet.signAndSendTransaction(s)          deposit and withdraw, with the play
+//                                                                                     key's AddKey in the same approval
 // Loaded on demand (its own chunk), so the game's first paint does not wait for it.
 
 import type { NearConnector, NearWalletBase } from '@hot-labs/near-connect';
@@ -24,7 +25,7 @@ function asWalletError(e: unknown, what: string): WalletError {
 function hashOf(o: unknown): string {
   const r = o as { transaction?: { hash?: string }; transaction_outcome?: { id?: string }; status?: unknown } | null;
   const st = r?.status as { Failure?: unknown } | undefined;
-  if (st && typeof st === 'object' && 'Failure' in st) throw new WalletError('failed', `The transaction failed on chain: ${JSON.stringify(st.Failure).slice(0, 200)}`);
+  if (st && typeof st === 'object' && 'Failure' in st) throw new WalletError('tx_failed', `The transaction failed on chain: ${JSON.stringify(st.Failure).slice(0, 200)}`);
   const h = r?.transaction?.hash ?? r?.transaction_outcome?.id;
   if (!h) throw new WalletError('failed', 'The wallet did not return a transaction hash.');
   return h;

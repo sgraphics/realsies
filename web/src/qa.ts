@@ -17,16 +17,15 @@
 // Wallet sign-in (protocol v1.3), with &wallet=1 (a relay without test mode: no test users):
 //   &qa=signin-wait&hold=signIn    the sign-in waiting for the wallet
 //   &qa=signin-error&reject=signIn the player closed the wallet
-//   &as=sam&qa=key                 signed in as sam.testnet: the "Enable coins" dialog (&hold=key: waiting)
+//   &as=sam&qa=key                 signed in as sam.testnet: the one approval a first paid play asks for (&hold=key: waiting)
 //   &as=sam&qa=deposit             the wallet deposit dialog (200 test coins in the wallet, none in the game);
 //                                  &wcoins=0|3 for an empty or a thin wallet, &dep=20 for 20 coins typed in
-//   &as=sam&qa=coins               coins enabled and 45 deposited: deposit, withdraw, key status
+//   &as=sam&qa=coins               45 deposited (the play key came along in the same approval): deposit, withdraw
 //   &coins=closed                  the contract has no coin yet: "Coins open when REAL launches"
 //   &net=mainnet                   (with &wallet=1) the config says mainnet: REAL, "Buy REAL"
-// The testnet airdrop (protocol v1.6; the TESTNET panel above the room, any player on the testnet mock):
-//   &qa=airdrop                    it landed: the panel's message (a wallet player's wallet, a test player's game)
-//   &qa=airdrop-tag                the panel folded into the slim TESTNET tag (as=finn: 15 held, "Airdrop again")
-//   &qa=airdrop-soon               refused: the account had one 3 minutes ago
+// The testnet airdrop (protocol v1.6; the TESTNET panel above the room while a player holds nothing at all):
+//   &qa=airdrop                    it landed: the panel is gone, a note says where the tokens are
+//   &qa=airdrop-wait               the account had one 3 minutes ago: the panel says when the next one opens
 // The launch (?mock=1&launch=soon|auction|finalizing): the coming-soon page, then the game with its auction banner; see src/net/index.ts.
 // Only active together with ?mock=1.
 
@@ -129,10 +128,7 @@ export async function runQa(store: Store, search: string, open: (what: string, a
     // &wcoins=N: the wallet holds N test coins first (0: an empty wallet, not even registered on the coin)
     const wcoins = q.get('wcoins') === null ? 200 : Number(q.get('wcoins'));
     if (wcoins > 0) await store.client.faucetToWallet?.(wcoins);
-    if (plan.step === 'coins') {
-      await store.actions.enableCoins();
-      await store.actions.walletDeposit(45);
-    }
+    if (plan.step === 'coins') await store.actions.walletDeposit(45);
     await store.actions.refreshWalletInfo();
     store.actions.resetFlow('walletTx');
     // &dep=20: the deposit field holds 20 coins, as typed
@@ -151,15 +147,13 @@ export async function runQa(store: Store, search: string, open: (what: string, a
       open('deposit');
       return;
     case 'airdrop':
-    case 'airdrop-tag':
-    case 'airdrop-soon': {
-      await store.actions.refreshAirdrop();
-      if (plan.step === 'airdrop-soon') {
+    case 'airdrop-wait': {
+      if (plan.step === 'airdrop-wait') {
         const mock = store.client as unknown as { setAirdropAt?: (account: string, at: number | null) => void };
         mock.setAirdropAt?.(store.get().accountId!, Date.now() - 3 * 60_000);
       }
-      if (plan.step === 'airdrop-tag') store.actions.foldAirdrop();
-      else await store.actions.airdrop();
+      await store.actions.refreshAirdrop();
+      if (plan.step === 'airdrop') await store.actions.airdrop();
       return;
     }
     case 'rounds':

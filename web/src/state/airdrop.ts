@@ -1,25 +1,22 @@
 // The testnet airdrop (protocol v1.6): 100 test tokens in one tap, on the testnet demo only (a relay in test
 // mode on testnet). A wallet player's land in the wallet, and from there everything works as on mainnet (tap
 // your coins, deposit, play); a test player's go straight into the game balance. The relay allows one per account
-// per 10 minutes and none while the account holds 50 or more (wallet plus game balance). The words on screen
-// and which face of the TESTNET panel shows live here, so the panel, the coins screens and the tests agree.
+// per 10 minutes and none while the account holds 50 or more (wallet plus game balance). The TESTNET panel shows
+// only while the player holds nothing at all, in the wallet or in the game; once tokens land it is gone and a short
+// note says where they are. The words on screen and the panel's face live here, so screens and tests agree.
 
 import { AIRDROP, type AirdropStatus, type PublicConfig } from '../../../shared/protocol.ts';
 import type { AppState } from './store.ts';
 import { fmtCoins } from './format.ts';
 
 export interface AirdropView {
-  phase: 'idle' | 'busy' | 'done' | 'error';
+  phase: 'idle' | 'busy' | 'error';
   /** the relay's view for this account; null: none to be had here (an older relay, or it did not answer) */
   status?: AirdropStatus | null;
-  /** the airdrop that just landed, while its message shows */
-  landed?: { tx: string; coins: number; to: 'wallet' | 'game' };
   error?: { code: string; text: string };
-  /** the panel folded into the slim TESTNET tag (kept per account in this browser) */
-  folded: boolean;
 }
 
-export const AIRDROP_IDLE: AirdropView = { phase: 'idle', folded: false };
+export const AIRDROP_IDLE: AirdropView = { phase: 'idle' };
 
 /** Only on the testnet demo: test mode on testnet, with the coin open. Never on mainnet. */
 export function airdropOn(cfg: PublicConfig | undefined): boolean {
@@ -38,24 +35,26 @@ export function beforeNote(to: 'wallet' | 'game' | undefined): string {
   return to === 'game' ? `Straight into your game balance. ${NO_ACTION}` : NO_ACTION;
 }
 
-export function landedText(to: 'wallet' | 'game', coins: number, symbol: string): string {
-  return to === 'wallet' ? `${coins} ${symbol} are in your wallet.` : `${coins} ${symbol} are in your game balance.`;
-}
-
-export function landedNext(to: 'wallet' | 'game'): string {
+/** The note once they landed (the panel is gone by then): where they are, and the one next step. */
+export function landedNote(to: 'wallet' | 'game', coins: number, symbol: string): string {
   return to === 'wallet'
-    ? 'From here it works like the real game: tap your coins to deposit, then play.'
-    : 'From here it works like the real game: tap a character and play.';
+    ? `${coins} ${symbol} are in your wallet. Tap your coins to deposit, then play.`
+    : `${coins} ${symbol} are in your game balance. Tap a character to play.`;
 }
 
-/** The reason an airdrop did not happen, for the panel; the relay's refusal codes first. */
+/** The wait for the next one, while the account holds nothing (one per account per 10 minutes). */
+export function waitText(nextAt: number, now = Date.now()): string {
+  const mins = Math.max(1, Math.ceil((nextAt - now) / 60_000));
+  return `One airdrop every ${AIRDROP.everyMinutes} minutes. The next one opens in ${mins} min.`;
+}
+
+/** The reason an airdrop did not happen; the relay's refusal codes first. */
 export function airdropErrorText(code: string, e: unknown, st: AirdropStatus | null | undefined, symbol: string, now = Date.now()): string {
   const data = (e as { data?: { retryAt?: number; heldCoins?: number } } | null)?.data;
   switch (code) {
     case 'airdrop_too_soon': {
       const at = data?.retryAt ?? st?.nextAt;
-      const mins = at && at > now ? Math.max(1, Math.ceil((at - now) / 60_000)) : AIRDROP.everyMinutes;
-      return `One airdrop every ${AIRDROP.everyMinutes} minutes. The next one opens in ${mins} min.`;
+      return waitText(at && at > now ? at : now + AIRDROP.everyMinutes * 60_000, now);
     }
     case 'airdrop_enough': {
       const held = data?.heldCoins ?? st?.heldCoins;
@@ -83,54 +82,31 @@ export function airdropRefused(code: string | undefined): boolean {
   return code === 'airdrop_too_soon' || code === 'airdrop_enough' || code === 'not_test_mode' || code === 'coins_closed';
 }
 
-export type PanelMode = 'none' | 'offer' | 'busy' | 'done' | 'error' | 'tag';
-
-/**
- * Which face of the TESTNET panel shows. In the room: the offer (one big button) while an airdrop is open and the
- * panel was not folded in this browser; the message once it landed; the reason when it was refused; else the slim
- * tag. In a chat or a call: always the slim tag (the HUD hides it in a chat on a phone).
- */
-export function panelMode(s: Pick<AppState, 'config' | 'accountId' | 'airdrop'>, kind: 'lobby' | 'chat' | 'call' | 'who'): PanelMode {
-  if (kind === 'who' || !s.accountId || !airdropOn(s.config)) return 'none';
-  if (kind !== 'lobby') return 'tag';
-  const a = s.airdrop;
-  if (a.phase !== 'idle') return a.phase;
-  if (a.folded || !a.status || a.status.blocked) return 'tag';
-  return 'offer';
+/** Any tREAL at all, in the wallet or in the game (coins on the table count): the TESTNET panel is not needed. */
+export function holdsAny(s: Pick<AppState, 'me' | 'airdrop'>): boolean {
+  if ((s.me?.balanceCoins ?? 0) > 0 || (s.me?.lockedCoins ?? 0) > 0) return true;
+  return (s.airdrop.status?.heldCoins ?? 0) > 0;
 }
 
-/** The account holds what the limits call enough (wallet plus game balance): no airdrop to offer, now or later. */
+/** The account holds what the limits call enough (wallet plus game balance): no airdrop to offer. */
 export function holdsEnough(st: AirdropStatus | null | undefined): boolean {
   return !!st && st.heldCoins >= st.enoughCoins;
 }
 
-/** The slim tag offers "Airdrop again" only while the account holds little (wallet plus game balance). */
-export function offerAgain(st: AirdropStatus | null | undefined): boolean {
-  return !!st && st.heldCoins < st.againBelowCoins;
-}
+export type PanelMode = 'none' | 'offer' | 'busy' | 'wait' | 'error';
 
-const FOLD_KEY = (account: string) => `realsies:airdrop:folded:${account}`;
-
-function ls(): Storage | null {
-  try {
-    return (globalThis as { localStorage?: Storage }).localStorage ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export function readFolded(account: string): boolean {
-  try {
-    return ls()?.getItem(FOLD_KEY(account)) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function writeFolded(account: string): void {
-  try {
-    ls()?.setItem(FOLD_KEY(account), '1');
-  } catch {
-    /* private mode: folded until the page reloads */
-  }
+/**
+ * Which face of the TESTNET panel shows: in the room only, and only while the player holds nothing (wallet and
+ * game both empty; the relay's view first, so it never flashes up). The offer (one big button), the moment it
+ * runs, the wait for the next one, or what went wrong. Anything held: none at all.
+ */
+export function panelMode(s: Pick<AppState, 'config' | 'accountId' | 'airdrop' | 'me'>, kind: 'lobby' | 'chat' | 'call' | 'who', now = Date.now()): PanelMode {
+  if (kind !== 'lobby' || !s.accountId || !airdropOn(s.config)) return 'none';
+  const a = s.airdrop;
+  if (!a.status || holdsAny(s)) return 'none';
+  if (a.phase === 'busy') return 'busy';
+  if (a.phase === 'error' && !airdropRefused(a.error?.code)) return 'error';
+  // the relay said too soon, and the time it named has not come yet (then the offer is back)
+  if (a.status.blocked === 'airdrop_too_soon' && a.status.nextAt > now) return 'wait';
+  return 'offer';
 }

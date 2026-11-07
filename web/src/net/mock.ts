@@ -868,6 +868,13 @@ export class MockGameClient implements GameClient, MockLedger {
     });
   }
 
+  /** Tests: whether the account is registered on the coin (NEP-145 storage). */
+  setRegistered(account: string, on: boolean): void {
+    const reg = (this.st.registered ??= []).filter((a) => a !== account);
+    this.st.registered = on ? [...reg, account] : reg;
+    this.save();
+  }
+
   /** Tests and QA: when the account last had an airdrop (ms; null: never). */
   setAirdropAt(accountId: string, at: number | null): void {
     const a = (this.st.airdrops ??= {});
@@ -886,7 +893,15 @@ export class MockGameClient implements GameClient, MockLedger {
 
   ledgerWalletTx(account: string, tx: WalletTx): string {
     const a = tx.actions[0];
-    if (!a || a.type !== 'FunctionCall' || tx.actions.length !== 1) throw new Error('The mock wallet sends one function call per transaction.');
+    if (a?.type === 'AddKey' && tx.actions.length === 1) {
+      // the browser's play key, added by the account itself (in the same approval as a deposit or withdrawal)
+      if (tx.receiverId !== account) throw new Error('AddKey goes to your own account.');
+      if (this.st.keys?.[account]?.[a.params.publicKey]) throw new Error('AddKeyAlreadyExists');
+      const perm = a.params.accessKey.permission;
+      this.ledgerAddKey(account, a.params.publicKey, { receiverId: perm.receiverId, methodNames: [...(perm.methodNames ?? [])], allowance: perm.allowance ?? null });
+      return fakeTx(this.r);
+    }
+    if (!a || a.type !== 'FunctionCall' || tx.actions.length !== 1) throw new Error('The mock wallet sends one action per transaction.');
     const args = a.params.args as Record<string, unknown>;
     const hash = fakeTx(this.r);
     const coinsOf = (v: unknown) => Number(BigInt(String(v ?? '0')) * 10_000n / COIN_UNIT) / 10_000;
@@ -926,7 +941,7 @@ export class MockGameClient implements GameClient, MockLedger {
     const key = s?.playKey;
     const k = key ? this.st.keys?.[c.viewer]?.[key.publicKey] : undefined;
     if (!key || !k) {
-      done(false, 'No play key in this browser: enable coins first.');
+      done(false, 'No play key in this browser yet.');
       return;
     }
     const reqId = 'sr' + randHex(this.r, 12);
@@ -1218,8 +1233,8 @@ export class MockGameClient implements GameClient, MockLedger {
       if (this.config.coinsOpen === false) return this.err('coins_closed', 'Coins open when $REAL launches. Play free for now.', viewer);
       if (this.isWallet(viewer)) {
         const key = this.sessionOf(viewer)?.playKey;
-        if (!key) return this.err('play_key_missing', 'Enable coins first: one wallet approval lets this browser send your plays and calls.', viewer);
-        if (key.status !== 'active') return this.err('play_key_exhausted', "This browser's play key is out of gas allowance. Enable coins again.", viewer);
+        if (!key) return this.err('play_key_missing', 'One approval in your wallet first, then your plays and calls run without popups.', viewer);
+        if (key.status !== 'active') return this.err('play_key_exhausted', "This browser's play key used up its gas allowance: one approval in your wallet adds a fresh one.", viewer);
       }
       n = Math.floor(Number(coins));
       if (!Number.isFinite(n) || n < this.config.minCoins || n > this.config.maxCoins)

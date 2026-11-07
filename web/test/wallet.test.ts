@@ -161,7 +161,7 @@ console.log('wallet sign-in');
   storage.clear();
 }
 
-// ---------- 2. enabling coins, deposit, a paid chat signed in the browser, withdraw, sign out ----------
+// ---------- 2. the first deposit brings the play key along (one approval), a paid chat signed in the browser, withdraw, sign out ----------
 console.log('coins with a wallet');
 {
   const { client, wallet, store, done } = setup();
@@ -171,34 +171,22 @@ console.log('coins with a wallet');
     await waitFor(store, (s) => s.welcomed, 'welcome');
     store.actions.enterRoom(1);
     const room = (await waitFor(store, (s) => !!s.rooms[1], 'room')).rooms[1]!;
-    // coins need the play key first
     let faucetErr = '';
     await store.actions.faucet(50).catch((e) => (faucetErr = (e as { code?: string }).code ?? ''));
     ok(faucetErr === 'not_test_mode', 'no faucet without test mode: coins come from the wallet');
     await client.faucetToWallet(200); // the mock's coins into the wallet (a relay without test mode has no airdrop)
-    ok(client.walletCoinsOf('sam.testnet') === 200, '200 in the wallet');
+    ok(client.walletCoinsOf('sam.testnet') === 200 && !store.actions.coinsEnabled(), '200 in the wallet, no play key yet');
     const depPhases: string[] = [];
     const un = store.subscribe((s) => {
       if (depPhases[depPhases.length - 1] !== s.walletTx.phase) depPhases.push(s.walletTx.phase);
     });
-    ok(await store.actions.walletDeposit(60), 'a deposit from the wallet');
+    ok(await store.actions.walletDeposit(60), 'the first deposit');
     un();
     ok(depPhases.slice(-3).join(' ') === 'wallet checking done' && store.get().walletTx.kind === 'deposit' && !!store.get().walletTx.tx, `deposit phases: ${depPhases.join(' ')}`);
     ok(store.get().me?.balanceCoins === 60 && client.walletCoinsOf('sam.testnet') === 140, '60 coins in the game, 140 left in the wallet');
-    ok(!store.actions.coinsEnabled(), 'coins not enabled yet');
-    store.actions.pickSeat(1, room.seats[0].index, 'paid', 10);
-    await waitFor(store, (s) => !!s.keyNeeded, 'the relay asks for a play key');
-    ok(store.get().keyNeeded?.code === 'play_key_missing' && !store.get().search, 'a paid pick without a play key: the seat goes back, "Enable coins" opens');
-    const keyPhases: string[] = [];
-    const un2 = store.subscribe((s) => {
-      if (keyPhases[keyPhases.length - 1] !== s.keySetup.phase) keyPhases.push(s.keySetup.phase);
-    });
-    ok(await store.actions.enableCoins(), 'enable coins');
-    un2();
-    ok(keyPhases.join(' ') === 'checking wallet checking done' && store.get().keySetup.via === 'sign-in', `key phases: ${keyPhases.join(' ')} via ${store.get().keySetup.via}`);
+    ok(JSON.stringify(wallet.sent) === JSON.stringify([['AddKey', 'ft_transfer_call']]) && !wallet.calls.includes('key'), 'one approval: the play key and the deposit together, no step of its own');
     const local = loadPlayKey('testnet', 'sam.testnet');
-    ok(!!local && local.status === 'active' && store.get().session?.playKey?.publicKey === local.publicKey && store.actions.coinsEnabled(), 'the browser holds the play key, the relay knows it');
-    ok(wallet.calls.filter((c) => c === 'key').length === 1, 'one approval: the key added at sign-in');
+    ok(!!local && local.status === 'active' && store.get().session?.playKey?.publicKey === local.publicKey && store.get().session?.playKey?.methodNames.join() === 'play,call' && store.actions.coinsEnabled(), 'the browser holds the play key, the relay checked it on chain');
 
     // a paid chat: the browser signs the play and the call
     const sent: ClientMsg[] = [];
@@ -224,12 +212,16 @@ console.log('coins with a wallet');
     ok(!sent.some((m) => m.t === 'sign_declined'), 'nothing declined');
     store.actions.clearChat();
     ok(store.get().me!.balanceCoins === 50, '10 coins on the table');
+    ok(wallet.sent.length === 1, 'the paid chat asked the wallet nothing');
 
-    // withdraw: the account is registered on the coin already (the faucet did it)
+    // a second deposit: the key is there, so the deposit alone
+    ok(await store.actions.walletDeposit(5) && JSON.stringify(wallet.sent[1]) === JSON.stringify(['ft_transfer_call']), 'the next deposit: the deposit alone');
+    // withdraw: registered on the coin (the faucet did it) and the key is there: the withdrawal alone
     const info = await store.actions.refreshWalletInfo();
     ok(info?.tokenRegistered === true && info.coinsOpen, 'wallet info: registered on the coin');
     ok(await store.actions.walletWithdraw(20), 'a withdrawal through the wallet');
-    ok(store.get().me!.balanceCoins === 30 && client.walletCoinsOf('sam.testnet') === 160, '20 coins back in the wallet');
+    ok(JSON.stringify(wallet.sent[2]) === JSON.stringify(['withdraw']), 'the withdrawal alone');
+    ok(store.get().me!.balanceCoins === 35 && client.walletCoinsOf('sam.testnet') === 155, '20 coins back in the wallet');
     ok(!(await store.actions.walletWithdraw(500)) && /Not enough/.test(store.get().walletTx.error ?? ''), 'not more than the balance');
 
     // sign out: the session ends and the browser forgets its play key
@@ -241,7 +233,85 @@ console.log('coins with a wallet');
   }
 }
 
-// ---------- 3. play key fallbacks ----------
+// ---------- 2b. the batch for every case, and the fallback when a wallet refuses it ----------
+console.log('one approval, every case');
+{
+  // a withdrawal with no key and no registration: key, registration and withdrawal in one approval
+  const { client, wallet, store, done } = setup({ wallet: false }, { accountId: 'wes.testnet' });
+  try {
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+    await waitFor(store, (s) => s.welcomed, 'welcome wes');
+    await client.faucet('wes.testnet', 30); // coins in the game that came without a wallet transaction
+    await store.actions.refreshMe();
+    ok((await store.actions.refreshWalletInfo())?.tokenRegistered === false && !store.actions.coinsEnabled(), 'not registered on the coin, no play key');
+    ok(await store.actions.walletWithdraw(10), 'a withdrawal');
+    ok(JSON.stringify(wallet.sent) === JSON.stringify([['AddKey', 'storage_deposit', 'withdraw']]), 'one approval: key, registration, withdrawal');
+    ok(store.get().walletInfo?.tokenRegistered === true && client.walletCoinsOf('wes.testnet') === 10 && store.get().me?.balanceCoins === 20 && store.actions.coinsEnabled(), 'registered, 10 in the wallet, 20 in the game, the key active');
+    // a deposit while unregistered (the wallet registers too) with the key present
+    client.setRegistered('wes.testnet', false);
+    ok(await store.actions.walletDeposit(5) && JSON.stringify(wallet.sent[1]) === JSON.stringify(['storage_deposit', 'ft_transfer_call']), 'key present, not registered: registration and deposit');
+    ok(store.get().me?.balanceCoins === 25, 'deposited');
+  } finally {
+    done();
+    storage.clear();
+  }
+}
+{
+  // a wallet that signs one transaction at a time: the batch is refused, then one approval each, the key last
+  const { client, wallet, store, done } = setup({}, { noBatch: true });
+  try {
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+    await waitFor(store, (s) => s.welcomed, 'welcome');
+    await client.faucetToWallet(100);
+    ok(await store.actions.walletDeposit(30), 'the deposit goes through');
+    ok(JSON.stringify(wallet.sent) === JSON.stringify([['AddKey', 'ft_transfer_call'], ['ft_transfer_call'], ['AddKey']]), 'refused as a batch: the deposit, then the key, one approval each');
+    ok(store.get().me?.balanceCoins === 30 && store.actions.coinsEnabled(), '30 in the game, the key active');
+  } finally {
+    done();
+    storage.clear();
+  }
+}
+{
+  // a wallet that adds no keys for apps: the deposit still goes; the first paid play asks for the key on its own
+  const { client, wallet, store, done } = setup({}, { noAddKeyTx: true });
+  try {
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+    await waitFor(store, (s) => s.welcomed, 'welcome');
+    await client.faucetToWallet(100);
+    ok(await store.actions.walletDeposit(30), 'the deposit goes through');
+    ok(JSON.stringify(wallet.sent) === JSON.stringify([['AddKey', 'ft_transfer_call'], ['ft_transfer_call'], ['AddKey']]) && store.get().me?.balanceCoins === 30, 'the batch and the key alone refused, the deposit alone sent');
+    ok(!store.actions.coinsEnabled() && loadPlayKey('testnet', 'sam.testnet')?.status === 'pending', 'no key yet');
+    store.actions.enterRoom(1);
+    const room = (await waitFor(store, (s) => !!s.rooms[1], 'room')).rooms[1]!;
+    store.actions.pickSeat(1, room.seats[0].index, 'paid', 10);
+    const kn = (await waitFor(store, (s) => !!s.keyNeeded, 'the relay asks for a play key')).keyNeeded!;
+    ok(kn.code === 'play_key_missing' && kn.pick?.coins === 10 && kn.pick.seatIndex === room.seats[0].index && !store.get().search, 'the first paid pick: the seat goes back and the one-approval sheet gets the same pick');
+    ok(await store.actions.enableCoins() && wallet.calls.filter((c) => c === 'key').length === 1 && store.actions.coinsEnabled(), 'one approval (the key at sign-in), then plays need no more');
+  } finally {
+    done();
+    storage.clear();
+  }
+}
+{
+  // the player closes the wallet on the batch: nothing is sent, nothing asked again
+  const { client, wallet, store, done } = setup({}, { reject: 'tx' });
+  try {
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+    await waitFor(store, (s) => s.welcomed, 'welcome');
+    await client.faucetToWallet(100);
+    ok(!(await store.actions.walletDeposit(30)) && /closed the wallet/.test(store.get().walletTx.error ?? ''), 'a closed wallet: the deposit says so');
+    ok(wallet.calls.filter((c) => c === 'tx').length === 1 && client.walletCoinsOf('sam.testnet') === 100 && !store.actions.coinsEnabled(), 'asked once, nothing moved, no key');
+  } finally {
+    done();
+    storage.clear();
+  }
+}
+
+// ---------- 3. play key fallbacks (the one-approval sheet of a first paid play) ----------
 console.log('play key fallbacks');
 {
   // the wallet signs in but adds no key: one AddKey transaction instead
@@ -436,7 +506,7 @@ console.log('no coin yet');
 // ---------- 6. the testnet airdrop (protocol v1.6) ----------
 console.log('the testnet airdrop');
 {
-  const { airdropOn, panelMode, offerAgain } = await import('../src/state/airdrop.ts');
+  const { airdropOn, panelMode, holdsAny } = await import('../src/state/airdrop.ts');
   // a wallet player on the testnet relay (test mode): 100 tREAL into the wallet in one tap, no wallet approval
   const { client, wallet, store, done } = setup({ wallet: false });
   try {
@@ -444,10 +514,11 @@ console.log('the testnet airdrop');
     ok(airdropOn(cfg) && cfg.testMode && cfg.network === 'testnet', 'test mode on testnet: the airdrop is on');
     await store.actions.walletSignIn();
     await waitFor(store, (s) => s.welcomed, 'welcome');
-    ok(panelMode(store.get(), 'lobby') === 'tag', 'before the relay answers: the slim tag, no big button yet');
+    ok(panelMode(store.get(), 'lobby') === 'none', 'before the relay answers: no panel (it never flashes up)');
     const st = await store.actions.refreshAirdrop();
     ok(st?.to === 'wallet' && st.heldCoins === 0 && st.coins === 100 && !st.blocked, 'the relay: an empty account, 100 to the wallet, open');
-    ok(panelMode(store.get(), 'lobby') === 'offer' && panelMode(store.get(), 'chat') === 'tag', 'the room offers it; a chat shows only the tag');
+    ok(panelMode(store.get(), 'lobby') === 'offer' && panelMode(store.get(), 'chat') === 'none' && panelMode(store.get(), 'call') === 'none', 'nothing held: the room offers it; never in a chat or a call');
+    ok(panelMode(store.get(), 'lobby', Date.now() - 15_000) === 'offer', 'a screen clock a few seconds behind the relay still offers it (never had one: no wait)');
     const phases: string[] = [];
     const un = store.subscribe((s) => {
       if (phases[phases.length - 1] !== s.airdrop.phase) phases.push(s.airdrop.phase);
@@ -455,18 +526,16 @@ console.log('the testnet airdrop');
     ok(await store.actions.airdrop(), 'one tap');
     un();
     const s = store.get();
-    ok(phases.join(' ') === 'busy done', `airdrop phases: ${phases.join(' ')}`);
+    ok(phases.join(' ') === 'busy idle', `airdrop phases: ${phases.join(' ')}`);
     ok(client.walletCoinsOf('sam.testnet') === 100 && s.walletInfo?.walletBalance === (100n * 10n ** 18n).toString() && s.walletInfo.tokenRegistered, '100 tREAL in the wallet, registered on the coin, on screen at once');
     ok(!wallet.calls.includes('tx') && !wallet.calls.includes('key'), 'no wallet approval: the relay sends them');
-    ok(s.me?.balanceCoins === 0 && s.airdrop.landed?.to === 'wallet' && panelMode(s, 'lobby') === 'done', 'nothing in the game yet; the panel says where they are');
-    ok(storage.getItem('realsies:airdrop:folded:sam.testnet') === '1' && s.airdrop.folded, 'the next visit shows the slim tag');
+    ok(s.me?.balanceCoins === 0 && holdsAny(s) && panelMode(s, 'lobby') === 'none', 'tokens held: the panel is gone');
+    ok(s.notice?.code === 'airdrop' && s.notice.message === '100 tREAL are in your wallet. Tap your coins to deposit, then play.', 'a short note says where they are: ' + s.notice?.message);
     ok(!(await store.actions.airdrop()) && store.get().airdrop.error?.code === 'airdrop_too_soon' && /The next one opens in 10 min\./.test(store.get().airdrop.error?.text ?? ''), 'again at once: refused, with the reason: ' + store.get().airdrop.error?.text);
-    ok(client.walletCoinsOf('sam.testnet') === 100, 'nothing more sent');
-    store.actions.foldAirdrop();
-    ok(panelMode(store.get(), 'lobby') === 'tag' && !offerAgain(store.get().airdrop.status), 'folded: the tag, and no "Airdrop again" with 100 held');
-    // from here it works like the real game: a deposit from the wallet, the wallet's own approval
+    ok(client.walletCoinsOf('sam.testnet') === 100 && panelMode(store.get(), 'lobby') === 'none', 'nothing more sent; still no panel');
+    // from here it works like the real game: the first deposit, one approval with the play key in it
     ok(await store.actions.walletDeposit(40), 'a deposit of 40 from the wallet');
-    ok(store.get().me?.balanceCoins === 40 && client.walletCoinsOf('sam.testnet') === 60 && wallet.calls.filter((c) => c === 'tx').length === 1, '40 in the game, 60 in the wallet, one approval');
+    ok(store.get().me?.balanceCoins === 40 && client.walletCoinsOf('sam.testnet') === 60 && JSON.stringify(wallet.sent) === JSON.stringify([['AddKey', 'ft_transfer_call']]) && store.actions.coinsEnabled(), '40 in the game, 60 in the wallet, one approval that brought the play key');
     // ten minutes on, 100 held (wallet plus game): still none
     client.setAirdropAt('sam.testnet', Date.now() - 11 * 60_000);
     ok(!(await store.actions.airdrop()) && store.get().airdrop.error?.code === 'airdrop_enough' && store.get().airdrop.error?.text === 'You hold 100 tREAL already. Airdrops are for balances under 50 tREAL.', 'enough held: ' + store.get().airdrop.error?.text);
@@ -474,7 +543,7 @@ console.log('the testnet airdrop');
     done();
     storage.clear();
   }
-  // a test player: straight into the game balance; a locked Turing bonus comes with it
+  // test players: the same panel while nothing is held; the airdrop goes straight into the game balance
   {
     const { client, store, done } = setup({ wallet: false });
     try {
@@ -482,15 +551,22 @@ console.log('the testnet airdrop');
       await store.actions.selectUser('dex.realsies.testnet');
       await waitFor(store, (s) => s.welcomed, 'welcome dex');
       const st = await store.actions.refreshAirdrop();
-      ok(st?.to === 'game' && st.heldCoins === 0, 'a test player: 100 into the game balance');
-      ok(await store.actions.airdrop() && store.get().me?.balanceCoins === 100 && store.get().airdrop.landed?.to === 'game' && client.walletCoinsOf('dex.realsies.testnet') === 0, '100 coins in the game, nothing in a wallet');
-      // Finn holds 15: open, and once folded the tag offers "Airdrop again"
+      ok(st?.to === 'game' && st.heldCoins === 0 && panelMode(store.get(), 'lobby') === 'offer', 'a test player holding nothing: the panel offers it');
+      ok(await store.actions.airdrop() && store.get().me?.balanceCoins === 100 && client.walletCoinsOf('dex.realsies.testnet') === 0, '100 coins in the game, nothing in a wallet');
+      ok(panelMode(store.get(), 'lobby') === 'none' && store.get().notice?.message === '100 tREAL are in your game balance. Tap a character to play.', 'the panel is gone, the note says so');
+      // Finn holds 15: no panel at all
       await store.actions.selectUser('finn.realsies.testnet');
       await waitFor(store, (s) => s.welcomed, 'welcome finn');
-      ok(!store.get().airdrop.folded && store.get().airdrop.status === undefined, 'another player: its own panel, not folded');
+      ok(store.get().airdrop.status === undefined, 'another player: its own view');
       await store.actions.refreshAirdrop();
-      store.actions.foldAirdrop();
-      ok(panelMode(store.get(), 'lobby') === 'tag' && offerAgain(store.get().airdrop.status), '15 held: the tag offers "Airdrop again"');
+      ok(panelMode(store.get(), 'lobby') === 'none', '15 held: no panel');
+      // Ben holds nothing but had one 3 minutes ago: the panel says when the next one opens
+      client.setAirdropAt('ben.realsies.testnet', Date.now() - 3 * 60_000);
+      await store.actions.selectUser('ben.realsies.testnet');
+      await waitFor(store, (s) => s.welcomed, 'welcome ben');
+      await store.actions.refreshAirdrop();
+      ok(panelMode(store.get(), 'lobby') === 'wait', 'nothing held, one 3 minutes ago: the panel waits (no button)');
+      ok(panelMode(store.get(), 'lobby', Date.now() + 8 * 60_000) === 'offer', 'and offers it again once the 10 minutes are up');
     } finally {
       done();
       storage.clear();

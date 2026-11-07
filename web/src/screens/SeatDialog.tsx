@@ -24,7 +24,7 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
   const customOk = custom !== '' && Number.isFinite(customN) && customN >= min && customN <= max && customN <= balance;
   const freeLeft = me?.freeChatsLeft;
   const dollars = (n: number) => '$' + (n * usd).toFixed(n * usd < 1 ? 2 : 2);
-  // a wallet player's first paid chat in this browser: enable coins (one approval), then the pick goes on
+  // a wallet player's first paid chat in a browser no wallet transaction gave a play key: the one approval, then the pick
   const needsKey = !!s.session && !p.store.actions.coinsEnabled();
   const closed = cfg?.coinsOpen === false;
   const pick = (mode: 'free' | 'paid', coins?: number) => {

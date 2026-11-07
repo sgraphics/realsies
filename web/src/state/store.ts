@@ -8,12 +8,13 @@ import type {
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
 import { countdownFor, isCounting } from './countdown.ts';
 import { BOTS_NAPPING } from './notices.ts';
-import type { WalletApi, WalletTx } from '../wallet/types.ts';
-import { forgetPlayKey, loadPlayKey, newPlayKey, savePlayKey } from '../wallet/keys.ts';
+import type { WalletApi } from '../wallet/types.ts';
+import { forgetPlayKey, loadPlayKey, newPlayKey, savePlayKey, type PlayKey } from '../wallet/keys.ts';
+import { addPlayKeyTx, depositTx, sendSteps, storageTx, withdrawTx, type Step } from '../wallet/batch.ts';
 import { parsePublicKey, signTransaction } from '../wallet/tx.ts';
 import { base58Decode, base64Decode, base64Encode } from '../wallet/base58.ts';
 import { depositCheck, emptyWalletText, shortWalletText, symbolOf } from './walletFunds.ts';
-import { AIRDROP_IDLE, airdropErrorText, airdropOn, readFolded, writeFolded, type AirdropView } from './airdrop.ts';
+import { AIRDROP_IDLE, airdropErrorText, airdropOn, landedNote, type AirdropView } from './airdrop.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -93,8 +94,8 @@ export interface AppState {
   keySetup: Flow & { via?: 'sign-in' | 'transaction' };
   walletTx: Flow & { kind?: 'deposit' | 'withdraw' };
   walletInfo?: WalletInfo;
-  /** the relay refused a paid pick for want of a play key: the screen offers "Enable coins" */
-  keyNeeded?: { code: string; at: number };
+  /** the relay refused a paid pick for want of a play key: the one-approval sheet opens, then the pick goes on */
+  keyNeeded?: { code: string; at: number; pick?: { level: Level; seatIndex: number; coins: number } };
   // ----- the testnet airdrop (v1.6) -----
   airdrop: AirdropView;
 }
@@ -143,8 +144,6 @@ export interface StoreActions {
   refreshAirdrop(): Promise<AirdropStatus | null>;
   /** 100 test tokens in one tap: into a wallet player's wallet, into a test player's game balance. */
   airdrop(): Promise<boolean>;
-  /** The TESTNET panel folds into its slim tag (the message read, or the offer not wanted). */
-  foldAirdrop(): void;
 }
 
 export interface Store {
@@ -399,11 +398,12 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
           return;
         }
         if (m.code === 'play_key_missing' || m.code === 'play_key_exhausted') {
-          // a paid pick without a usable play key: the seat goes back and the screen offers "Enable coins"
+          // a paid pick without a usable play key: the seat goes back, the one-approval sheet opens, then the same pick
           if (m.code === 'play_key_exhausted' && state.session && state.config) forgetPlayKey(state.config.network, state.session.accountId);
+          const sr = state.search;
           set((s) => ({
             search: undefined,
-            keyNeeded: { code: m.code, at: Date.now() },
+            keyNeeded: { code: m.code, at: Date.now(), ...(sr && sr.mode === 'paid' ? { pick: { level: sr.level, seatIndex: sr.seatIndex, coins: sr.coins } } : {}) },
             session: s.session ? { ...s.session, playKey: m.code === 'play_key_exhausted' && s.session.playKey ? { ...s.session.playKey, status: 'exhausted' } : m.code === 'play_key_missing' ? null : s.session.playKey } : s.session,
           }));
           return;
@@ -490,7 +490,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
           set((x) => (x.session?.accountId === s.accountId ? { session: { ...x.session, playKey: info } } : {}));
         },
         () => {
-          /* not on chain (removed in the wallet, or never approved): "Enable coins" makes a new one */
+          /* not on chain (removed in the wallet, or never approved): the next wallet transaction adds a new one */
         },
       );
     }
@@ -506,6 +506,39 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
       }
     }
     return null;
+  };
+  /** This browser's key, checked on chain by the relay: kept as active, and the session knows it. */
+  const activateKey = (network: string, accountId: string, key: PlayKey, info: PlayKeyInfo) => {
+    savePlayKey(network, accountId, { ...key, status: 'active' });
+    set((x) => (x.session?.accountId === accountId ? { session: { ...x.session, playKey: info } } : {}));
+  };
+  /**
+   * The play key's step in the player's next wallet transaction (deposit or withdrawal), so the key needs no
+   * approval of its own. Null when this browser holds a working key already, or one it made earlier turns out
+   * to be on chain (approved, then the page reloaded).
+   */
+  const playKeyStep = async (s: SessionView, cfg: PublicConfig): Promise<{ key: PlayKey; step: Step } | null> => {
+    const pk = cfg.wallet?.playKey;
+    if (!pk || !client.registerPlayKey || actions.coinsEnabled()) return null;
+    const old = loadPlayKey(cfg.network, s.accountId);
+    if (old && s.playKey?.status !== 'exhausted') {
+      const info = await registerKey(old.publicKey, 1).catch(() => null);
+      if (info && info.status !== 'exhausted') {
+        activateKey(cfg.network, s.accountId, old, info);
+        return null;
+      }
+    }
+    const key = newPlayKey();
+    savePlayKey(cfg.network, s.accountId, key);
+    return {
+      key,
+      step: { tx: addPlayKeyTx(s.accountId, key.publicKey, pk), optional: true, landed: async () => !!(await registerKey(key.publicKey, 1).catch(() => null)) },
+    };
+  };
+  /** After the wallet sent the key: the relay checks it on chain (finality can trail by a few seconds). */
+  const settleKey = async (network: string, accountId: string, key: PlayKey, sent: boolean): Promise<void> => {
+    const info = await registerKey(key.publicKey, sent ? 8 : 1).catch(() => null);
+    if (info) activateKey(network, accountId, key, info);
   };
   const walletReady = (): { s: SessionView; cfg: PublicConfig; w: WalletApi } => {
     const s = state.session;
@@ -528,7 +561,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
     },
     selectUser(accountId) {
       if (state.accountId && state.accountId !== accountId) actions.logout();
-      set({ accountId, status: 'connecting', welcomed: false, rooms: {}, chat: undefined, search: undefined, me: undefined, resultsReady: loadResultsReady(accountId), airdrop: { ...AIRDROP_IDLE, folded: readFolded(accountId) } });
+      set({ accountId, status: 'connecting', welcomed: false, rooms: {}, chat: undefined, search: undefined, me: undefined, resultsReady: loadResultsReady(accountId), airdrop: AIRDROP_IDLE });
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           welcomeWaiters = welcomeWaiters.filter((w) => w.timer !== timer);
@@ -766,20 +799,32 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         // never send a deposit that can only fail: the wallet must hold the coins (an empty wallet is not even
         // registered on the coin, and the token panics)
         set({ walletTx: { phase: 'checking', kind: 'deposit' } });
-        const chk = depositCheck(await actions.refreshWalletInfo(), n, cfg.coinUnit);
+        const info = await actions.refreshWalletInfo();
+        const chk = depositCheck(info, n, cfg.coinUnit);
         if (!chk.ok) {
           const sym = symbolOf(cfg);
           throw new Error(chk.reason === 'empty' ? emptyWalletText(sym) : shortWalletText(sym, chk.walletUnits!, cfg.tokenDecimals ?? 18, chk.fits!));
         }
+        const held = info?.walletBalance !== undefined ? BigInt(info.walletBalance) : null;
+        // one approval: the play key (while this browser has none), the registration (while the account has
+        // none), the deposit
+        const key = await playKeyStep(s, cfg);
+        const steps: Step[] = [];
+        if (key) steps.push(key.step);
+        if (info && !info.tokenRegistered) steps.push({ tx: storageTx(cfg, s.accountId, info.storageDeposit), landed: async () => (await actions.refreshWalletInfo())?.tokenRegistered === true });
+        steps.push({
+          tx: depositTx(cfg, amount),
+          landed: async () => {
+            const now = await actions.refreshWalletInfo();
+            return held !== null && now?.walletBalance !== undefined && BigInt(now.walletBalance) + amount <= held;
+          },
+        });
         set({ walletTx: { phase: 'wallet', kind: 'deposit' } });
-        const tx: WalletTx = {
-          receiverId: cfg.tokenId,
-          actions: [{ type: 'FunctionCall', params: { methodName: 'ft_transfer_call', args: { receiver_id: cfg.contractId, amount: amount.toString(), msg: '' }, gas: cfg.wallet?.gas.deposit ?? '100000000000000', deposit: '1' } }],
-        };
-        const [hash] = await w.send(s.accountId, [tx]);
-        set({ walletTx: { phase: 'checking', kind: 'deposit', tx: hash } });
+        const { hashes } = await sendSteps(w, s.accountId, steps);
+        const hash = hashes[hashes.length - 1];
+        set({ walletTx: { phase: 'checking', kind: 'deposit', ...(hash ? { tx: hash } : {}) } });
         let me: Me | undefined;
-        for (let i = 0; i < 6 && client.reportDeposit; i++) {
+        for (let i = 0; hash && i < 6 && client.reportDeposit; i++) {
           try {
             me = (await client.reportDeposit(hash)).me;
             break;
@@ -790,8 +835,10 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         }
         if (me) set({ me });
         else await actions.refreshMe().catch(() => undefined);
+        if (key) await settleKey(cfg.network, s.accountId, key.key, hashes[0] !== null);
         await actions.refreshWalletInfo();
-        set({ walletTx: { phase: 'done', kind: 'deposit', tx: hash } });
+        void actions.refreshAirdrop();
+        set({ walletTx: { phase: 'done', kind: 'deposit', ...(hash ? { tx: hash } : {}) } });
         return true;
       } catch (e) {
         set((x) => ({ walletTx: { ...x.walletTx, phase: 'error', kind: 'deposit', error: errText(e) } }));
@@ -803,31 +850,37 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         const { s, cfg, w } = walletReady();
         const n = Math.floor(coins);
         if (!(n > 0)) throw new Error('Choose how many coins to withdraw.');
-        if (n > (state.me?.balanceCoins ?? 0) + 1e-9) throw new Error('Not enough coins in the game.');
+        const before = state.me?.balanceCoins ?? 0;
+        if (n > before + 1e-9) throw new Error('Not enough coins in the game.');
         set({ walletTx: { phase: 'checking', kind: 'withdraw' } });
         const info = await actions.refreshWalletInfo();
         const amount = BigInt(n) * BigInt(cfg.coinUnit);
-        const txs: WalletTx[] = [];
-        // the coin pays out only to accounts registered on it: register first, in the same approval
-        if (info && !info.tokenRegistered) {
-          txs.push({
-            receiverId: cfg.tokenId,
-            actions: [{ type: 'FunctionCall', params: { methodName: 'storage_deposit', args: { account_id: s.accountId, registration_only: true }, gas: cfg.wallet?.gas.storage ?? '30000000000000', deposit: info.storageDeposit } }],
-          });
-        }
-        txs.push({ receiverId: cfg.contractId, actions: [{ type: 'FunctionCall', params: { methodName: 'withdraw', args: { amount: amount.toString() }, gas: cfg.wallet?.gas.withdraw ?? '50000000000000', deposit: '0' } }] });
+        // one approval: the play key (while this browser has none), the registration on the coin (it pays out
+        // only to registered accounts), the withdrawal
+        const key = await playKeyStep(s, cfg);
+        const steps: Step[] = [];
+        if (key) steps.push(key.step);
+        if (info && !info.tokenRegistered) steps.push({ tx: storageTx(cfg, s.accountId, info.storageDeposit), landed: async () => (await actions.refreshWalletInfo())?.tokenRegistered === true });
+        steps.push({
+          tx: withdrawTx(cfg, amount),
+          landed: async () => {
+            const me = await actions.refreshMe().catch(() => undefined);
+            return !!me && me.balanceCoins <= before - n + 1e-6;
+          },
+        });
         set({ walletTx: { phase: 'wallet', kind: 'withdraw' } });
-        const hashes = await w.send(s.accountId, txs);
+        const { hashes } = await sendSteps(w, s.accountId, steps);
         const hash = hashes[hashes.length - 1];
-        set({ walletTx: { phase: 'checking', kind: 'withdraw', tx: hash } });
-        const before = state.me?.balanceCoins ?? 0;
+        set({ walletTx: { phase: 'checking', kind: 'withdraw', ...(hash ? { tx: hash } : {}) } });
         for (let i = 0; i < 6; i++) {
           const me = await actions.refreshMe().catch(() => undefined);
           if (me && me.balanceCoins <= before - n + 1e-6) break;
           await sleep(1500);
         }
+        if (key) await settleKey(cfg.network, s.accountId, key.key, hashes[0] !== null);
         await actions.refreshWalletInfo();
-        set({ walletTx: { phase: 'done', kind: 'withdraw', tx: hash } });
+        void actions.refreshAirdrop();
+        set({ walletTx: { phase: 'done', kind: 'withdraw', ...(hash ? { tx: hash } : {}) } });
         return true;
       } catch (e) {
         set((x) => ({ walletTx: { ...x.walletTx, phase: 'error', kind: 'withdraw', error: errText(e) } }));
@@ -874,13 +927,18 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
       const acct = state.accountId;
       if (!acct || state.airdrop.phase === 'busy') return false;
       const symbol = symbolOf(state.config);
-      set((x) => ({ airdrop: { ...x.airdrop, phase: 'busy', error: undefined, landed: undefined } }));
+      set((x) => ({ airdrop: { ...x.airdrop, phase: 'busy', error: undefined } }));
       try {
         if (!airdropOn(state.config) || !client.airdrop) throw Object.assign(new Error('The airdrop is for the testnet demo only.'), { code: 'not_test_mode' });
         const r = await client.airdrop(acct);
         if (state.accountId !== acct) return false;
-        writeFolded(acct);
-        set({ me: r.me, ...(r.wallet ? { walletInfo: r.wallet } : {}), airdrop: { phase: 'done', status: r.status, landed: { tx: r.tx, coins: r.coins, to: r.to }, folded: true } });
+        // the panel is gone now (the player holds tokens); a short note says where they landed
+        set({
+          me: r.me,
+          ...(r.wallet ? { walletInfo: r.wallet } : {}),
+          airdrop: { phase: 'idle', status: r.status },
+          notice: { code: 'airdrop', message: landedNote(r.to, r.coins, symbol), at: Date.now() },
+        });
         return true;
       } catch (e) {
         if (state.accountId !== acct) return false;
@@ -891,10 +949,6 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         set((x) => ({ airdrop: { ...x.airdrop, phase: 'error', error: { code, text: airdropErrorText(code, e, x.airdrop.status, symbol) } } }));
         return false;
       }
-    },
-    foldAirdrop() {
-      if (state.accountId) writeFolded(state.accountId);
-      set((x) => ({ airdrop: { ...x.airdrop, phase: x.airdrop.phase === 'busy' ? 'busy' : 'idle', landed: undefined, error: undefined, folded: true } }));
     },
   };
 

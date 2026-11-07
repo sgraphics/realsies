@@ -1408,8 +1408,8 @@ export class Game implements BotHost {
       // a wallet account's play and call are signed by its browser's play key, never by the relay
       if (!this.relaySigns(account)) {
         const key = this.auth?.byId(sessionId)?.playKey;
-        if (!key) throw new GameError('play_key_missing', 'Enable coins first: one wallet approval lets this browser send your plays and calls.');
-        if (key.status !== 'active') throw new GameError('play_key_exhausted', "This browser's play key is out of gas allowance. Enable coins again for a fresh one.");
+        if (!key) throw new GameError('play_key_missing', 'One approval in your wallet first, then your plays and calls run without popups.');
+        if (key.status !== 'active') throw new GameError('play_key_exhausted', "This browser's play key used up its gas allowance: one approval in your wallet adds a fresh one.");
       }
     }
     if (level > this.levelUnlocked(user)) throw new GameError('level_locked', `level ${level} is locked`);
@@ -2026,7 +2026,7 @@ export class Game implements BotHost {
   private async playerSigned(side: ChatSide, method: PlayerMethod, args: Record<string, unknown>): Promise<TxOutcome> {
     const s = this.auth?.byId(side.sessionId);
     const key = s?.playKey;
-    if (!s || !key) return { ok: false, hash: '', error: 'no play key for this browser: enable coins first' };
+    if (!s || !key) return { ok: false, hash: '', error: 'no play key for this browser yet' };
     if (key.status !== 'active') return { ok: false, hash: '', error: 'the play key is out of gas allowance' };
     let last: TxOutcome = { ok: false, hash: '', error: 'not sent' };
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -2037,7 +2037,7 @@ export class Game implements BotHost {
       if (base === undefined) return { ok: false, hash: '', error: 'could not reach NEAR' };
       if (base === null) {
         this.auth!.forgetPlayKey(s);
-        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_missing', message: "This browser's play key is gone from your account. Enable coins again." });
+        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_missing', message: "This browser's play key is gone from your account: one approval in your wallet adds a fresh one." });
         return { ok: false, hash: '', error: 'the play key is not on the account any more' };
       }
       const want: ExpectedTx = {
@@ -2059,10 +2059,10 @@ export class Game implements BotHost {
       }
       if (out.code === 'allowance') {
         this.auth!.markPlayKey(s.id, 'exhausted');
-        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_exhausted', message: "This browser's play key used up its gas allowance. Enable coins again for a fresh one." });
+        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_exhausted', message: "This browser's play key used up its gas allowance: one approval in your wallet adds a fresh one." });
       } else if (out.code === 'key') {
         this.auth!.forgetPlayKey(s);
-        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_missing', message: "This browser's play key is gone from your account. Enable coins again." });
+        this.sendToSession(side.viewer, s.id, { t: 'error', code: 'play_key_missing', message: "This browser's play key is gone from your account: one approval in your wallet adds a fresh one." });
       }
       return out;
     }

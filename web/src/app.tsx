@@ -20,14 +20,15 @@ import { KeySetupDialog } from './screens/KeySetup.tsx';
 import { Button, Icon, type IconName } from './ui/kit.tsx';
 import { applyTheme } from './ui/theme.ts';
 import { runQa } from './qa.ts';
-import { airdropOn, panelMode } from './state/airdrop.ts';
+import { airdropOn, holdsAny, panelMode } from './state/airdrop.ts';
 
 type Overlay =
   | { kind: 'seat'; level: Level; seat: Seat }
   | { kind: 'deposit'; gate: boolean; then?: Overlay | null; prefill?: string }
   | { kind: 'results'; roundId: number }
   | { kind: 'rounds' }
-  // enable coins (the browser's play key); `pick` goes on with the seat once it is on chain
+  // the one approval for the browser's play key, opened by a paid pick without one; `pick` goes on once it is on
+  // chain, Cancel goes `back`
   | { kind: 'key'; pick?: { level: Level; seatIndex: number; coins: number }; why?: string; back?: Overlay | null }
   | null;
 
@@ -62,16 +63,16 @@ export function App({ store }: { store: Store }) {
   const theme: ThemeId = s.chat?.theme ?? s.rooms[level]?.theme ?? (round ? round.themes[level] ?? themeFor(level, round.roundId) : 'castle');
   useEffect(() => applyTheme(theme), [theme]);
 
-  // the relay refused a paid pick for want of a usable play key: offer "Enable coins"
+  // the relay refused a paid pick for want of a usable play key: the one approval, then the same pick
   useEffect(() => {
     if (!s.keyNeeded) return;
-    const why = s.keyNeeded.code === 'play_key_exhausted' ? "This browser's play key used up its gas allowance. One approval adds a fresh one." : undefined;
-    setOverlay({ kind: 'key', why });
+    const why = s.keyNeeded.code === 'play_key_exhausted' ? 'This browser used up its approval.' : undefined;
+    setOverlay({ kind: 'key', why, pick: s.keyNeeded.pick });
     store.actions.clearKeyNeeded();
   }, [s.keyNeeded?.at]);
 
   // "Deposit to earn" before entering a room while the balance is zero (once per level and round). On the testnet
-  // demo the TESTNET panel is the first step: while it offers the airdrop (or shows it landing) nothing covers it.
+  // demo the TESTNET panel is the first step: while it shows (the player holds nothing at all) nothing covers it.
   const dropKnown = s.airdrop.status !== undefined;
   useEffect(() => {
     if (!s.welcomed || !s.me || !round || s.chat || s.search) return;
@@ -79,9 +80,9 @@ export function App({ store }: { store: Store }) {
     if (s.config?.coinsOpen === false) return; // nothing to deposit yet: free play only
     const key = `${s.accountId}:${round.roundId}:${s.level}`;
     if (gated.current.has(key)) return;
-    if (airdropOn(s.config) && !dropKnown) return; // the relay's view of the airdrop first
+    if (airdropOn(s.config) && !dropKnown && !holdsAny(s)) return; // the relay's view of the airdrop first
     gated.current.add(key);
-    if (panelMode(s, 'lobby') !== 'tag' && panelMode(s, 'lobby') !== 'none') return;
+    if (panelMode(s, 'lobby') !== 'none') return;
     setOverlay((o) => o ?? { kind: 'deposit', gate: true });
   }, [s.welcomed, s.level, round?.roundId, s.me?.balanceCoins, s.accountId, dropKnown]);
 
@@ -104,7 +105,7 @@ export function App({ store }: { store: Store }) {
   useEffect(() => {
     if (!s.notice) return;
     // two sentences: a little longer on screen than an error
-    setToast({ text: s.notice.message, kind: 'info', at: Date.now(), icon: s.notice.code === 'bots_unavailable' ? 'bot' : 'chat', ms: 7000 });
+    setToast({ text: s.notice.message, kind: 'info', at: Date.now(), icon: s.notice.code === 'bots_unavailable' ? 'bot' : s.notice.code === 'airdrop' ? 'coin' : 'chat', ms: 7000 });
     const t = setTimeout(() => store.actions.clearNotice(), 7000);
     return () => clearTimeout(t);
   }, [s.notice?.at]);
@@ -159,7 +160,7 @@ export function App({ store }: { store: Store }) {
           theme={s.rooms[overlay.level]?.theme ?? theme}
           onClose={() => setOverlay(null)}
           onDeposit={() => setOverlay({ kind: 'deposit', gate: false, then: overlay })}
-          onNeedKey={(coins) => setOverlay({ kind: 'key', pick: { level: overlay.level, seatIndex: overlay.seat.index, coins } })}
+          onNeedKey={(coins) => setOverlay({ kind: 'key', pick: { level: overlay.level, seatIndex: overlay.seat.index, coins }, back: overlay })}
         />
       )}
       {overlay?.kind === 'deposit' && (
@@ -168,7 +169,6 @@ export function App({ store }: { store: Store }) {
           gate={overlay.gate}
           prefill={overlay.prefill}
           onDone={() => setOverlay(overlay.then ?? null)}
-          onEnableCoins={() => setOverlay({ kind: 'key', back: overlay })}
         />
       )}
       {overlay?.kind === 'key' && (
@@ -177,8 +177,10 @@ export function App({ store }: { store: Store }) {
           why={overlay.why}
           onDone={(enabled) => {
             const o = overlay;
-            setOverlay(o.back ?? null);
-            if (enabled && o.pick) store.actions.pickSeat(o.pick.level, o.pick.seatIndex, 'paid', o.pick.coins);
+            if (enabled && o.pick) {
+              setOverlay(null);
+              store.actions.pickSeat(o.pick.level, o.pick.seatIndex, 'paid', o.pick.coins);
+            } else setOverlay(enabled ? null : o.back ?? null);
           }}
         />
       )}

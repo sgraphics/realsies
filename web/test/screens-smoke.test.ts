@@ -130,7 +130,9 @@ const { AgentsPage } = await import('../src/agents/AgentsPage.tsx');
 const { Dashboard } = await import('../src/agents/Dashboard.tsx');
 const { MockBuilderClient } = await import('../src/net/mock/builders.ts');
 const { WalletSignInPanel } = await import('../src/screens/SignIn.tsx');
-const { KeySetupDialog } = await import('../src/screens/KeySetup.tsx');
+const { KeySetupDialog, ONE_APPROVAL } = await import('../src/screens/KeySetup.tsx');
+const { FIRST_DEPOSIT } = await import('../src/screens/WalletCoins.tsx');
+const { SeatDialog } = await import('../src/screens/SeatDialog.tsx');
 const { DepositDialog } = await import('../src/screens/Deposit.tsx');
 const { MockWallet } = await import('../src/wallet/mock.ts');
 const { LaunchPage } = await import('../src/launch/LaunchPage.tsx');
@@ -263,7 +265,21 @@ try {
   ok(/Paste your botmaster token/.test(root.textContent) && /any token works/.test(root.textContent), 'dashboard without a token: the token screen');
   render(null, root as unknown as Element);
 
-  // wallet sign-in (protocol v1.3): the sign-in panel, "Enable coins", the wallet coins dialog
+  // wallet sign-in (protocol v1.3): the sign-in panel, the one approval of a first paid play, the coins screen
+  const findButton = (n: { childNodes: unknown[]; nodeName?: string; textContent: string; attrs?: Record<string, string> }, text: RegExp): { attrs: Record<string, string> } | null => {
+    if (n.nodeName === 'BUTTON' && text.test(n.textContent)) return n as { attrs: Record<string, string> };
+    for (const c of n.childNodes as (typeof n)[]) {
+      const f = findButton(c, text);
+      if (f) return f;
+    }
+    return null;
+  };
+  const disabled = (b: { attrs: Record<string, string> } | null) => !!b && b.attrs.disabled !== undefined && b.attrs.disabled !== 'false';
+  /** a tap, through preact's own event handler */
+  const click = (b: unknown) => {
+    const f = (b as { listeners?: Record<string, unknown> } | null)?.listeners?.click;
+    if (typeof f === 'function') f.call(b, { type: 'click', target: b, currentTarget: b, preventDefault() {}, stopPropagation() {} });
+  };
   const wc = new MockGameClient({ wallet: true, storageKey: null, timeScale: 0.02, searchMs: [20, 40], noHuman: true, loadEvidence: fsLoader, buyUrl: 'https://meme.cooking' });
   const ws = createStore(wc, new MockWallet(wc, { accountId: 'sam.testnet', delayMs: 2 }));
   await ws.actions.loadConfig();
@@ -275,24 +291,18 @@ try {
   render(h(KeySetupDialog, { store: ws, onDone() {} }), root as unknown as Element);
   await sleep(20);
   const kt = root.textContent;
-  ok(/Enable coins/.test(kt) && /sam\.testnet/.test(kt) && /play/.test(kt) && /call/.test(kt) && /0\.25 NEAR/.test(kt) && /never withdraw/.test(kt) && /Approve in wallet/.test(kt), 'enable coins: whose key, what it may do, the allowance, the approval');
-  render(h(DepositDialog, { store: ws, gate: false, onDone() {}, onEnableCoins() {} }), root as unknown as Element);
-  await sleep(40);
+  ok(kt.includes(ONE_APPROVAL) && ONE_APPROVAL === 'One approval in your wallet, then your plays and calls run without popups.', 'the first paid play: one step, in those words');
+  ok(!!findButton(root as never, /^\s*Approve$/) && !!findButton(root as never, /^Cancel$/) && !/Enable|NEAR of gas|browser makes/.test(kt), 'one Approve button and Cancel; no "Enable coins", no key facts');
+  render(h(DepositDialog, { store: ws, gate: false, onDone() {} }), root as unknown as Element);
+  for (let i = 0; i < 40 && !/In your wallet/.test(root.textContent); i++) await sleep(25);
   const dt = root.textContent;
-  ok(/Deposit to earn/.test(dt) && /Deposit from wallet/.test(dt) && /Buy tREAL/.test(dt) && /Enable coins/.test(dt) && !/test coins|test tokens|Airdrop/.test(dt), 'wallet deposit: from the wallet, Buy link, enable coins, no airdrop without test mode');
-  ok(/Your wallet has no tREAL yet\./.test(dt) && !/Airdrop 100/.test(dt), 'without test mode an empty wallet is pointed at Buy, not at an airdrop');
+  ok(/Deposit to earn/.test(dt) && !!findButton(root as never, /^\s*Deposit$/) && /Buy tREAL/.test(dt) && /Play free/.test(dt), 'the coins screen without test mode: the deposit row, Buy, Play free');
+  ok(dt.includes(FIRST_DEPOSIT) && FIRST_DEPOSIT === 'First deposit: one wallet approval. After that, plays run without popups.', 'one small line about the first approval, under the deposit row');
+  ok(!/Enable|Playing coins needs|approval for this browser|1 coin =|registers on|Free mode|test tokens|Airdrop/.test(dt), 'and nothing else: no Enable coins, no rate line, no explanations, no airdrop');
+  ok(/Your wallet has no tREAL yet\./.test(dt), 'an empty wallet says so, pointed at Buy');
   render(null, root as unknown as Element);
   // the coins screen on the testnet relay (test mode), by what the wallet holds: empty, short for 20 coins, enough;
   // exactly the mainnet screen, except that an empty wallet is offered the airdrop where mainnet offers Buy
-  const findButton = (n: { childNodes: unknown[]; nodeName?: string; textContent: string; attrs?: Record<string, string> }, text: RegExp): { attrs: Record<string, string> } | null => {
-    if (n.nodeName === 'BUTTON' && text.test(n.textContent)) return n as { attrs: Record<string, string> };
-    for (const c of n.childNodes as (typeof n)[]) {
-      const f = findButton(c, text);
-      if (f) return f;
-    }
-    return null;
-  };
-  const disabled = (b: { attrs: Record<string, string> } | null) => !!b && b.attrs.disabled !== undefined && b.attrs.disabled !== 'false';
   const tc = new MockGameClient({ storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
   const ts = createStore(tc, new MockWallet(tc, { accountId: 'tess.testnet', delayMs: 2 }));
   await ts.actions.loadConfig();
@@ -302,20 +312,45 @@ try {
     if (add) await tc.faucetToWallet(add);
     await ts.actions.refreshWalletInfo();
     ts.actions.resetFlow('walletTx');
-    render(h(DepositDialog, { key: state, store: ts, gate: false, onDone() {}, onEnableCoins() {}, prefill: '20' }), root as unknown as Element);
+    render(h(DepositDialog, { key: state, store: ts, gate: false, onDone() {}, prefill: '20' }), root as unknown as Element);
     await sleep(40);
     const t = root.textContent;
-    const dep = findButton(root as never, /Deposit from wallet/);
+    const dep = findButton(root as never, /^\s*Deposit$/);
     if (state === 'empty') ok(/In your wallet: 0 tREAL/.test(t) && /Your wallet has no tREAL yet\./.test(t) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/) && disabled(dep), 'coins screen, empty wallet: says so, offers the airdrop, the deposit is off');
     if (state === 'short') ok(/In your wallet: 3 tREAL/.test(t) && /Your wallet holds 3 tREAL, enough for 3 coins\./.test(t) && disabled(dep), 'coins screen, 3 in the wallet and 20 typed: enough for 3 coins, the deposit is off');
     if (state === 'enough') ok(/In your wallet: 200 tREAL/.test(t) && !/no tREAL yet|enough for/.test(t) && !!dep && !disabled(dep), 'coins screen, 200 in the wallet: the deposit is on');
-    ok(!/test coins in the game|to test deposits|Get 100/.test(t) && (state === 'empty' || !/Airdrop/.test(t)), `coins screen (${state}): as on mainnet, no test buttons`);
+    ok(t.includes(FIRST_DEPOSIT) && !/test coins in the game|to test deposits|Get 100|Enable|Buy tREAL/.test(t) && (state === 'empty' || !/Airdrop/.test(t)), `coins screen (${state}): as on mainnet, no test buttons, no Buy on testnet`);
   }
+  ok(await ts.actions.walletDeposit(20), 'the first deposit (the play key in the same approval)');
+  render(h(DepositDialog, { key: 'keyed', store: ts, gate: false, onDone() {} }), root as unknown as Element);
+  await sleep(40);
+  const kd = root.textContent;
+  ok(!kd.includes(FIRST_DEPOSIT) && /In the game: 20 coins/.test(kd) && /In your wallet: 180 tREAL/.test(kd) && !!findButton(root as never, /^Withdraw$/), 'with the key: the line is gone; the game balance, the wallet, withdraw');
   render(null, root as unknown as Element);
   ts.actions.logout();
   tc.dispose();
 
-  // the TESTNET panel (protocol v1.6), testnet only: the offer, the airdrop landing, the slim tag, a refusal
+  // a first paid play without a play key in this browser: picking the coins opens the one approval, with the pick
+  const kc = new MockGameClient({ storageKey: null, timeScale: 0.02, searchMs: [20, 40], noHuman: true, loadEvidence: fsLoader });
+  const ks = createStore(kc, new MockWallet(kc, { accountId: 'kim.testnet', delayMs: 2 }));
+  await ks.actions.loadConfig();
+  await ks.actions.walletSignIn();
+  await kc.faucet('kim.testnet', 30); // coins in the game that came without a wallet transaction in this browser
+  await ks.actions.refreshMe();
+  ks.actions.enterRoom(1);
+  for (let i = 0; i < 40 && !ks.get().rooms[1]; i++) await sleep(25);
+  const kseat = ks.get().rooms[1]!.seats.find((x) => x.state === 'open')!;
+  const needs: number[] = [];
+  render(h(SeatDialog, { store: ks, level: 1, seat: kseat, theme: 'castle', onClose() {}, onDeposit() {}, onNeedKey: (coins: number) => needs.push(coins) }), root as unknown as Element);
+  await sleep(30);
+  click(findButton(root as never, /^\s*5\$/));
+  await sleep(20);
+  ok(needs.join() === '5' && !ks.get().search, 'a paid pick without a key: the one approval opens with that pick, nothing sent yet');
+  render(null, root as unknown as Element);
+  ks.actions.logout();
+  kc.dispose();
+
+  // the TESTNET panel (protocol v1.6): testnet only, in the room, and only while the player holds nothing at all
   const panelOf = async (store: typeof ts, kind: 'lobby' | 'chat' | 'call' = 'lobby') => {
     render(h(TestnetPanel, { key: kind + Math.random(), store, kind }), root as unknown as Element);
     await sleep(30);
@@ -327,57 +362,45 @@ try {
   await pw.actions.walletSignIn();
   await pw.actions.refreshAirdrop();
   const before = await panelOf(pw);
-  ok(/TESTNET/.test(before) && /free test tokens, no real money/.test(before) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/) && /No further action needed\./.test(before) && !/game balance/.test(before), 'panel, a wallet player before: TESTNET, free test tokens, one big button, no further action needed');
+  ok(/TESTNET/.test(before) && /free test tokens, no real money/.test(before) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/) && /No further action needed\./.test(before) && !/game balance/.test(before), 'panel, a wallet player holding nothing: TESTNET, free test tokens, one big button, no further action needed');
+  ok(!/[×]/.test(before) && !findButton(root as never, /^OK$|Fold|Hide|Airdrop again/), 'no other buttons');
+  ok((await panelOf(pw, 'chat')) === '' && (await panelOf(pw, 'call')) === '', 'never in a chat or a call');
   ok(await pw.actions.airdrop(), 'the airdrop in one tap');
-  const after = await panelOf(pw);
-  ok(/100 tREAL are in your wallet\./.test(after) && /From here it works like the real game: tap your coins to deposit, then play\./.test(after) && /View transaction/.test(after), 'panel, after: where the tokens are, and that it works like the real game from here');
-  pw.actions.foldAirdrop();
-  const tag = await panelOf(pw);
-  ok(/TESTNET/.test(tag) && /free test tokens, no real money/.test(tag) && !/Airdrop/.test(tag), 'then the slim tag; 100 held, so no "Airdrop again"');
-  ok(!(await pw.actions.airdrop()) && pw.get().airdrop.error?.code === 'airdrop_too_soon', 'a second airdrop at once: too soon');
-  const soon = await panelOf(pw);
-  ok(/One airdrop every 10 minutes\. The next one opens in 10 min\./.test(soon) && !findButton(root as never, /Airdrop 100|Try again/), 'the panel says why, and offers no button that cannot help: ' + soon.replace(/\s+/g, ' ').slice(0, 120));
-  pw.actions.foldAirdrop();
-  ok(/TESTNET/.test(await panelOf(pw, 'chat')) === false, 'in a chat on a phone the panel steps aside');
-  g.innerWidth = 1280;
-  const chatTag = await panelOf(pw, 'chat');
-  ok(/TESTNET/.test(chatTag) && !findButton(root as never, /Airdrop/), 'in a chat on a big screen: only the slim tag');
-  g.innerWidth = 390;
+  ok((await panelOf(pw)) === '', 'tokens in the wallet: the panel is gone');
+  ok(pw.get().notice?.message === '100 tREAL are in your wallet. Tap your coins to deposit, then play.', 'a short note says where they landed');
   await pw.actions.signOut();
   // a test player: the airdrop goes straight into the game balance, and the panel says so
   await pw.actions.selectUser('ben.realsies.testnet');
   await pw.actions.refreshAirdrop();
   const tb = await panelOf(pw);
-  ok(/Straight into your game balance\. No further action needed\./.test(tb) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/), 'panel, a test player before: straight into the game balance');
+  ok(/Straight into your game balance\. No further action needed\./.test(tb) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/), 'panel, a test player holding nothing: straight into the game balance');
   ok(await pw.actions.airdrop() && pw.get().me!.balanceCoins >= 100, '100 in the game balance (with any locked Turing bonus)');
-  const tAfter = await panelOf(pw);
-  ok(/100 tREAL are in your game balance\./.test(tAfter) && /tap a character and play/.test(tAfter), 'panel, a test player after');
-  // Ana holds 120: no offer, the slim tag; Finn holds 15: the tag offers "Airdrop again"
+  ok((await panelOf(pw)) === '' && pw.get().notice?.message === '100 tREAL are in your game balance. Tap a character to play.', 'coins in the game: the panel is gone, the note says so');
+  // Ana holds 120 and Finn 15: no panel; Dex holds nothing but had one 3 minutes ago: the wait, no button
   await pw.actions.selectUser('ana.realsies.testnet');
   await pw.actions.refreshAirdrop();
-  const an = await panelOf(pw);
-  ok(pw.get().airdrop.status?.blocked === 'airdrop_enough' && /TESTNET/.test(an) && !/Airdrop/.test(an), '120 held: only the tag');
+  ok((await panelOf(pw)) === '', '120 held: no panel');
   await pw.actions.selectUser('finn.realsies.testnet');
   await pw.actions.refreshAirdrop();
-  pw.actions.foldAirdrop();
-  ok(/Airdrop again/.test(await panelOf(pw)), '15 held, folded: the tag offers "Airdrop again"');
+  ok((await panelOf(pw)) === '', '15 held: no panel');
   pc.setAirdropAt('dex.realsies.testnet', Date.now() - 3 * 60_000);
   await pw.actions.selectUser('dex.realsies.testnet');
   await pw.actions.refreshAirdrop();
-  ok(!(await pw.actions.airdrop()) && /The next one opens in 7 min\./.test(await panelOf(pw)), 'one 3 minutes ago: the next in 7 min');
-  // the test player's coins screen: the same airdrop, no faucet
+  const wt = await panelOf(pw);
+  ok(/TESTNET/.test(wt) && /The next one opens in 7 min\./.test(wt) && !findButton(root as never, /Airdrop|Try again/), 'nothing held, one 3 minutes ago: when the next one opens, no button');
+  // the test player's coins screen: the airdrop while the game holds nothing
   await pw.actions.selectUser('ben.realsies.testnet');
   await pw.actions.refreshAirdrop();
   render(h(DepositDialog, { key: 'ben', store: pw, gate: false, onDone() {} }), root as unknown as Element);
   await sleep(40);
   const bt = root.textContent;
-  ok(!/Get 100 test coins/.test(bt) && !/Airdrop 100/.test(bt) && /Your coins/.test(bt), 'a test player holding 100: no airdrop on the coins screen');
+  ok(!/Get 100 test coins/.test(bt) && !/Airdrop 100/.test(bt) && /Your coins/.test(bt) && !!findButton(root as never, /^Withdraw$/), 'a test player holding 100: the balance and withdraw, no airdrop');
   render(null, root as unknown as Element);
   await pw.actions.selectUser('dex.realsies.testnet');
   pc.setAirdropAt('dex.realsies.testnet', null);
   render(h(DepositDialog, { key: 'dex', store: pw, gate: false, onDone() {} }), root as unknown as Element);
   await sleep(60);
-  ok(!!findButton(root as never, /Airdrop 100 tREAL test tokens/) && /straight into your game balance/.test(root.textContent), 'a test player with nothing: the coins screen offers the airdrop');
+  ok(!!findButton(root as never, /Airdrop 100 tREAL test tokens/) && /In the game: 0 coins/.test(root.textContent) && !/Free mode|Turing bonus too/.test(root.textContent), 'a test player with nothing: the balance and the airdrop, nothing else');
   render(null, root as unknown as Element);
   pw.actions.logout();
   pc.dispose();
@@ -387,10 +410,10 @@ try {
   await ms.actions.loadConfig();
   await ms.actions.walletSignIn();
   ok((await panelOf(ms)) === '' && (await ms.actions.refreshAirdrop()) === null, 'mainnet: no panel, no airdrop');
-  render(h(DepositDialog, { store: ms, gate: false, onDone() {}, onEnableCoins() {} }), root as unknown as Element);
+  render(h(DepositDialog, { store: ms, gate: false, onDone() {} }), root as unknown as Element);
   for (let i = 0; i < 40 && !/In your wallet/.test(root.textContent); i++) await sleep(25);
   const mt = root.textContent;
-  ok(/Your wallet has no REAL yet\./.test(mt) && /Buy REAL/.test(mt) && !/Airdrop|test tokens/.test(mt), 'the mainnet coins screen: Buy REAL, no airdrop');
+  ok(/Your wallet has no REAL yet\./.test(mt) && /Buy REAL/.test(mt) && mt.includes(FIRST_DEPOSIT) && !/Airdrop|test tokens|Enable/.test(mt), 'the mainnet coins screen: Buy REAL, the first-deposit line, no airdrop');
   render(null, root as unknown as Element);
   ms.actions.logout();
   mc.dispose();

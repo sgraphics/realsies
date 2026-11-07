@@ -1,7 +1,8 @@
 // A simulated wallet for ?mock=1 and the tests: it holds one account's full-access key, signs NEP-413
 // sign-ins with it, "adds" play keys and runs deposits and withdrawals against the mock relay's ledger
 // (MockGameClient), with a short delay like a wallet popup. QA knobs: hold (never answers), reject (the
-// player closes the wallet), wrongAccount, ignoreKeyAtSignIn (the wallet signs in but adds no key).
+// player closes the wallet), wrongAccount, ignoreKeyAtSignIn (the wallet signs in but adds no key), noBatch
+// (one transaction per approval), noAddKeyTx (no AddKey from apps).
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -33,6 +34,10 @@ export interface MockWalletOptions {
   ignoreKeyAtSignIn?: boolean;
   /** the wallet adds the key at sign-in, but for any method (broader than asked) */
   broadKeyAtSignIn?: boolean;
+  /** the wallet refuses several transactions in one approval (signAndSendTransactions) */
+  noBatch?: boolean;
+  /** the wallet refuses an AddKey sent by the app as a transaction */
+  noAddKeyTx?: boolean;
   delayMs?: number;
 }
 
@@ -44,6 +49,8 @@ export function mockWalletSecret(account: string): Uint8Array {
 export class MockWallet implements WalletApi {
   readonly kind = 'mock' as const;
   calls: string[] = [];
+  /** what each send() was asked to sign: the receivers and actions, one entry per approval */
+  sent: string[][] = [];
   private signedIn: string | null = null;
 
   constructor(private ledger: MockLedger, public o: MockWalletOptions = {}) {}
@@ -85,8 +92,18 @@ export class MockWallet implements WalletApi {
 
   async send(accountId: string, txs: WalletTx[]): Promise<string[]> {
     await this.step('tx');
+    this.sent.push(txs.map((t) => t.actions.map((a) => (a.type === 'AddKey' ? 'AddKey' : a.params.methodName)).join('+')));
     if (accountId !== this.signedIn && accountId !== this.account) throw new WalletError('unavailable', 'The wallet is signed in as another account.');
-    return txs.map((t) => this.ledger.ledgerWalletTx(accountId, t));
+    if (this.o.noBatch && txs.length > 1) throw new WalletError('failed', 'This wallet signs one transaction at a time.');
+    if (this.o.noAddKeyTx && txs.some((t) => t.actions.some((a) => a.type === 'AddKey'))) throw new WalletError('failed', 'This wallet does not add keys for apps.');
+    // in order, like the chain: what ran before a failure stays done
+    return txs.map((t) => {
+      try {
+        return this.ledger.ledgerWalletTx(accountId, t);
+      } catch (e) {
+        throw new WalletError('tx_failed', (e as Error).message);
+      }
+    });
   }
 
   async signOut(): Promise<void> {

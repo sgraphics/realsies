@@ -28,8 +28,12 @@ export interface AddPlayKey {
   allowance: string;
 }
 
+/**
+ * `rejected`: the player closed the wallet. `tx_failed`: a transaction was sent and failed on chain. `failed`:
+ * the wallet itself could not do it (a wallet that refuses a batch, or an action): the game may try another way.
+ */
 export class WalletError extends Error {
-  constructor(readonly code: 'rejected' | 'wrong_account' | 'unavailable' | 'failed', message: string) {
+  constructor(readonly code: 'rejected' | 'wrong_account' | 'unavailable' | 'failed' | 'tx_failed', message: string) {
     super(message);
   }
 }
@@ -47,7 +51,7 @@ export interface WalletApi {
   addPlayKey(p: AddPlayKey, via: 'sign-in' | 'transaction'): Promise<{ txHash?: string }>;
   /** Whether the connected wallet can add a key at sign-in (else only the AddKey transaction works). */
   canAddKeyAtSignIn(): Promise<boolean>;
-  /** Wallet transactions in order (one approval); resolves with their hashes. */
+  /** Wallet transactions in order, in one approval (signAndSendTransactions); resolves with their hashes. */
   send(accountId: string, txs: WalletTx[]): Promise<string[]>;
   signOut(): Promise<void>;
 }
