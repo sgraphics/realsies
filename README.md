@@ -2,7 +2,7 @@
 
 An 8-bit chat game: talk to a stranger for two minutes, then call it: real human or bot? Some characters are other players. Some are AI agents running inside NEAR AI's confidential enclaves, where every word they say is signed. When the round ends, the game contract on NEAR proves who was a bot and pays the players who read the room right.
 
-Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https://realsies.lol · For AI builders: https://realsies.lol/agents · NEAR Hackathon 2026 · Tracks: games, privacy, memecoins, open
+Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https://realsies.lol · For AI builders: https://realsies.lol/agents · NEAR Hackathon 2026 · Tracks: games, privacy, memecoins
 
 ## Executive summary
 
@@ -51,16 +51,16 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 - REAL coin, NEP-141
 - meme.cooking launch
 
-## Status, 2026-11-05
+## Status, 2026-11-07
 
 | Part | State |
 |---|---|
-| Game on testnet | Live at https://testnet.realsies.lol: test users or a testnet wallet, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 75 |
+| Game on testnet | Live at https://testnet.realsies.lol: test users or a testnet wallet, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 137 |
 | AI builders side | Live: `/agents` (pitch and access request), `/agents/dashboard` (scorecards, transcripts, export, own NEAR AI key, persona requests), botmaster API, `docs/agents.md` |
-| Mainnet game | `game.realsies.near` deployed with the testnet code and a mainnet relay running; realsies.lol shows a launching-soon page (trailer, countdown, token link) until REAL finalizes, then the game with wallet sign-in; the coin is set when the token launches |
-| REAL coin | Raised on meme.cooking around Nov 10 to 11; mainnet rounds with coins open when it finalizes |
+| Mainnet game | `game.realsies.near` deployed with the testnet code and a mainnet relay running; realsies.lol shows a countdown (with Get $REAL and the trailer) until the auction opens on Monday Nov 9, 15:00 UTC, then the game with wallet sign-in and free play; the coin is set on the contract when the token finalizes and coins open by themselves |
+| REAL coin | Auction on meme.cooking (https://meme.cooking/meme/2313) from Monday Nov 9, 15:00 UTC, 24 hours, one price for everyone, 100 NEAR soft cap; mainnet rounds with coins open when it finalizes |
 | Wallet sign-in | NEAR Connect: one NEP-413 signature to sign in, a browser function-call key for plays and calls without popups, deposit and withdraw through the wallet; live on testnet |
-| Buy coins | Rhea swap link at launch; NEAR Intents later |
+| Buy coins | Get $REAL links to the meme.cooking auction, then to Rhea once the token is live; NEAR Intents later |
 
 ## The problem
 
@@ -87,7 +87,7 @@ cd ../art && npm install
 cd ../relay && npm install && npm run build && npm start   # http://localhost:3960
 ```
 
-The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (82 tests) and `web` (83), `cargo test` in `contracts/game` (16), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
+The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (103 tests) and `web` (four suites), `cargo test` in `contracts/game` (16), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
 
 The trust chain also runs on its own, without the game:
 
@@ -157,7 +157,7 @@ Evidence from 2026-11-04: model z-ai/glm-5.3-flash, attested signer 0x3b753b4406
 
 | Partner | Role | State |
 |---|---|---|
-| meme.cooking | Raises REAL in a fair auction (same price for everyone), creates the NEP-141 token and locks liquidity on Rhea; the 20% team allocation vests on chain | Launch around Nov 10 to 11 |
+| meme.cooking | Raises REAL in a fair auction (same price for everyone), creates the NEP-141 token and locks liquidity on Rhea; the 20% team allocation vests on chain | Auction from Monday Nov 9, 15:00 UTC |
 | Rhea Finance | REAL/NEAR liquidity for buying coins | At launch |
 | NEAR Connect | Wallet sign-in (NEP-413) and a limited-access key for plays and calls | In use (`web/src/wallet/`, `relay/src/auth/`) |
 | NEAR Intents | Buy coins with any token | After launch |
@@ -173,6 +173,7 @@ The room has two sides. Players read characters; LLM operators, chat and voice a
 - **Data.** Every settled transcript of your agents with the player's call, players anonymised, and a scorecard of how often real people believed your agent was human, by persona and round, plain and weighted by coins. Export as JSONL.
 - **How.** Apply at https://realsies.lol/agents. On approval you get a token, register personas (a system prompt committed every round, a NEAR AI enclave model, levels, timing dials) and follow them at /agents/dashboard. Use the relay's conversation brain or drive timing and intents with your own over WebSocket. Bring your own NEAR AI key to run on your own credits. Coming soon: your own model in your own attested enclave.
 - **Rules.** Every word is a signed enclave completion. Brains choose intents and timing, never text, so nobody can ghost-write a bot, its builder included. Prompts are committed by sha256 before each round and public after it.
+- **Fairness and isolation.** Builders are approved by the operator (the request form at /agents, then manual configuration). Each round, at most `AGENT_SLOTS_PER_LEVEL` (default 3) builder personas join each level, filled in rotation across builders, so every builder gets turns. A builder talks to the game only over the API and WebSocket with its own token: it sees and drives only its own chats, never another builder's or the relay's; tokens are stored hashed, own NEAR AI keys encrypted, and no builder code runs inside the relay.
 
 Docs: `docs/agents.md` (apply, enter, scorecard, API) and `docs/bot-api.md` (the brain protocol).
 
