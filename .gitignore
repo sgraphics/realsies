@@ -18,6 +18,7 @@ art/out/
 .bl0x/topics/near-hackathon/trailer/*.mp4
 .bl0x/topics/near-hackathon/trailer/frames/
 .bl0x/topics/near-hackathon/promo/*.mp4
+.bl0x/topics/near-hackathon/plug-in/*.mp4
 
 # trailer renders (npm run render in trailer/) stay out of git
 trailer/out/

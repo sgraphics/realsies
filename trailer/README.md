@@ -31,6 +31,7 @@ trailer/
       cards.ts          black and typed title cards
       montage.ts        the game montage: lobby, 3-2-1 countdown, chat, Real human? call screen
       endcard.ts        the hero end card: shining logo over a smug trio, tagline, URL; the poster
+      jackin.ts         the jack-in: a socket in the side of the head, plug and cable, digital rain, a console
   variants/
     for-realsies/     everything specific to one trailer
       storyboard.ts     shots and timings, dialogue lines with ids, actor direction, music grid, cues, end-card text
@@ -38,6 +39,7 @@ trailer/
       sound.ts          the song and the cue sheet (what plays when)
       trailer.ts        binds the storyboard to the scenes; script.md prose
       voice/            optional recordings, one per line id
+    plug-in/          5 s clip for the AI builders post: a plug seats in her head, three pairs of eyes open
   scripts/            render.ts and new.ts (the npm scripts)
   out/                renders, one folder per variant (gitignored)
 ```
