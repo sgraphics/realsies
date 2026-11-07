@@ -1,8 +1,9 @@
-// Coins for a wallet player: deposit (ft_transfer_call on the coin to the game contract) and withdraw
-// (withdraw on the game contract) through the wallet, a "Buy REAL" link, the play key status, and in test
-// mode the faucet. While the contract has no coin (mainnet before REAL launches): free play only.
-// What the wallet itself holds is on screen, and a deposit it cannot cover is never offered: the reason
-// sits where the button would act (an empty wallet, or too few coins for the amount).
+// Coins for a wallet player, the same on testnet and mainnet: deposit (ft_transfer_call on the coin to the game
+// contract) and withdraw (withdraw on the game contract) through the wallet, a "Buy REAL" link and the play key
+// status. While the contract has no coin (mainnet before REAL launches): free play only. What the wallet itself
+// holds is on screen, and a deposit it cannot cover is never offered: the reason sits where the button would act
+// (an empty wallet, or too few coins for the amount). The one testnet difference: an empty wallet is offered
+// the airdrop ("Airdrop 100 tREAL test tokens", protocol v1.6) where mainnet offers "Buy REAL".
 
 import { useEffect, useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
@@ -11,6 +12,8 @@ import { Button, Icon } from '../ui/kit.tsx';
 import { useEscape } from '../ui/hooks.ts';
 import { fmtCoins, txUrl } from '../state/format.ts';
 import { depositCheck, emptyWalletText, fmtTokens, shortWalletText, symbolOf } from '../state/walletFunds.ts';
+import { airdropOn, holdsEnough } from '../state/airdrop.ts';
+import { AirdropButton } from '../ui/TestnetPanel.tsx';
 
 /** Coins per REAL as the screen says it: "1 coin = 100 REAL". */
 export function coinInTokens(coinUnit: string | undefined, decimals: number | undefined): string | null {
@@ -53,6 +56,7 @@ export function WalletCoinsDialog(p: { store: Store; gate: boolean; onDone(): vo
   useEscape(p.onDone);
   useEffect(() => {
     void p.store.actions.refreshWalletInfo();
+    void p.store.actions.refreshAirdrop();
     return () => p.store.actions.resetFlow('walletTx');
   }, [p.store]);
   // an amount handed in while the dialog is already open (it may have opened on its own as the deposit gate)
@@ -73,9 +77,11 @@ export function WalletCoinsDialog(p: { store: Store; gate: boolean; onDone(): vo
   const chk = depositCheck(info, depN > 0 ? depN : 0, cfg?.coinUnit);
   const empty = chk.reason === 'empty';
   const short = depN > 0 && chk.reason === 'short';
-  /** test coins into the wallet; then the deposit field holds something the wallet can cover */
-  const fillWallet = async () => {
-    if (!(await p.store.actions.faucetToWallet(100))) return;
+  const drop = s.airdrop;
+  const airdrop = airdropOn(cfg) && !holdsEnough(drop.status);
+  const landed = drop.phase === 'done' && drop.landed?.to === 'wallet' ? drop.landed : undefined;
+  /** the airdrop landed in the wallet: the deposit field holds what the wallet can cover */
+  const afterAirdrop = () => {
     const fits = depositCheck(p.store.get().walletInfo, 0, cfg?.coinUnit).fits;
     setDep((cur) => {
       const n = Math.floor(Number(cur));
@@ -113,24 +119,25 @@ export function WalletCoinsDialog(p: { store: Store; gate: boolean; onDone(): vo
               {empty && (
                 <div class="px-row wallet-why" role="status">
                   <p class="px-sub">{emptyWalletText(symbol)}</p>
-                  {cfg?.testMode ? (
-                    <Button small kind="primary" disabled={busy} onClick={() => void fillWallet()}><Icon name="coin" /> Get 100 {symbol} to your wallet</Button>
+                  {airdropOn(cfg) ? (
+                    airdrop && <AirdropButton store={p.store} small onLanded={afterAirdrop} />
                   ) : cfg?.buyUrl ? (
                     <a class="px-btn small primary buy-link" href={cfg.buyUrl} target="_blank" rel="noreferrer"><Icon name="coin" /> Buy {symbol} <Icon name="link" /></a>
                   ) : null}
                 </div>
               )}
+              {empty && airdropOn(cfg) && drop.phase === 'error' && drop.error && <p class="px-sub px-bad wallet-why" role="alert"><Icon name="cross" /> {drop.error.text}</p>}
               {short && <p class="px-sub wallet-why" role="status">{shortWalletText(symbol, chk.walletUnits!, decimals, chk.fits!)}</p>}
+              {landed && (
+                <p class="px-sub px-good" role="status">
+                  <Icon name="check" /> {landed.coins} {symbol} airdropped to your wallet. Deposit them above.
+                  {txUrl(cfg, landed.tx) && <> <a class="px-link" href={txUrl(cfg, landed.tx)} target="_blank" rel="noreferrer">View transaction <Icon name="link" /></a></>}
+                </p>
+              )}
               <p class="px-dim wallet-rate">
                 {perCoin ? <>1 coin = {perCoin} {symbol}. </> : null}
                 {cfg?.buyUrl && <a class="px-link" href={cfg.buyUrl} target="_blank" rel="noreferrer">Buy {symbol} <Icon name="link" /></a>}
               </p>
-              {cfg?.testMode && (
-                <div class="px-row wallet-tools">
-                  <Button small disabled={busy} onClick={() => void p.store.actions.faucet(100).catch(() => {})}><Icon name="coin" /> 100 test coins in the game</Button>
-                  <Button small disabled={busy} onClick={() => void fillWallet()}><Icon name="coin" /> 100 {symbol} to my wallet (to test deposits)</Button>
-                </div>
-              )}
               {balance > 0 && (
                 <>
                   <form class="custom-row" onSubmit={(e) => { e.preventDefault(); if (wdN > 0 && wdN <= balance && !busy) void p.store.actions.walletWithdraw(wdN); }}>
@@ -154,7 +161,7 @@ export function WalletCoinsDialog(p: { store: Store; gate: boolean; onDone(): vo
               )}
               {f.phase === 'done' && (
                 <p class="px-sub px-good">
-                  <Icon name="check" /> {f.kind === 'withdraw' ? 'Withdrawn to your wallet.' : f.kind === 'faucet' ? `Sent to your wallet. Deposit them above.` : 'Deposited.'}
+                  <Icon name="check" /> {f.kind === 'withdraw' ? 'Withdrawn to your wallet.' : 'Deposited.'}
                   {f.tx && <> <a class="px-link" href={txUrl(cfg, f.tx)} target="_blank" rel="noreferrer">View transaction <Icon name="link" /></a></>}
                 </p>
               )}

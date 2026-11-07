@@ -5,12 +5,12 @@
 // The wallet's part is played by the account's own full-access key from the legacy keychain
 // (~/.near-credentials/<network>/<PLAYER>.json): near-api-js signs the NEP-413 sign-in with it, and the near CLI
 // (near-cli-rs) sends what a wallet popup would: the AddKey of the browser's key, the deposit (ft_transfer_call)
-// and the withdrawal. The browser's part runs the web app's own transaction encoder (web/src/wallet/tx.ts).
+// and the withdrawal. The test tokens come from the testnet airdrop (protocol v1.6), as in the game. The browser's part runs the web app's own transaction encoder (web/src/wallet/tx.ts).
 // No key is ever printed.
 //
 //   RELAY_URL=http://localhost:3961 PLAYER=p1.<owner>.testnet npx tsx tools/wallet-proof.ts
 //   env: NEAR_CLI (../.tooling/bin/near.exe), CLI_CONN (testnet-fast), RPC_URL (https://rpc.testnet.fastnear.com),
-//        COINS (deposit, 60), PLAY_COINS (10)
+//        COINS (deposit, 60; the airdrop brings 100), PLAY_COINS (10)
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -160,10 +160,19 @@ async function main(): Promise<void> {
   const allowance0 = BigInt(ak0.permission.FunctionCall.allowance);
   report.playKey = { publicKey: k.publicKey, allowance: allowance0.toString(), methods: ak0.permission.FunctionCall.method_names };
 
-  // 3. test coins into the wallet (test mode faucet: registers the account on the coin), then a deposit from the wallet
-  const fw = await api('POST', '/api/session/faucet-wallet', { coins: COINS }, token);
-  check(fw.status === 200, `${COINS} test coins into the wallet from the faucet`);
-  link('faucetToWallet', fw.body.tx);
+  // 3. the testnet airdrop: 100 tREAL into the wallet (the faucet registers the account on the coin), then a deposit
+  const st = await api('GET', `/api/airdrop/${player}`, undefined, token);
+  check(st.status === 200 && st.body.to === 'wallet', `the airdrop status: ${JSON.stringify(st.body)}`);
+  const ad = await api('POST', `/api/airdrop/${player}`, {}, token);
+  if (ad.status === 200) {
+    check(ad.body.to === 'wallet' && ad.body.wallet?.tokenRegistered === true && BigInt(ad.body.wallet?.walletBalance ?? '0') >= 100n * UNIT, '100 tREAL airdropped into the wallet, registered on the coin');
+    link('airdrop', ad.body.tx);
+    const twice = await api('POST', `/api/airdrop/${player}`, {}, token);
+    check(twice.status === 429 && twice.body.code === 'airdrop_too_soon' && twice.body.retryAt > Date.now(), 'a second airdrop at once: airdrop_too_soon, with the time of the next');
+  } else {
+    // a rerun with the same account: the limits say no; the wallet still holds enough for the deposit below
+    check(ad.body.code === 'airdrop_enough' || ad.body.code === 'airdrop_too_soon', `the airdrop refused by its limits (${ad.body.code}): ${ad.body.message}`);
+  }
   const meBefore = (await api('GET', `/api/me/${player}`, undefined, token)).body;
   const dep = await cli([
     'contract', 'call-function', 'as-transaction', cfg.tokenId, 'ft_transfer_call', 'json-args',

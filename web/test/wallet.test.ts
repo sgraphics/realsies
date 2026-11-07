@@ -2,7 +2,8 @@
 // sign-in state (waiting, checking, rejected, resumed, expired, signed out), enabling coins (the key at
 // sign-in, the AddKey fallback, a rejection, the wrong account), a wallet deposit and withdrawal, a paid
 // chat whose play and call the browser signs and the mock relay checks, the store refusing to sign what
-// the player did not ask for, and free play only while there is no coin.
+// the player did not ask for, free play only while there is no coin, and the testnet airdrop (v1.6): one tap,
+// no wallet approval, then the real game; its limits, for a wallet player and a test player; never on mainnet.
 // Run by test/mock-flow.test.ts in its own process (npm test).
 
 class MemStorage {
@@ -174,7 +175,7 @@ console.log('coins with a wallet');
     let faucetErr = '';
     await store.actions.faucet(50).catch((e) => (faucetErr = (e as { code?: string }).code ?? ''));
     ok(faucetErr === 'not_test_mode', 'no faucet without test mode: coins come from the wallet');
-    ok(await store.actions.faucetToWallet(200), 'test coins into the wallet');
+    await client.faucetToWallet(200); // the mock's coins into the wallet (a relay without test mode has no airdrop)
     ok(client.walletCoinsOf('sam.testnet') === 200, '200 in the wallet');
     const depPhases: string[] = [];
     const un = store.subscribe((s) => {
@@ -395,11 +396,12 @@ console.log('what the wallet holds');
     ok(empty?.walletBalance === '0' && empty.tokenRegistered === false, 'a new wallet: nothing on the coin, not even registered');
     ok(!(await store.actions.walletDeposit(20)) && store.get().walletTx.error === 'Your wallet has no tREAL yet.', 'empty: the deposit is refused in place: ' + store.get().walletTx.error);
     ok(!wallet.calls.includes('tx'), 'and never sent to the wallet (it could only fail)');
-    await store.actions.faucetToWallet(3);
-    ok(store.get().walletInfo?.walletBalance === (3n * 10n ** 18n).toString(), 'the faucet into the wallet refreshes what it holds');
+    await client.faucetToWallet(3);
+    await store.actions.refreshWalletInfo();
+    ok(store.get().walletInfo?.walletBalance === (3n * 10n ** 18n).toString(), 'walletInfo says what the wallet holds');
     ok(!(await store.actions.walletDeposit(20)) && store.get().walletTx.error === 'Your wallet holds 3 tREAL, enough for 3 coins.', 'short: ' + store.get().walletTx.error);
     ok(!wallet.calls.includes('tx'), 'still nothing sent');
-    await store.actions.faucetToWallet(197);
+    await client.faucetToWallet(197);
     ok(await store.actions.walletDeposit(20), 'enough: the deposit goes to the wallet');
     ok(wallet.calls.filter((c) => c === 'tx').length === 1 && store.get().me?.balanceCoins === 20, 'one wallet approval, 20 coins in the game');
     ok(store.get().walletInfo?.walletBalance === (180n * 10n ** 18n).toString(), 'after the deposit: 180 left in the wallet, refreshed');
@@ -429,6 +431,93 @@ console.log('no coin yet');
   ok((await waitFor(store, (x) => x.chat?.mode === 'free', 'free chat', 8000)).chat?.mode === 'free', 'free play works');
   done();
   storage.clear();
+}
+
+// ---------- 6. the testnet airdrop (protocol v1.6) ----------
+console.log('the testnet airdrop');
+{
+  const { airdropOn, panelMode, offerAgain } = await import('../src/state/airdrop.ts');
+  // a wallet player on the testnet relay (test mode): 100 tREAL into the wallet in one tap, no wallet approval
+  const { client, wallet, store, done } = setup({ wallet: false });
+  try {
+    const cfg = await store.actions.loadConfig();
+    ok(airdropOn(cfg) && cfg.testMode && cfg.network === 'testnet', 'test mode on testnet: the airdrop is on');
+    await store.actions.walletSignIn();
+    await waitFor(store, (s) => s.welcomed, 'welcome');
+    ok(panelMode(store.get(), 'lobby') === 'tag', 'before the relay answers: the slim tag, no big button yet');
+    const st = await store.actions.refreshAirdrop();
+    ok(st?.to === 'wallet' && st.heldCoins === 0 && st.coins === 100 && !st.blocked, 'the relay: an empty account, 100 to the wallet, open');
+    ok(panelMode(store.get(), 'lobby') === 'offer' && panelMode(store.get(), 'chat') === 'tag', 'the room offers it; a chat shows only the tag');
+    const phases: string[] = [];
+    const un = store.subscribe((s) => {
+      if (phases[phases.length - 1] !== s.airdrop.phase) phases.push(s.airdrop.phase);
+    });
+    ok(await store.actions.airdrop(), 'one tap');
+    un();
+    const s = store.get();
+    ok(phases.join(' ') === 'busy done', `airdrop phases: ${phases.join(' ')}`);
+    ok(client.walletCoinsOf('sam.testnet') === 100 && s.walletInfo?.walletBalance === (100n * 10n ** 18n).toString() && s.walletInfo.tokenRegistered, '100 tREAL in the wallet, registered on the coin, on screen at once');
+    ok(!wallet.calls.includes('tx') && !wallet.calls.includes('key'), 'no wallet approval: the relay sends them');
+    ok(s.me?.balanceCoins === 0 && s.airdrop.landed?.to === 'wallet' && panelMode(s, 'lobby') === 'done', 'nothing in the game yet; the panel says where they are');
+    ok(storage.getItem('realsies:airdrop:folded:sam.testnet') === '1' && s.airdrop.folded, 'the next visit shows the slim tag');
+    ok(!(await store.actions.airdrop()) && store.get().airdrop.error?.code === 'airdrop_too_soon' && /The next one opens in 10 min\./.test(store.get().airdrop.error?.text ?? ''), 'again at once: refused, with the reason: ' + store.get().airdrop.error?.text);
+    ok(client.walletCoinsOf('sam.testnet') === 100, 'nothing more sent');
+    store.actions.foldAirdrop();
+    ok(panelMode(store.get(), 'lobby') === 'tag' && !offerAgain(store.get().airdrop.status), 'folded: the tag, and no "Airdrop again" with 100 held');
+    // from here it works like the real game: a deposit from the wallet, the wallet's own approval
+    ok(await store.actions.walletDeposit(40), 'a deposit of 40 from the wallet');
+    ok(store.get().me?.balanceCoins === 40 && client.walletCoinsOf('sam.testnet') === 60 && wallet.calls.filter((c) => c === 'tx').length === 1, '40 in the game, 60 in the wallet, one approval');
+    // ten minutes on, 100 held (wallet plus game): still none
+    client.setAirdropAt('sam.testnet', Date.now() - 11 * 60_000);
+    ok(!(await store.actions.airdrop()) && store.get().airdrop.error?.code === 'airdrop_enough' && store.get().airdrop.error?.text === 'You hold 100 tREAL already. Airdrops are for balances under 50 tREAL.', 'enough held: ' + store.get().airdrop.error?.text);
+  } finally {
+    done();
+    storage.clear();
+  }
+  // a test player: straight into the game balance; a locked Turing bonus comes with it
+  {
+    const { client, store, done } = setup({ wallet: false });
+    try {
+      await store.actions.loadConfig();
+      await store.actions.selectUser('dex.realsies.testnet');
+      await waitFor(store, (s) => s.welcomed, 'welcome dex');
+      const st = await store.actions.refreshAirdrop();
+      ok(st?.to === 'game' && st.heldCoins === 0, 'a test player: 100 into the game balance');
+      ok(await store.actions.airdrop() && store.get().me?.balanceCoins === 100 && store.get().airdrop.landed?.to === 'game' && client.walletCoinsOf('dex.realsies.testnet') === 0, '100 coins in the game, nothing in a wallet');
+      // Finn holds 15: open, and once folded the tag offers "Airdrop again"
+      await store.actions.selectUser('finn.realsies.testnet');
+      await waitFor(store, (s) => s.welcomed, 'welcome finn');
+      ok(!store.get().airdrop.folded && store.get().airdrop.status === undefined, 'another player: its own panel, not folded');
+      await store.actions.refreshAirdrop();
+      store.actions.foldAirdrop();
+      ok(panelMode(store.get(), 'lobby') === 'tag' && offerAgain(store.get().airdrop.status), '15 held: the tag offers "Airdrop again"');
+    } finally {
+      done();
+      storage.clear();
+    }
+  }
+  // not without test mode, not on mainnet
+  {
+    const { store, done } = setup();
+    try {
+      ok(!airdropOn(await store.actions.loadConfig()), 'no test mode: no airdrop');
+      await store.actions.walletSignIn();
+      await waitFor(store, (s) => s.welcomed, 'welcome');
+      ok((await store.actions.refreshAirdrop()) === null && panelMode(store.get(), 'lobby') === 'none', 'no status, no panel');
+      ok(!(await store.actions.airdrop()) && store.get().airdrop.error?.code === 'not_test_mode', 'and a direct try is refused');
+    } finally {
+      done();
+      storage.clear();
+    }
+    const m = setup({ mainnet: true });
+    try {
+      const cfg = await m.store.actions.loadConfig();
+      ok(cfg.network === 'mainnet' && !airdropOn(cfg), 'mainnet: never');
+    } finally {
+      m.done();
+      storage.clear();
+    }
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

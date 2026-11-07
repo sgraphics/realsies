@@ -2,7 +2,7 @@
 // Keeps the player's own transcript copy in localStorage as messages arrive (Verify drawer check).
 
 import type {
-  ActiveChat, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PublicConfig, RoundResults, RoundState,
+  ActiveChat, AirdropStatus, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PublicConfig, RoundResults, RoundState,
   RoundSummary, Seat, ServerMsg, TestUser, ThemeId, VerifyBundle, WalletInfo,
 } from '../../../shared/protocol.ts';
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
@@ -13,6 +13,7 @@ import { forgetPlayKey, loadPlayKey, newPlayKey, savePlayKey } from '../wallet/k
 import { parsePublicKey, signTransaction } from '../wallet/tx.ts';
 import { base58Decode, base64Decode, base64Encode } from '../wallet/base58.ts';
 import { depositCheck, emptyWalletText, shortWalletText, symbolOf } from './walletFunds.ts';
+import { AIRDROP_IDLE, airdropErrorText, airdropOn, readFolded, writeFolded, type AirdropView } from './airdrop.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -90,10 +91,12 @@ export interface AppState {
   session?: SessionView;
   signIn: Flow;
   keySetup: Flow & { via?: 'sign-in' | 'transaction' };
-  walletTx: Flow & { kind?: 'deposit' | 'withdraw' | 'faucet' };
+  walletTx: Flow & { kind?: 'deposit' | 'withdraw' };
   walletInfo?: WalletInfo;
   /** the relay refused a paid pick for want of a play key: the screen offers "Enable coins" */
   keyNeeded?: { code: string; at: number };
+  // ----- the testnet airdrop (v1.6) -----
+  airdrop: AirdropView;
 }
 
 export interface StoreActions {
@@ -132,11 +135,16 @@ export interface StoreActions {
   coinsEnabled(): boolean;
   walletDeposit(coins: number): Promise<boolean>;
   walletWithdraw(coins: number): Promise<boolean>;
-  /** Test mode: test coins into the wallet itself, to try a deposit. */
-  faucetToWallet(coins?: number): Promise<boolean>;
   refreshWalletInfo(): Promise<WalletInfo | undefined>;
   resetFlow(which: 'signIn' | 'keySetup' | 'walletTx'): void;
   clearKeyNeeded(): void;
+  // ----- the testnet airdrop (v1.6) -----
+  /** What an airdrop would do for this account now (the testnet demo only); null when there is none to be had. */
+  refreshAirdrop(): Promise<AirdropStatus | null>;
+  /** 100 test tokens in one tap: into a wallet player's wallet, into a test player's game balance. */
+  airdrop(): Promise<boolean>;
+  /** The TESTNET panel folds into its slim tag (the message read, or the offer not wanted). */
+  foldAirdrop(): void;
 }
 
 export interface Store {
@@ -170,7 +178,7 @@ function ls(): Storage | null {
 }
 
 export function createStore(client: GameClient, wallet?: WalletApi): Store {
-  let state: AppState = { status: 'idle', level: 1, rooms: {}, resultsReady: [], welcomed: false, signIn: IDLE, keySetup: IDLE, walletTx: IDLE };
+  let state: AppState = { status: 'idle', level: 1, rooms: {}, resultsReady: [], welcomed: false, signIn: IDLE, keySetup: IDLE, walletTx: IDLE, airdrop: AIRDROP_IDLE };
   /** the coins the player chose at the last pick: a play to sign must be for exactly these */
   let pickedCoins: number | null = null;
   const subs = new Set<(s: AppState) => void>();
@@ -520,7 +528,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
     },
     selectUser(accountId) {
       if (state.accountId && state.accountId !== accountId) actions.logout();
-      set({ accountId, status: 'connecting', welcomed: false, rooms: {}, chat: undefined, search: undefined, me: undefined, resultsReady: loadResultsReady(accountId) });
+      set({ accountId, status: 'connecting', welcomed: false, rooms: {}, chat: undefined, search: undefined, me: undefined, resultsReady: loadResultsReady(accountId), airdrop: { ...AIRDROP_IDLE, folded: readFolded(accountId) } });
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           welcomeWaiters = welcomeWaiters.filter((w) => w.timer !== timer);
@@ -539,7 +547,7 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
       welcomeWaiters = [];
       if (countdownTimer) clearTimeout(countdownTimer);
       countdownTimer = null;
-      set({ accountId: undefined, me: undefined, round: undefined, rooms: {}, chat: undefined, search: undefined, status: 'idle', welcomed: false, resultsReady: [], lastError: undefined, notice: undefined });
+      set({ accountId: undefined, me: undefined, round: undefined, rooms: {}, chat: undefined, search: undefined, status: 'idle', welcomed: false, resultsReady: [], lastError: undefined, notice: undefined, airdrop: AIRDROP_IDLE });
     },
     enterRoom(level) {
       set({ level });
@@ -826,19 +834,6 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         return false;
       }
     },
-    async faucetToWallet(coins) {
-      try {
-        if (!client.faucetToWallet) throw new Error('No faucet here.');
-        set({ walletTx: { phase: 'checking', kind: 'faucet' } });
-        const r = await client.faucetToWallet(coins);
-        await actions.refreshWalletInfo();
-        set({ walletTx: { phase: 'done', kind: 'faucet', tx: r.tx } });
-        return true;
-      } catch (e) {
-        set({ walletTx: { phase: 'error', kind: 'faucet', error: errText(e) } });
-        return false;
-      }
-    },
     async refreshWalletInfo() {
       if (!state.session || !client.walletInfo) return undefined;
       try {
@@ -854,6 +849,52 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
     },
     clearKeyNeeded() {
       set({ keyNeeded: undefined });
+    },
+
+    // ----- the testnet airdrop (v1.6) -----
+    async refreshAirdrop() {
+      const acct = state.accountId;
+      if (!acct || !airdropOn(state.config)) return null;
+      if (!client.airdropStatus) {
+        if (state.airdrop.status === undefined) set((x) => ({ airdrop: { ...x.airdrop, status: null } }));
+        return null;
+      }
+      try {
+        const status = await client.airdropStatus(acct);
+        if (state.accountId !== acct) return null;
+        set((x) => ({ airdrop: { ...x.airdrop, status } }));
+        return status;
+      } catch {
+        // an older relay, or it did not answer: the panel stays a slim tag
+        if (state.accountId === acct && state.airdrop.status === undefined) set((x) => ({ airdrop: { ...x.airdrop, status: null } }));
+        return null;
+      }
+    },
+    async airdrop() {
+      const acct = state.accountId;
+      if (!acct || state.airdrop.phase === 'busy') return false;
+      const symbol = symbolOf(state.config);
+      set((x) => ({ airdrop: { ...x.airdrop, phase: 'busy', error: undefined, landed: undefined } }));
+      try {
+        if (!airdropOn(state.config) || !client.airdrop) throw Object.assign(new Error('The airdrop is for the testnet demo only.'), { code: 'not_test_mode' });
+        const r = await client.airdrop(acct);
+        if (state.accountId !== acct) return false;
+        writeFolded(acct);
+        set({ me: r.me, ...(r.wallet ? { walletInfo: r.wallet } : {}), airdrop: { phase: 'done', status: r.status, landed: { tx: r.tx, coins: r.coins, to: r.to }, folded: true } });
+        return true;
+      } catch (e) {
+        if (state.accountId !== acct) return false;
+        const code = errCode(e) ?? 'error';
+        // the relay's view again (when the next one opens, what is held), for the reason on screen
+        await actions.refreshAirdrop();
+        if (state.accountId !== acct) return false;
+        set((x) => ({ airdrop: { ...x.airdrop, phase: 'error', error: { code, text: airdropErrorText(code, e, x.airdrop.status, symbol) } } }));
+        return false;
+      }
+    },
+    foldAirdrop() {
+      if (state.accountId) writeFolded(state.accountId);
+      set((x) => ({ airdrop: { ...x.airdrop, phase: x.airdrop.phase === 'busy' ? 'busy' : 'idle', landed: undefined, error: undefined, folded: true } }));
     },
   };
 

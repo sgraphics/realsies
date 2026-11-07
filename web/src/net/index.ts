@@ -3,6 +3,7 @@
 //   ?mock=1&wallet=1            like a mainnet relay: no test users, sign in with the (mock) wallet
 //   ?mock=1&wallet=test         like the testnet relay: test mode (test users, faucet), and QA signs in with the mock wallet
 //   &coins=closed               the contract has no coin yet: free play only
+//   &net=mainnet                with &wallet=1: the config says mainnet (REAL, "Buy REAL", mainnet explorer links)
 //   &hold=signIn|key|tx         the mock wallet never answers that step (QA: "waiting for your wallet")
 //   &reject=signIn|key|tx       the player closes the mock wallet at that step
 //   &launch=soon|auction|finalizing   a mainnet relay before REAL is live (wallet sign-in, no coin yet): soon is
@@ -47,6 +48,7 @@ export function createClient(search?: string): GameClient {
       ...(searchMs > 0 ? { searchMs: [searchMs, searchMs] as [number, number] } : {}),
       ...(q.get('nobots') === '1' ? { noBots: true } : {}), // the bots are napping: no new chats (bots_unavailable)
       ...(q.get('wallet') === '1' ? { wallet: true, buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet:v1' } : {}),
+      ...(q.get('wallet') === '1' && q.get('net') === 'mainnet' ? { mainnet: true, storageKey: 'realsies:mock:wallet-main:v1' } : {}),
       ...(q.get('wallet') === 'test' ? { buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet-test:v1' } : {}),
       ...(q.get('coins') === 'closed' ? { coinsOpen: false } : {}),
       ...(launch

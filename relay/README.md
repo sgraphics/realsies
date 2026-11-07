@@ -37,7 +37,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | Var | Default | Notes |
 |---|---|---|
 | `PORT` | 3960 | HTTP and `/ws` |
-| `TEST_MODE` | 1 | test-user screen, faucet, dev endpoints, relay-signed test users, all levels unlocked; wallet sign-in works too. `0`: wallet accounts only (mainnet), no test users, no dev endpoints, no faucet |
+| `TEST_MODE` | 1 | test-user screen, faucet (test users, 20 calls per IP per 10 minutes), dev endpoints, relay-signed test users, all levels unlocked; wallet sign-in works too; on testnet the airdrop (100 test tokens per tap: a wallet's own wallet, a test user's game balance; one per account per 10 minutes, none at 50 or more held; `docs/spec.md` section 7). `0`: wallet accounts only (mainnet), no test users, no dev endpoints, no faucet, no airdrop |
 | `AUTH_RECIPIENT` | realsies.lol | NEP-413 recipient every sign-in signature must name: the domain the players see (a testnet relay moved to testnet.realsies.lol says so here) |
 | `SESSION_DAYS` | 30 | a wallet session lives this long |
 | `BUY_URL` | | "Buy REAL": the meme.cooking page before the launch finalizes, the Rhea swap after; unset = no link |
@@ -276,8 +276,10 @@ chain's access-key rules. Then in-process relays: without test mode (no test use
 HTTP; my coins need my session; a ticketed socket; a wallet deposit counted once with the locked bonus; a paid chat whose
 play and call the browser signs, on chain as the player's own; a tampered and a declined signature going free; the round
 settling on its own with the player's results; sign-out closing the socket); before the coin exists (free play only, the
-coin showing up pushed to every socket); and test mode (a wallet account next to the test users, the faucet into the game
-and into the wallet, browser-signed plays only).
+coin showing up pushed to every socket); and test mode (a wallet account next to the test users, browser-signed plays only;
+the airdrop: 100 into the wallet itself, registered on the coin, a second at once refused with `retryAt`, the old wallet faucet
+route refused the same way, still none ten minutes on while wallet plus game hold 100, the test users' faucet refused to a
+wallet account; a test user's airdrop straight into its game balance, open again ten minutes on under 50, none at 130).
 
 The launch (`test/launch.test.ts`): `LAUNCH_*` into `PublicConfig.launch` (nothing set, the 24-hour end, every field, the X links, the retired
 variables read no more), the checks that stop a bad value at boot (a time without its zone, an end before the start or without one, X links not on X,

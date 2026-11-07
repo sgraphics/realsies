@@ -1,18 +1,22 @@
 // "Deposit to earn": shown before entering a room while the balance is zero (skippable), and as
-// the coins panel from the HUD. Test mode: the faucet sends 100 test coins. A wallet player gets the
-// wallet version (WalletCoins.tsx): deposit and withdraw through the wallet.
+// the coins panel from the HUD. A test player (the testnet demo) gets the airdrop: 100 test tokens
+// straight into the game balance, within its limits (protocol v1.6). A wallet player gets the wallet
+// version (WalletCoins.tsx): deposit and withdraw through the wallet, as on mainnet.
 
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 import { useEscape } from '../ui/hooks.ts';
 import { txUrl } from '../state/format.ts';
 import { WalletCoinsDialog } from './WalletCoins.tsx';
+import { airdropOn, holdsEnough } from '../state/airdrop.ts';
+import { AirdropButton } from '../ui/TestnetPanel.tsx';
 
 export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void; onEnableCoins?(): void; prefill?: string }) {
   const s = useStore(p.store);
-  if (s.session || s.config?.coinsOpen === false) return <WalletCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} onEnableCoins={p.onEnableCoins ?? (() => {})} prefill={p.prefill} />;
+  // a wallet player's own coins screen (the session is this very account), or no coin yet
+  if ((s.session && s.session.accountId === s.accountId) || s.config?.coinsOpen === false) return <WalletCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} onEnableCoins={p.onEnableCoins ?? (() => {})} prefill={p.prefill} />;
   return <TestCoinsDialog {...p} />;
 }
 
@@ -25,23 +29,15 @@ function TestCoinsDialog(p: { store: Store; gate: boolean; onDone(): void }) {
   const [err, setErr] = useState<string | null>(null);
   const [wd, setWd] = useState('');
   useEscape(p.onDone);
+  useEffect(() => {
+    void p.store.actions.refreshAirdrop();
+  }, [p.store]);
   const balance = me?.balanceCoins ?? 0;
-  const symbol = cfg?.tokenSymbol ?? 'tREAL';
   const usd = cfg?.usdPerCoin ?? 0.01;
-
-  const faucet = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await p.store.actions.faucet(100);
-      setTx(r.tx);
-      if (p.gate) setTimeout(p.onDone, 900);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const drop = s.airdrop;
+  // the airdrop is for those holding little: with 50 or more in the game there is nothing to offer
+  const airdrop = airdropOn(cfg) && !holdsEnough(drop.status);
+  const landed = drop.phase === 'done' && drop.landed?.to === 'game' ? drop.landed : undefined;
   const withdraw = async () => {
     const n = Math.floor(Number(wd));
     if (!(n > 0 && n <= balance)) return;
@@ -76,12 +72,19 @@ function TestCoinsDialog(p: { store: Store; gate: boolean; onDone(): void }) {
               <p class="px-sub"><Icon name="lock" /> {me.lockedBonusCoins} coins earned from players who thought you were a bot. Deposit to unlock.</p>
             </div>
           )}
-          {cfg?.testMode ? (
-            <Button kind="primary" disabled={busy} onClick={faucet}>
-              <Icon name="coin" /> {busy ? 'Sending…' : `Get 100 test coins (${symbol})`}
-            </Button>
-          ) : (
+          {airdrop ? (
+            <>
+              <AirdropButton store={p.store} onLanded={() => p.gate && setTimeout(p.onDone, 900)} />
+              <p class="px-sub px-dim">Test tokens, no real money: straight into your game balance.</p>
+            </>
+          ) : !airdropOn(cfg) && !cfg?.testMode ? (
             <p class="px-sub px-dim">Deposits arrive from your wallet in one step.</p>
+          ) : null}
+          {drop.phase === 'error' && drop.error && <p class="px-sub px-bad" role="alert"><Icon name="cross" /> {drop.error.text}</p>}
+          {landed && (
+            <p class="px-sub px-good">
+              <Icon name="check" /> {landed.coins} test tokens are in your game balance. <a class="px-link" href={txUrl(cfg, landed.tx)} target="_blank" rel="noreferrer">View transaction <Icon name="link" /></a>
+            </p>
           )}
           {tx && (
             <p class="px-sub px-good">

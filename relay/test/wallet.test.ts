@@ -2,13 +2,14 @@
 // mock NEAR AI signer. Without test mode: no test users, no dev endpoints; sign-in over HTTP with a NEP-413
 // signature, a session, a ticketed WebSocket, a wallet deposit, the browser's play key, paid plays and calls
 // signed by the browser (with the browser's own encoder) and checked by the relay, tampered and declined
-// signatures, settlement, results, sign-out. With test mode: a wallet account next to the test users.
+// signatures, settlement, results, sign-out. With test mode: a wallet account next to the test users, and the
+// testnet airdrop (protocol v1.6) with its limits, for a wallet account and for a test user.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AuthChallenge, AuthSession, PublicConfig, ServerMsg } from '../../shared/protocol.js';
+import type { AirdropResult, AirdropStatus, AuthChallenge, AuthSession, PublicConfig, ServerMsg } from '../../shared/protocol.js';
 import { createApp, type App } from '../src/app.js';
 import { MockChain } from '../src/chain/mock.js';
 import { WsClient } from './client.js';
@@ -124,6 +125,10 @@ test('wallet players without test mode: sign-in, session, ticketed socket, walle
     const empty = (await api(base, 'GET', '/api/session/wallet', undefined, token)).body;
     assert.equal(empty.walletBalance, '0', 'an empty wallet');
     assert.equal(empty.tokenRegistered, false);
+    // the testnet airdrop needs test mode
+    assert.equal((await api(base, 'GET', `/api/airdrop/${acct}`, undefined, token)).body.code, 'not_test_mode', 'no airdrop status without test mode');
+    assert.equal((await api(base, 'POST', `/api/airdrop/${acct}`, {}, token)).body.code, 'not_test_mode', 'no airdrop without test mode');
+    assert.equal((await api(base, 'POST', '/api/session/faucet-wallet', {}, token)).body.code, 'not_test_mode', 'nor the old wallet faucet');
 
     // ----- a deposit from the wallet, and the locked Turing bonus it unlocks -----
     assert.ok((await chain.faucetDeposit(chain.accounts.promo, 50n * chain.coinUnit)).ok);
@@ -279,7 +284,7 @@ test('before REAL launches: no coin on the contract means free play only, and th
   }
 });
 
-test('test mode: a wallet account plays next to the test users; the faucet serves it; its paid play is browser-signed, never relay-signed', { timeout: 90_000 }, async () => {
+test('test mode: a wallet account plays next to the test users; the airdrop fills its wallet within limits; its paid play is browser-signed, never relay-signed', { timeout: 90_000 }, async () => {
   const chain = new MockChain();
   chain.txLatencyMs = 5;
   chain.callGraceMs = 1500;
@@ -291,13 +296,44 @@ test('test mode: a wallet account plays next to the test users; the faucet serve
     const { session } = await signIn(base, chain, acct);
     const token = session.token;
     assert.equal((await api(base, 'POST', `/api/test-users/${acct}/faucet`, { coins: 20 })).status, 401, 'the faucet needs the session for a wallet account');
-    const f = await api(base, 'POST', `/api/test-users/${acct}/faucet`, { coins: 20 }, token);
-    assert.equal(f.status, 200, JSON.stringify(f.body));
-    assert.equal(f.body.me.balanceCoins, 20);
-    const fw = await api(base, 'POST', '/api/session/faucet-wallet', { coins: 30 }, token);
-    assert.equal(fw.status, 200);
-    assert.equal(chain.walletBalance(acct), 30n * chain.coinUnit, 'test coins into the wallet itself, to try a wallet deposit');
-    assert.equal((await api(base, 'GET', '/api/session/wallet', undefined, token)).body.walletBalance, (30n * chain.coinUnit).toString(), 'walletInfo shows them');
+    assert.equal((await api(base, 'POST', `/api/test-users/${acct}/faucet`, { coins: 20 }, token)).body.code, 'use_airdrop', "a wallet account's test tokens come from the airdrop");
+
+    // ----- the airdrop: 100 tREAL into the wallet itself (registered on the coin, storage paid by the faucet) -----
+    assert.equal((await api(base, 'GET', `/api/airdrop/${acct}`)).status, 401, 'the airdrop needs the session for a wallet account');
+    assert.equal((await api(base, 'POST', `/api/airdrop/${acct}`, {})).status, 401);
+    assert.equal((await api(base, 'GET', '/api/airdrop/other.testnet', undefined, token)).status, 403, "not another account's");
+    const st0 = (await api(base, 'GET', `/api/airdrop/${acct}`, undefined, token)).body as AirdropStatus;
+    assert.deepEqual(
+      [st0.to, st0.coins, st0.heldCoins, st0.enoughCoins, st0.againBelowCoins, st0.lastAt, st0.blocked],
+      ['wallet', 100, 0, 50, 20, null, undefined],
+      'before: nothing held, an airdrop is open',
+    );
+    const ad = await api(base, 'POST', `/api/airdrop/${acct}`, {}, token);
+    assert.equal(ad.status, 200, JSON.stringify(ad.body));
+    const adr = ad.body as AirdropResult;
+    assert.equal(adr.to, 'wallet');
+    assert.equal(adr.coins, 100);
+    assert.ok(adr.tx);
+    assert.equal(chain.walletBalance(acct), 100n * chain.coinUnit, '100 tREAL in the wallet itself');
+    assert.equal(adr.wallet?.walletBalance, (100n * chain.coinUnit).toString(), 'the result says what the wallet holds now');
+    assert.equal(adr.wallet?.tokenRegistered, true, 'registered on the coin by the faucet');
+    assert.equal(adr.me.balanceCoins, 0, 'nothing in the game until a deposit, as on mainnet');
+    assert.equal(adr.status.heldCoins, 100);
+    assert.equal(adr.status.blocked, 'airdrop_too_soon');
+    assert.equal((await api(base, 'GET', '/api/session/wallet', undefined, token)).body.walletBalance, (100n * chain.coinUnit).toString(), 'walletInfo shows them');
+    const twice = await api(base, 'POST', `/api/airdrop/${acct}`, {}, token);
+    assert.equal(twice.status, 429);
+    assert.equal(twice.body.code, 'airdrop_too_soon', 'one airdrop per account per 10 minutes');
+    assert.ok(twice.body.retryAt > Date.now() + 9 * 60_000 && twice.body.retryAt <= Date.now() + 10 * 60_000, 'the refusal says when the next one may run');
+    assert.equal((await api(base, 'POST', '/api/session/faucet-wallet', { coins: 30 }, token)).body.code, 'airdrop_too_soon', 'the old wallet faucet is the airdrop now, limits included');
+    assert.equal(chain.walletBalance(acct), 100n * chain.coinUnit, 'nothing more was sent');
+    // a deposit of 40 from the wallet: 60 left in the wallet, 40 in the game; ten minutes on, still none: 100 held
+    const dep = await chain.walletDeposit(acct, 40n * chain.coinUnit);
+    assert.equal((await api(base, 'POST', '/api/session/deposit', { txHash: dep.hash }, token)).body.me.balanceCoins, 40);
+    const later = Date.now() + 11 * 60_000;
+    await assert.rejects(app.game.airdrop(acct, later), (e: any) => e.code === 'airdrop_enough' && e.status === 409 && e.extra?.heldCoins === 100, 'wallet plus game balance count');
+    assert.equal((await app.game.airdropStatus(acct, later)).blocked, 'airdrop_enough');
+    assert.equal(chain.walletBalance(acct), 60n * chain.coinUnit, 'nothing sent');
     const pk = await enableCoins(base, chain, token, acct);
     const ws = await socket(base, token, acct);
     await ws.waitT('welcome', 5000);
@@ -328,6 +364,22 @@ test('test mode: a wallet account plays next to the test users; the faucet serve
     assert.equal(again.tx.nonce, '5001', 'asked again just above the nonce NEAR reported');
     ws.send({ t: 'signed_tx', reqId: again.reqId, signedTx: await signRequest(again.tx, pk) });
     assert.ok((await ws.waitT('placed', 10_000)).tx, 'placed on the second try');
+
+    // ----- a test user: the airdrop goes straight into its game balance; no session in test mode -----
+    const A = 'ana.realsies.testnet';
+    const sa = (await api(base, 'GET', `/api/airdrop/${A}`)).body as AirdropStatus;
+    assert.deepEqual([sa.to, sa.heldCoins, sa.blocked], ['game', 0, undefined]);
+    const ra = await api(base, 'POST', `/api/airdrop/${A}`, {});
+    assert.equal(ra.status, 200, JSON.stringify(ra.body));
+    assert.deepEqual([ra.body.to, ra.body.me.balanceCoins, ra.body.wallet], ['game', 100, undefined], '100 coins straight into the game balance');
+    assert.equal((await api(base, 'POST', `/api/airdrop/${A}`, {})).body.code, 'airdrop_too_soon');
+    // 70 withdrawn to its own account: a test user has no wallet in the game, so 30 held
+    assert.equal((await api(base, 'POST', '/api/withdraw', { accountId: A, coins: 70 })).body.me.balanceCoins, 30);
+    const soon = Date.now() + 11 * 60_000;
+    assert.equal((await app.game.airdropStatus(A, soon)).blocked, undefined, 'ten minutes on, under 50 held: open');
+    assert.equal((await app.game.airdrop(A, soon)).me.balanceCoins, 130, 'another 100');
+    await assert.rejects(app.game.airdrop(A, soon + 11 * 60_000), (e: any) => e.code === 'airdrop_enough', '130 held: none');
+
     // a test user is still relay-signed
     const ana = await WsClient.connect(base, 'ana.realsies.testnet');
     await ana.waitT('welcome', 5000);

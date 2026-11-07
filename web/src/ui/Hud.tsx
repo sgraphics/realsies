@@ -1,5 +1,6 @@
 // The HUD: one bar across the top that holds every piece of game information in bordered pixel
-// panels: the logo with a small TESTNET marker, level tabs with the theme name, the round clock,
+// panels: the logo with a small TESTNET marker (or, once a player is in, the TESTNET panel above the bar:
+// TestnetPanel.tsx), level tabs with the theme name, the round clock,
 // coins and locked coins, rating, "x of 10 called", Results with its badge, and a menu (coins,
 // past rounds, terms, switch player, test tools). One line on wide screens and phones held
 // sideways, two lines on phones and tablets. The world lays itself out under it (hudSize.ts).
@@ -19,6 +20,8 @@ import { setHudHeight } from './hudSize.ts';
 import { DevMenu } from '../screens/DevMenu.tsx';
 import { agentsHref } from '../agents/route.ts';
 import { LaunchBanner } from './LaunchBanner.tsx';
+import { TestnetPanel } from './TestnetPanel.tsx';
+import { panelMode } from '../state/airdrop.ts';
 
 export type HudKind = 'lobby' | 'chat' | 'call' | 'who';
 
@@ -53,6 +56,9 @@ function Stat(p: { area: string; icon: IconName; k: string; v: ComponentChildren
     <div class={cls} title={p.title} aria-label={p.title} role="group">{body}</div>
   );
 }
+
+const vwNow = () => (typeof window !== 'undefined' ? window.innerWidth : 1280);
+const vhNow = () => (typeof window !== 'undefined' ? window.innerHeight : 720);
 
 function MenuGlyph() {
   return <span class="hud-burger" aria-hidden="true"><i /><i /><i /></span>;
@@ -90,6 +96,8 @@ export function Hud(p: HudProps) {
   const me = s.me;
   const round = s.round;
   const testnet = !!(cfg?.testMode || cfg?.network === 'testnet');
+  // the TESTNET panel says it louder above the bar: the logo's marker steps aside while it shows
+  const panel = panelMode(s, kind) !== 'none' && !(kind === 'chat' && (vwNow() < 700 || vhNow() < 600));
   const level: Level = s.chat?.level ?? s.search?.level ?? s.level;
   const room = s.rooms[level];
   const theme = s.chat?.theme ?? room?.theme ?? (round ? round.themes[level] ?? themeFor(level, round.roundId) : themeFor(level, 1));
@@ -107,7 +115,7 @@ export function Hud(p: HudProps) {
   const brand = (
     <div class="hud-cell hud-brand">
       <Logo height={logoH} />
-      {testnet && <span class="hud-net" title="Test network: test coins, no real value">TESTNET</span>}
+      {testnet && !panel && <span class="hud-net" title="Test network: test coins, no real value">TESTNET</span>}
     </div>
   );
 
@@ -239,6 +247,8 @@ export function Hud(p: HudProps) {
     <header ref={ref} class={'hud hud-' + kind} role="banner">
       {/* REAL's auction (mainnet): measured with the HUD, so the world lays out under it */}
       <LaunchBanner store={store} chat={kind === 'chat'} />
+      {/* the testnet demo: free test tokens in one tap, then a slim TESTNET tag */}
+      <TestnetPanel store={store} kind={kind} />
       <div class="hud-bar">
         {cells}
         <span class="hud-break" aria-hidden="true" />

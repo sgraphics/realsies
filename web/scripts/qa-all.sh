@@ -67,6 +67,19 @@ add deposit-closed "mock=1&wallet=1&as=sam&qa=deposit&coins=closed" 8000
 add coins-empty    "mock=1&wallet=test&as=sam&qa=deposit&wcoins=0&dep=20" 9000
 add coins-short    "mock=1&wallet=test&as=sam&qa=deposit&wcoins=3&dep=20" 9000
 add coins-enough   "mock=1&wallet=test&as=sam&qa=deposit&wcoins=200&dep=20" 9000
+# the testnet airdrop (protocol v1.6): the TESTNET panel above the room, before and after, for a wallet player (the
+# tokens land in the wallet) and a test player (straight into the game balance); the slim tag with "Airdrop again"
+# (15 held), a refusal (one 3 minutes ago), the tag in a chat; the coins screen of an empty wallet on testnet (the
+# airdrop) and on mainnet (Buy REAL)
+add testnet-wallet-before "mock=1&wallet=test&as=sam&level=1" 9000
+add testnet-wallet-after  "mock=1&wallet=test&as=sam&level=1&qa=airdrop" 9000
+add testnet-test-before   "mock=1&as=ben&level=1" 8000
+add testnet-test-after    "mock=1&as=ben&level=1&qa=airdrop" 8000
+add testnet-tag           "mock=1&as=finn&level=1&qa=airdrop-tag" 8000 "360x640:2 390x844:3 844x390:3 1280x720:1 1920x1080:1"
+add testnet-refused       "mock=1&as=dex&level=1&qa=airdrop-soon" 8000 "360x640:2 390x844:3 844x390:3 1280x720:1 1920x1080:1"
+add testnet-chat          "mock=1&as=ben&qa=chat&long=1&level=1" 16000 "360x640:2 390x844:3 844x390:3 1280x720:1 1920x1080:1"
+add coins-testnet         "mock=1&wallet=test&as=sam&qa=deposit&wcoins=0" 9000
+add coins-mainnet         "mock=1&wallet=1&net=mainnet&as=sam&qa=deposit&wcoins=0" 9000
 # the launch (protocol v1.4), a mainnet-like mock (wallet sign-in, no coin yet): the coming-soon page until REAL's
 # (its video card opens the launch tweet; -account: no tweet yet, the account; -nox: no X link, no card)
 # auction and the game open (Get REAL, or the time without a token page), the moment it goes live (CHAT!, then the

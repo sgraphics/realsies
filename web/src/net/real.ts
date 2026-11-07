@@ -1,6 +1,8 @@
 // GameClient over the relay's HTTP API and WebSocket (spec section 4).
 
 import type {
+  AirdropResult,
+  AirdropStatus,
   AuthChallenge,
   AuthProof,
   AuthSession,
@@ -82,9 +84,11 @@ export class RealGameClient implements GameClient {
     if (!res.ok) {
       const d = data as { message?: string; error?: string; code?: string } | string | null;
       const msg = typeof d === 'string' ? d : d?.message ?? d?.error ?? `${res.status} ${res.statusText}`;
-      const err = new Error(msg) as Error & { status?: number; code?: string };
+      const err = new Error(msg) as Error & { status?: number; code?: string; data?: unknown };
       err.status = res.status;
       if (d && typeof d === 'object' && d.code) err.code = d.code;
+      // the rest of the body (an airdrop refusal says when the next one opens: retryAt)
+      if (d && typeof d === 'object') err.data = d;
       throw err;
     }
     return data as T;
@@ -163,6 +167,13 @@ export class RealGameClient implements GameClient {
   }
   faucetToWallet(coins?: number): Promise<{ tx: string }> {
     return this.http('POST', '/api/session/faucet-wallet', coins === undefined ? {} : { coins });
+  }
+  // the testnet airdrop (v1.6): a test user without a session, a wallet account with its own
+  airdropStatus(accountId: string): Promise<AirdropStatus> {
+    return this.http('GET', `/api/airdrop/${enc(accountId)}`);
+  }
+  airdrop(accountId: string): Promise<AirdropResult> {
+    return this.http('POST', `/api/airdrop/${enc(accountId)}`, {});
   }
 
   // ---------- WebSocket ----------

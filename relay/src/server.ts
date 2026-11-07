@@ -75,6 +75,8 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
   const auth = opts.auth;
   const signIns = new Window(60, 10 * 60_000);
+  // the test users' faucet (scripts and e2e) is open to anyone in test mode: a cap per IP keeps it from being drained
+  const faucets = new Window(20, 10 * 60_000);
 
   /** The session of a Bearer token; 401 without one. */
   function requireSession(req: http.IncomingMessage): SessionRec {
@@ -97,8 +99,20 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   route('POST', /^\/api\/test-users\/([^/]+)\/faucet$/, async (m, req) => {
     const account = seg(m[1]);
     actAs(req, account);
+    if (!faucets.allow(clientIp(req))) throw new GameError('rate_limited', 'too many faucet calls from here; wait a few minutes', 429);
     const body = await readBody(req);
     return game.faucet(account, body?.coins === undefined ? 100 : Number(body.coins));
+  });
+  // the testnet airdrop (protocol v1.6): 100 test tokens, one per account per 10 minutes, none at 50 or more held
+  route('GET', /^\/api\/airdrop\/([^/]+)$/, (m, req) => {
+    const account = seg(m[1]);
+    actAs(req, account);
+    return game.airdropStatus(account);
+  });
+  route('POST', /^\/api\/airdrop\/([^/]+)$/, (m, req) => {
+    const account = seg(m[1]);
+    actAs(req, account);
+    return game.airdrop(account);
   });
   route('POST', /^\/api\/withdraw$/, async (_m, req) => {
     const body = await readBody(req);
@@ -164,10 +178,10 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
     const body = await readBody(req);
     return game.reportDeposit(s.account, body?.txHash);
   });
+  // v1.3's test coins into the wallet: since v1.6 the airdrop, with its limits (100 test tokens, whatever was asked)
   route('POST', /^\/api\/session\/faucet-wallet$/, async (_m, req) => {
     const s = requireSession(req);
-    const body = await readBody(req);
-    return game.faucetToWallet(s.account, body?.coins === undefined ? 100 : Number(body.coins));
+    return { tx: (await game.airdrop(s.account)).tx };
   });
   route('GET', /^\/api\/leaderboard$/, () => game.leaderboard());
   route('POST', /^\/api\/dev\/end-round$/, async () => {
@@ -238,7 +252,7 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
         const out = await r.fn(url.pathname.match(r.re)!, req, url);
         sendJson(res, 200, out ?? { ok: true });
       } catch (e) {
-        if (e instanceof GameError || e instanceof AuthError) sendJson(res, e.status, { error: e.code, code: e.code, message: e.message });
+        if (e instanceof GameError || e instanceof AuthError) sendJson(res, e.status, { ...(e instanceof GameError ? e.extra : undefined), error: e.code, code: e.code, message: e.message });
         else {
           log.error(`${req.method} ${url.pathname}`, e);
           sendJson(res, 500, { error: 'internal', code: 'internal', message: errMsg(e) });

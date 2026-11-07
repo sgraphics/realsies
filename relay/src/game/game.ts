@@ -1,8 +1,8 @@
 // The relay's game engine: rounds, characters and commitments, matchmaking, chats, calls,
 // settlement on chain, results, ratings and verification bundles (docs/spec.md section 4).
 import {
-  LEVELS, themeFor,
-  type ActiveChat, type ChatInfo, type ChatMessage, type ClientMsg, type LeaderRow, type Level, type Me, type Mode,
+  AIRDROP, LEVELS, themeFor,
+  type ActiveChat, type AirdropResult, type AirdropStatus, type ChatInfo, type ChatMessage, type ClientMsg, type LeaderRow, type Level, type Me, type Mode,
   type PublicConfig, type RoundResults, type RoundState, type RoundSummary, type Seat, type ServerMsg, type Skin,
   type TestUser, type VerifyBundle, type WalletInfo,
 } from '../../../shared/protocol.js';
@@ -95,7 +95,8 @@ function friendlyChainError(raw: string | undefined, fallback: string): string {
 }
 
 export class GameError extends Error {
-  constructor(readonly code: string, message: string, readonly status = 400) {
+  /** `extra`: more fields for the JSON error body (an airdrop refusal says when the next one may run) */
+  constructor(readonly code: string, message: string, readonly status = 400, readonly extra?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -2181,14 +2182,20 @@ export class Game implements BotHost {
     );
   }
 
+  /** Test mode, test users: test coins straight into the game balance (scripts and e2e; players use the airdrop). */
   async faucet(account: string, coins = 100): Promise<{ tx: string; me: Me }> {
     if (!this.cfg.testMode) throw new GameError('not_test_mode', 'faucet is test mode only', 403);
     if (!this.isPlayer(account)) throw new GameError('unknown_user', `${account} is not a player here`, 404);
+    if (!this.relaySigns(account)) throw new GameError('use_airdrop', 'a wallet account gets test tokens from the airdrop', 403);
     if (!this.chainCfg.coinsOpen) throw new GameError('coins_closed', 'the game contract has no coin yet', 409);
     const c = Number(coins);
     if (!Number.isFinite(c) || c <= 0 || c > 10_000) throw new GameError('bad_coins', 'coins must be between 0 and 10000');
+    return this.faucetIntoGame(account, coinsToUnits(c, this.coinUnit));
+  }
+
+  /** The faucet deposits for the account into the game; then any locked Turing bonus is paid. */
+  private async faucetIntoGame(account: string, deposit: bigint): Promise<{ tx: string; me: Me }> {
     const before = await this.balanceOf(account, 0).catch(() => null);
-    const deposit = coinsToUnits(c, this.coinUnit);
     const res = await this.chain.faucetDeposit(account, deposit);
     if (!res.ok) throw new GameError('faucet_failed', res.error ?? 'deposit failed', 502);
     let expected = before === null ? null : before + deposit;
@@ -2276,17 +2283,116 @@ export class Game implements BotHost {
     };
   }
 
-  /** Test mode: test coins into a wallet account's own wallet, so it can try a deposit from the wallet. */
-  async faucetToWallet(account: string, coins = 100): Promise<{ tx: string }> {
-    if (!this.cfg.testMode) throw new GameError('not_test_mode', 'faucet is test mode only', 403);
+  // ---------- the testnet airdrop (protocol v1.6) ----------
+
+  /** On only in test mode on testnet: never on mainnet, never on a relay without test users. */
+  get airdropOn(): boolean {
+    return this.cfg.testMode && this.chain.network === 'testnet';
+  }
+
+  /** Who may have one, and where it lands: a test user's game balance, a wallet account's own wallet. */
+  private airdropTarget(account: string): 'wallet' | 'game' {
+    if (!this.airdropOn) throw new GameError('not_test_mode', 'the airdrop is for the testnet demo only', 403);
     if (!this.isPlayer(account)) throw new GameError('unknown_user', `${account} is not a player here`, 404);
     if (!this.chainCfg.coinsOpen) throw new GameError('coins_closed', 'the game contract has no coin yet', 409);
-    const c = Number(coins);
-    if (!Number.isFinite(c) || c <= 0 || c > 1000) throw new GameError('bad_coins', 'coins must be between 0 and 1000');
-    const res = await this.chain.faucetToWallet(account, coinsToUnits(c, this.coinUnit));
-    if (!res.ok) throw new GameError('faucet_failed', res.error ?? 'the faucet transfer failed', 502);
-    this.db.logTx({ at: Date.now(), roundId: null, kind: 'faucet_wallet', signer: this.chain.accounts.faucet, hash: res.hash, ok: true, error: null, ms: null });
-    return { tx: res.hash };
+    return this.relaySigns(account) ? 'game' : 'wallet';
+  }
+
+  /** What counts toward the cap: the game balance, plus the wallet's own coin for a wallet account. */
+  private async airdropHeld(account: string, to: 'wallet' | 'game'): Promise<{ game: bigint; wallet: bigint }> {
+    try {
+      const [game, wallet] = await Promise.all([this.balanceOf(account, 0), to === 'wallet' ? this.chain.tokenBalance(account) : Promise.resolve(0n)]);
+      return { game, wallet };
+    } catch (e) {
+      log.warn(`airdrop: the balances of ${account}: ${errMsg(e)}`);
+      throw new GameError('rpc_unavailable', 'NEAR is not answering right now; try again in a minute', 503);
+    }
+  }
+
+  private airdropLast(account: string): number | null {
+    const v = Number(this.db.getKv(`airdrop_at:${account}`) ?? '');
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  private airdropStatusOf(account: string, to: 'wallet' | 'game', held: bigint, now: number): AirdropStatus {
+    const lastAt = this.airdropLast(account);
+    const nextAt = lastAt === null ? now : Math.max(now, lastAt + AIRDROP.everyMinutes * 60_000);
+    const blocked = nextAt > now ? 'airdrop_too_soon' : held >= coinsToUnits(AIRDROP.enoughCoins, this.coinUnit) ? 'airdrop_enough' : undefined;
+    return {
+      accountId: account, coins: AIRDROP.coins, to, heldCoins: unitsToCoins(held, this.coinUnit), enoughCoins: AIRDROP.enoughCoins,
+      againBelowCoins: AIRDROP.againBelowCoins, lastAt, nextAt, ...(blocked ? { blocked } : {}),
+    };
+  }
+
+  async airdropStatus(account: string, now = Date.now()): Promise<AirdropStatus> {
+    const to = this.airdropTarget(account);
+    const h = await this.airdropHeld(account, to);
+    return this.airdropStatusOf(account, to, h.game + h.wallet, now);
+  }
+
+  /**
+   * 100 test tokens, one tap: a test user's go straight into its game balance (the faucet deposits for it); a
+   * wallet account's go to its own wallet (the faucet registers it on the coin and pays the storage), and from
+   * there everything works as on mainnet. One per account per 10 minutes; none while the account holds 50 or
+   * more, wallet plus game balance (airdrop_too_soon, airdrop_enough).
+   */
+  async airdrop(account: string, now = Date.now()): Promise<AirdropResult> {
+    const to = this.airdropTarget(account);
+    const every = AIRDROP.everyMinutes * 60_000;
+    const prev = this.airdropLast(account);
+    if (prev !== null && now - prev < every) {
+      const retryAt = prev + every;
+      const mins = Math.max(1, Math.ceil((retryAt - now) / 60_000));
+      throw new GameError('airdrop_too_soon', `one airdrop per ${AIRDROP.everyMinutes} minutes: the next one in ${mins} min`, 429, { retryAt });
+    }
+    // the slot is taken before anything is awaited, so a second tap meanwhile is refused; given back if nothing was sent
+    const key = `airdrop_at:${account}`;
+    this.db.setKv(key, String(now));
+    let sent = false;
+    try {
+      const h = await this.airdropHeld(account, to);
+      const held = h.game + h.wallet;
+      if (held >= coinsToUnits(AIRDROP.enoughCoins, this.coinUnit)) {
+        const heldCoins = unitsToCoins(held, this.coinUnit);
+        throw new GameError('airdrop_enough', `you hold ${heldCoins} already; the airdrop is for balances under ${AIRDROP.enoughCoins}`, 409, { heldCoins });
+      }
+      const units = coinsToUnits(AIRDROP.coins, this.coinUnit);
+      let tx: string;
+      let me: Me;
+      let wallet: WalletInfo | undefined;
+      if (to === 'game') {
+        const r = await this.faucetIntoGame(account, units);
+        sent = true;
+        tx = r.tx;
+        me = r.me;
+      } else {
+        const res = await this.chain.faucetToWallet(account, units);
+        if (!res.ok) throw new GameError('faucet_failed', res.error ?? 'the faucet transfer failed', 502);
+        sent = true;
+        tx = res.hash;
+        this.db.logTx({ at: Date.now(), roundId: null, kind: 'airdrop', signer: this.chain.accounts.faucet, hash: res.hash, ok: true, error: null, ms: null });
+        await this.settleWallet(account, h.wallet + units);
+        me = await this.me(account, 0);
+        wallet = await this.walletInfo(account);
+      }
+      log.info(`airdrop: ${AIRDROP.coins} coins to ${account} (${to}): ${tx}`);
+      const walletNow = wallet?.walletBalance !== undefined ? BigInt(wallet.walletBalance) : h.wallet + (to === 'wallet' ? units : 0n);
+      const after = walletNow + coinsToUnits(me.balanceCoins, this.coinUnit);
+      return { tx, coins: AIRDROP.coins, to, me, ...(wallet ? { wallet } : {}), status: this.airdropStatusOf(account, to, after, Date.now()) };
+    } catch (e) {
+      if (!sent) this.db.setKv(key, prev === null ? '0' : String(prev));
+      throw e;
+    }
+  }
+
+  /** RPC nodes can trail a block right after a write: poll until the wallet holds what it should (max ~8 s). */
+  private async settleWallet(account: string, want: bigint): Promise<void> {
+    for (let i = 0; i < 12; i++) {
+      const b = await this.chain.tokenBalance(account).catch(() => null);
+      if (b !== null && b >= want) return;
+      await sleep(700);
+    }
+    log.warn(`the wallet of ${account} did not show the airdrop within 8 s`);
   }
 
   /** RPC nodes can trail a block right after a write: poll until the balance reflects it (max ~8 s). */

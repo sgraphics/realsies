@@ -20,6 +20,7 @@ import { KeySetupDialog } from './screens/KeySetup.tsx';
 import { Button, Icon, type IconName } from './ui/kit.tsx';
 import { applyTheme } from './ui/theme.ts';
 import { runQa } from './qa.ts';
+import { airdropOn, panelMode } from './state/airdrop.ts';
 
 type Overlay =
   | { kind: 'seat'; level: Level; seat: Seat }
@@ -69,16 +70,20 @@ export function App({ store }: { store: Store }) {
     store.actions.clearKeyNeeded();
   }, [s.keyNeeded?.at]);
 
-  // "Deposit to earn" before entering a room while the balance is zero (once per level and round)
+  // "Deposit to earn" before entering a room while the balance is zero (once per level and round). On the testnet
+  // demo the TESTNET panel is the first step: while it offers the airdrop (or shows it landing) nothing covers it.
+  const dropKnown = s.airdrop.status !== undefined;
   useEffect(() => {
     if (!s.welcomed || !s.me || !round || s.chat || s.search) return;
     if (s.me.balanceCoins > 0) return;
     if (s.config?.coinsOpen === false) return; // nothing to deposit yet: free play only
     const key = `${s.accountId}:${round.roundId}:${s.level}`;
     if (gated.current.has(key)) return;
+    if (airdropOn(s.config) && !dropKnown) return; // the relay's view of the airdrop first
     gated.current.add(key);
+    if (panelMode(s, 'lobby') !== 'tag' && panelMode(s, 'lobby') !== 'none') return;
     setOverlay((o) => o ?? { kind: 'deposit', gate: true });
-  }, [s.welcomed, s.level, round?.roundId, s.me?.balanceCoins, s.accountId]);
+  }, [s.welcomed, s.level, round?.roundId, s.me?.balanceCoins, s.accountId, dropKnown]);
 
   // errors and results as toasts
   useEffect(() => {

@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.5 (2026-11-07: WalletInfo.walletBalance, the coin in the wallet itself; additive).
+// Realsies relay <-> web protocol, v1.6 (2026-11-07: the testnet airdrop, AirdropStatus and AirdropResult; additive).
+// v1.5 (2026-11-07): WalletInfo.walletBalance, the coin in the wallet itself; additive.
 // v1.4 (2026-11-06): PublicConfig.launch, the coming-soon page and the auction banner; additive.
 // v1.3 (2026-11-05): wallet sign-in with NEP-413 sessions, play keys, player-signed plays and calls, wallet deposits; all additive.
 // v1.2 (2026-11-05): chat countdown, persona cards, AI builders.
@@ -172,6 +173,45 @@ export interface WalletInfo {
   tokenRegistered: boolean; // NEP-145: the account can receive the coin (withdrawals need it)
   storageDeposit: string; // yoctoNEAR to register on the coin, if needed
   walletBalance?: string; // v1.5: the coin held by the wallet itself (ft_balance_of), base units; absent if unreadable
+}
+
+/**
+ * v1.6: the testnet airdrop (a relay in test mode on testnet only). 100 test tokens: into the wallet of a wallet
+ * account (the faucet registers it on the coin and pays the storage), straight into the game balance of a test
+ * user. One per account per 10 minutes, none while the account holds 50 or more (wallet plus game balance).
+ */
+export const AIRDROP = { coins: 100, everyMinutes: 10, enoughCoins: 50, againBelowCoins: 20 } as const;
+
+export type AirdropRefusal = 'airdrop_too_soon' | 'airdrop_enough';
+
+export interface AirdropStatus {
+  accountId: string;
+  /** coins per airdrop (1 coin = 1 tREAL on testnet) */
+  coins: number;
+  /** where it lands: a wallet account's own wallet, a test user's game balance */
+  to: 'wallet' | 'game';
+  /** what counts toward the cap, in coins: the wallet plus the game balance (a test user: the game balance) */
+  heldCoins: number;
+  /** none while heldCoins is this or more */
+  enoughCoins: number;
+  /** under this the screen offers "airdrop again" */
+  againBelowCoins: number;
+  /** the last airdrop to this account (ms), null if none yet */
+  lastAt: number | null;
+  /** the next airdrop may run from this moment (ms); at or before now: now */
+  nextAt: number;
+  /** what refuses an airdrop right now, if anything (the same codes as the refusal itself) */
+  blocked?: AirdropRefusal;
+}
+
+export interface AirdropResult {
+  tx: string;
+  coins: number;
+  to: 'wallet' | 'game';
+  me: Me;
+  /** a wallet account: its wallet as the coin now sees it */
+  wallet?: WalletInfo;
+  status: AirdropStatus;
 }
 
 /** The one transaction the relay asks the browser to sign with its play key; every field is fixed. */
@@ -528,6 +568,11 @@ export interface GameClient {
   walletInfo?(): Promise<WalletInfo>;
   /** a deposit sent from the wallet: the relay checks it on chain, then pays any locked Turing bonus */
   reportDeposit?(txHash: string): Promise<{ me: Me; bonusTx?: string }>;
-  /** test mode: test coins into the wallet itself, to try a wallet deposit */
+  /** test mode: test coins into the wallet itself (v1.6: the relay treats it as the airdrop, with its limits) */
   faucetToWallet?(coins?: number): Promise<{ tx: string }>;
+
+  // ---------- v1.6 the testnet airdrop, optional (test mode on testnet) ----------
+  airdropStatus?(accountId: string): Promise<AirdropStatus>;
+  /** 100 test tokens; refused with airdrop_too_soon (one per 10 minutes) or airdrop_enough (50 or more held) */
+  airdrop?(accountId: string): Promise<AirdropResult>;
 }

@@ -70,8 +70,8 @@ Realsies adds all three, inside a game people play for fun: coins on every call,
 
 ## Try it now (testnet): do X, see Y
 
-1. Open https://testnet.realsies.lol. See "Who are you?" with six test users. Pick one, for example Ana.
-2. See "Deposit to earn". Tap it for 100 test coins, or skip to play free. See your coins, or "Free mode", on the pillar.
+1. Open https://testnet.realsies.lol. See "Who are you?" with six test users and "Testnet: free test tokens, no real money." Pick one, for example Ben, or tap "Sign in with a NEAR wallet" with a testnet wallet (Meteor, Intear or Nightly).
+2. See the orange TESTNET panel above the room. Tap "Airdrop 100 tREAL test tokens": no further action needed. A test player's tokens go straight into the game balance and show on the pillar. A wallet's land in the wallet ("100 tREAL are in your wallet"); from there it works like the real game: tap your coins, deposit from the wallet, then play. Or skip it and play free. One airdrop per account per 10 minutes, and none while it holds 50 or more: then the panel is a slim TESTNET tag.
 3. See the room: ten characters on pedestals, each with a gamertag and a face generated for you alone. Tap one, choose 5 coins or Play free.
 4. See a full-screen 3, 2, 1, CHAT! countdown, then chat for up to two minutes. Answer Real human? Yes / No. See "Locked until the round ends".
 5. To meet a human instead of a bot, open a second browser window as another test user and tap a character in both windows within a few seconds.

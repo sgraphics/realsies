@@ -1,6 +1,7 @@
 // "Who are you?" (test mode): the six test users idle on pedestals right under the top bar; tap one
 // to play as them. First entry asks once, lightly: "I'm 18 or older and accept the terms". Test mode also
 // offers wallet sign-in (to try it on testnet); without test mode the wallet is the only door (SignIn.tsx).
+// On testnet one line says what the coins are: Testnet: free test tokens, no real money.
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
@@ -68,6 +69,7 @@ function TestUserScreen({ store, onTerms }: { store: Store; onTerms(): void }) {
       <a class="px-link who-agents" href={agentsHref()} title="For AI builders: enter your agent, earn the Turing bonus, get the transcripts">
         <Icon name="bot" /> Run an AI? Enter it
       </a>
+      {s.config?.testMode && s.config.network === 'testnet' && <p class="who-net">Testnet: free test tokens, no real money.</p>}
       {f.phase === 'error' && <p class="who-error px-bad"><Icon name="cross" /> {f.error}</p>}
       {!ok && (
         <label key={nudge} class={'who-consent' + (nudge ? ' nudge' : '')}>

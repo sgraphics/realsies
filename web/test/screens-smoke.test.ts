@@ -136,6 +136,7 @@ const { MockWallet } = await import('../src/wallet/mock.ts');
 const { LaunchPage } = await import('../src/launch/LaunchPage.tsx');
 const { mockLaunch } = await import('../src/launch/phase.ts');
 const { LaunchBanner } = await import('../src/ui/LaunchBanner.tsx');
+const { TestnetPanel } = await import('../src/ui/TestnetPanel.tsx');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EV = join(here, '..', '..', 'experiments', 'near-ai', 'evidence', '2026-11-04');
@@ -278,10 +279,11 @@ try {
   render(h(DepositDialog, { store: ws, gate: false, onDone() {}, onEnableCoins() {} }), root as unknown as Element);
   await sleep(40);
   const dt = root.textContent;
-  ok(/Deposit to earn/.test(dt) && /Deposit from wallet/.test(dt) && /Buy tREAL/.test(dt) && /Enable coins/.test(dt) && !/test coins in the game|to test deposits/.test(dt), 'wallet deposit: from the wallet, Buy link, enable coins, no faucet without test mode');
-  ok(/Your wallet has no tREAL yet\./.test(dt) && !/Get 100 tREAL to your wallet/.test(dt), 'without test mode an empty wallet is pointed at Buy, not at a faucet');
+  ok(/Deposit to earn/.test(dt) && /Deposit from wallet/.test(dt) && /Buy tREAL/.test(dt) && /Enable coins/.test(dt) && !/test coins|test tokens|Airdrop/.test(dt), 'wallet deposit: from the wallet, Buy link, enable coins, no airdrop without test mode');
+  ok(/Your wallet has no tREAL yet\./.test(dt) && !/Airdrop 100/.test(dt), 'without test mode an empty wallet is pointed at Buy, not at an airdrop');
   render(null, root as unknown as Element);
-  // the coins screen in test mode, by what the wallet holds: empty, short for 20 coins, enough
+  // the coins screen on the testnet relay (test mode), by what the wallet holds: empty, short for 20 coins, enough;
+  // exactly the mainnet screen, except that an empty wallet is offered the airdrop where mainnet offers Buy
   const findButton = (n: { childNodes: unknown[]; nodeName?: string; textContent: string; attrs?: Record<string, string> }, text: RegExp): { attrs: Record<string, string> } | null => {
     if (n.nodeName === 'BUTTON' && text.test(n.textContent)) return n as { attrs: Record<string, string> };
     for (const c of n.childNodes as (typeof n)[]) {
@@ -297,21 +299,101 @@ try {
   await ts.actions.walletSignIn();
   const states: [string, number][] = [['empty', 0], ['short', 3], ['enough', 197]];
   for (const [state, add] of states) {
-    if (add) await ts.actions.faucetToWallet(add);
+    if (add) await tc.faucetToWallet(add);
     await ts.actions.refreshWalletInfo();
     ts.actions.resetFlow('walletTx');
     render(h(DepositDialog, { key: state, store: ts, gate: false, onDone() {}, onEnableCoins() {}, prefill: '20' }), root as unknown as Element);
     await sleep(40);
     const t = root.textContent;
     const dep = findButton(root as never, /Deposit from wallet/);
-    if (state === 'empty') ok(/In your wallet: 0 tREAL/.test(t) && /Your wallet has no tREAL yet\./.test(t) && /Get 100 tREAL to your wallet/.test(t) && disabled(dep), 'coins screen, empty wallet: says so, offers test coins, the deposit is off');
+    if (state === 'empty') ok(/In your wallet: 0 tREAL/.test(t) && /Your wallet has no tREAL yet\./.test(t) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/) && disabled(dep), 'coins screen, empty wallet: says so, offers the airdrop, the deposit is off');
     if (state === 'short') ok(/In your wallet: 3 tREAL/.test(t) && /Your wallet holds 3 tREAL, enough for 3 coins\./.test(t) && disabled(dep), 'coins screen, 3 in the wallet and 20 typed: enough for 3 coins, the deposit is off');
     if (state === 'enough') ok(/In your wallet: 200 tREAL/.test(t) && !/no tREAL yet|enough for/.test(t) && !!dep && !disabled(dep), 'coins screen, 200 in the wallet: the deposit is on');
-    ok(/100 test coins in the game/.test(t) && /100 tREAL to my wallet \(to test deposits\)/.test(t), `coins screen (${state}): the two test buttons say where the coins go`);
+    ok(!/test coins in the game|to test deposits|Get 100/.test(t) && (state === 'empty' || !/Airdrop/.test(t)), `coins screen (${state}): as on mainnet, no test buttons`);
   }
   render(null, root as unknown as Element);
   ts.actions.logout();
   tc.dispose();
+
+  // the TESTNET panel (protocol v1.6), testnet only: the offer, the airdrop landing, the slim tag, a refusal
+  const panelOf = async (store: typeof ts, kind: 'lobby' | 'chat' | 'call' = 'lobby') => {
+    render(h(TestnetPanel, { key: kind + Math.random(), store, kind }), root as unknown as Element);
+    await sleep(30);
+    return root.textContent;
+  };
+  const pc = new MockGameClient({ storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
+  const pw = createStore(pc, new MockWallet(pc, { accountId: 'pam.testnet', delayMs: 2 }));
+  await pw.actions.loadConfig();
+  await pw.actions.walletSignIn();
+  await pw.actions.refreshAirdrop();
+  const before = await panelOf(pw);
+  ok(/TESTNET/.test(before) && /free test tokens, no real money/.test(before) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/) && /No further action needed\./.test(before) && !/game balance/.test(before), 'panel, a wallet player before: TESTNET, free test tokens, one big button, no further action needed');
+  ok(await pw.actions.airdrop(), 'the airdrop in one tap');
+  const after = await panelOf(pw);
+  ok(/100 tREAL are in your wallet\./.test(after) && /From here it works like the real game: tap your coins to deposit, then play\./.test(after) && /View transaction/.test(after), 'panel, after: where the tokens are, and that it works like the real game from here');
+  pw.actions.foldAirdrop();
+  const tag = await panelOf(pw);
+  ok(/TESTNET/.test(tag) && /free test tokens, no real money/.test(tag) && !/Airdrop/.test(tag), 'then the slim tag; 100 held, so no "Airdrop again"');
+  ok(!(await pw.actions.airdrop()) && pw.get().airdrop.error?.code === 'airdrop_too_soon', 'a second airdrop at once: too soon');
+  const soon = await panelOf(pw);
+  ok(/One airdrop every 10 minutes\. The next one opens in 10 min\./.test(soon) && !findButton(root as never, /Airdrop 100|Try again/), 'the panel says why, and offers no button that cannot help: ' + soon.replace(/\s+/g, ' ').slice(0, 120));
+  pw.actions.foldAirdrop();
+  ok(/TESTNET/.test(await panelOf(pw, 'chat')) === false, 'in a chat on a phone the panel steps aside');
+  g.innerWidth = 1280;
+  const chatTag = await panelOf(pw, 'chat');
+  ok(/TESTNET/.test(chatTag) && !findButton(root as never, /Airdrop/), 'in a chat on a big screen: only the slim tag');
+  g.innerWidth = 390;
+  await pw.actions.signOut();
+  // a test player: the airdrop goes straight into the game balance, and the panel says so
+  await pw.actions.selectUser('ben.realsies.testnet');
+  await pw.actions.refreshAirdrop();
+  const tb = await panelOf(pw);
+  ok(/Straight into your game balance\. No further action needed\./.test(tb) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/), 'panel, a test player before: straight into the game balance');
+  ok(await pw.actions.airdrop() && pw.get().me!.balanceCoins >= 100, '100 in the game balance (with any locked Turing bonus)');
+  const tAfter = await panelOf(pw);
+  ok(/100 tREAL are in your game balance\./.test(tAfter) && /tap a character and play/.test(tAfter), 'panel, a test player after');
+  // Ana holds 120: no offer, the slim tag; Finn holds 15: the tag offers "Airdrop again"
+  await pw.actions.selectUser('ana.realsies.testnet');
+  await pw.actions.refreshAirdrop();
+  const an = await panelOf(pw);
+  ok(pw.get().airdrop.status?.blocked === 'airdrop_enough' && /TESTNET/.test(an) && !/Airdrop/.test(an), '120 held: only the tag');
+  await pw.actions.selectUser('finn.realsies.testnet');
+  await pw.actions.refreshAirdrop();
+  pw.actions.foldAirdrop();
+  ok(/Airdrop again/.test(await panelOf(pw)), '15 held, folded: the tag offers "Airdrop again"');
+  pc.setAirdropAt('dex.realsies.testnet', Date.now() - 3 * 60_000);
+  await pw.actions.selectUser('dex.realsies.testnet');
+  await pw.actions.refreshAirdrop();
+  ok(!(await pw.actions.airdrop()) && /The next one opens in 7 min\./.test(await panelOf(pw)), 'one 3 minutes ago: the next in 7 min');
+  // the test player's coins screen: the same airdrop, no faucet
+  await pw.actions.selectUser('ben.realsies.testnet');
+  await pw.actions.refreshAirdrop();
+  render(h(DepositDialog, { key: 'ben', store: pw, gate: false, onDone() {} }), root as unknown as Element);
+  await sleep(40);
+  const bt = root.textContent;
+  ok(!/Get 100 test coins/.test(bt) && !/Airdrop 100/.test(bt) && /Your coins/.test(bt), 'a test player holding 100: no airdrop on the coins screen');
+  render(null, root as unknown as Element);
+  await pw.actions.selectUser('dex.realsies.testnet');
+  pc.setAirdropAt('dex.realsies.testnet', null);
+  render(h(DepositDialog, { key: 'dex', store: pw, gate: false, onDone() {} }), root as unknown as Element);
+  await sleep(60);
+  ok(!!findButton(root as never, /Airdrop 100 tREAL test tokens/) && /straight into your game balance/.test(root.textContent), 'a test player with nothing: the coins screen offers the airdrop');
+  render(null, root as unknown as Element);
+  pw.actions.logout();
+  pc.dispose();
+  // not on mainnet, not without test mode
+  const mc = new MockGameClient({ wallet: true, mainnet: true, storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
+  const ms = createStore(mc, new MockWallet(mc, { accountId: 'sam.testnet', delayMs: 2 }));
+  await ms.actions.loadConfig();
+  await ms.actions.walletSignIn();
+  ok((await panelOf(ms)) === '' && (await ms.actions.refreshAirdrop()) === null, 'mainnet: no panel, no airdrop');
+  render(h(DepositDialog, { store: ms, gate: false, onDone() {}, onEnableCoins() {} }), root as unknown as Element);
+  for (let i = 0; i < 40 && !/In your wallet/.test(root.textContent); i++) await sleep(25);
+  const mt = root.textContent;
+  ok(/Your wallet has no REAL yet\./.test(mt) && /Buy REAL/.test(mt) && !/Airdrop|test tokens/.test(mt), 'the mainnet coins screen: Buy REAL, no airdrop');
+  render(null, root as unknown as Element);
+  ms.actions.logout();
+  mc.dispose();
   ws.actions.logout();
   wc.dispose();
   const closedClient = new MockGameClient({ wallet: true, coinsOpen: false, storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
@@ -420,7 +502,7 @@ for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx',
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }
-for (const f of ['LaunchPage.tsx', 'BigClock.tsx', 'phase.ts', 'index.tsx', '../ui/LaunchBanner.tsx']) {
+for (const f of ['LaunchPage.tsx', 'BigClock.tsx', 'phase.ts', 'index.tsx', '../ui/LaunchBanner.tsx', '../ui/TestnetPanel.tsx', '../state/airdrop.ts']) {
   const src = readFileSync(join(here, '..', 'src', 'launch', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `launch/${f}: no banned vocabulary`);
 }

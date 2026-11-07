@@ -9,6 +9,7 @@ import {
   type RoundStatus, type RoundSummary, type Seat, type ServerMsg, type Skin, type TestUser, type ThemeId, type Truth,
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
   type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo, type LaunchConfig,
+  type AirdropResult, type AirdropStatus, AIRDROP,
 } from '../../../shared/protocol.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { verifyNep413 } from '../wallet/nep413.ts';
@@ -85,10 +86,11 @@ const COIN_UNIT = 10n ** 18n;
 const MOCK_BLOCK_HASH = base58Encode(sha256(new TextEncoder().encode('realsies mock block')));
 const MOCK_ALLOWANCE = '250000000000000000000000';
 
-function apiError(code: string, message: string, status = 400): Error {
-  const e = new Error(message) as Error & { code: string; status: number };
+function apiError(code: string, message: string, status = 400, data?: Record<string, unknown>): Error {
+  const e = new Error(message) as Error & { code: string; status: number; data?: Record<string, unknown> };
   e.code = code;
   e.status = status;
+  if (data) e.data = { code, message, ...data };
   return e;
 }
 
@@ -257,6 +259,8 @@ interface Persisted {
   sessions?: Record<string, MockSession>;
   /** deposit tx hash -> account */
   deposits?: Record<string, string>;
+  /** the testnet airdrop (v1.6): account -> when it last had one (ms) */
+  airdrops?: Record<string, number>;
 }
 
 interface Brain {
@@ -745,13 +749,17 @@ export class MockGameClient implements GameClient, MockLedger {
     return this.tick(() => {
       const s = this.token ? this.st.sessions?.[this.token] : undefined;
       if (!s) throw apiError('unauthorized', 'Sign in first.', 401);
-      const open = this.config.coinsOpen !== false;
-      const held = open ? this.st.walletCoins?.[s.account] ?? 0 : 0;
-      return {
-        accountId: s.account, coinsOpen: open, tokenId: this.config.tokenId, tokenRegistered: open && (this.st.registered ?? []).includes(s.account),
-        storageDeposit: open ? '1250000000000000000000' : '0', walletBalance: ((BigInt(Math.round(held * 10_000)) * COIN_UNIT) / 10_000n).toString(),
-      };
+      return this.walletInfoOf(s.account);
     });
+  }
+
+  private walletInfoOf(account: string): WalletInfo {
+    const open = this.config.coinsOpen !== false;
+    const held = open ? this.st.walletCoins?.[account] ?? 0 : 0;
+    return {
+      accountId: account, coinsOpen: open, tokenId: this.config.tokenId, tokenRegistered: open && (this.st.registered ?? []).includes(account),
+      storageDeposit: open ? '1250000000000000000000' : '0', walletBalance: ((BigInt(Math.round(held * 10_000)) * COIN_UNIT) / 10_000n).toString(),
+    };
   }
 
   reportDeposit(txHash: string): Promise<{ me: Me; bonusTx?: string }> {
@@ -776,6 +784,10 @@ export class MockGameClient implements GameClient, MockLedger {
     });
   }
 
+  /**
+   * Tests and QA only: coins into the signed-in wallet, any amount, in any mode (what a wallet holds before a
+   * screenshot). The screens use the airdrop; the relay's own route for this is the airdrop since v1.6.
+   */
   faucetToWallet(coins = 100): Promise<{ tx: string }> {
     return this.tick(() => {
       const s = this.token ? this.st.sessions?.[this.token] : undefined;
@@ -792,6 +804,76 @@ export class MockGameClient implements GameClient, MockLedger {
   /** Coins in a wallet, outside the game (tests). */
   walletCoinsOf(account: string): number {
     return this.st.walletCoins?.[account] ?? 0;
+  }
+
+  // ======================= the testnet airdrop (protocol v1.6) =======================
+
+  /** Who may have one, and where it lands; the relay's rules (src/game/game.ts airdrop). */
+  private airdropTarget(accountId: string): 'wallet' | 'game' {
+    if (!this.config.testMode || this.config.network !== 'testnet') throw apiError('not_test_mode', 'The airdrop is for the testnet demo only.', 403);
+    if (this.config.coinsOpen === false) throw apiError('coins_closed', 'The game contract has no coin yet.', 409);
+    if (this.isWallet(accountId)) {
+      if (!this.sessionOf(accountId)) throw apiError('unauthorized', 'Sign in first.', 401);
+      return 'wallet';
+    }
+    if (!this.st.users[accountId]) throw apiError('unknown_user', `${accountId} is not a player here.`, 404);
+    return 'game';
+  }
+
+  private airdropStatusOf(accountId: string, to: 'wallet' | 'game'): AirdropStatus {
+    const now = this.now();
+    const lastAt = this.st.airdrops?.[accountId] ?? null;
+    const nextAt = lastAt === null ? now : Math.max(now, lastAt + AIRDROP.everyMinutes * 60_000);
+    // a test player has no wallet in the game: its game balance counts; a wallet player's wallet counts too
+    const heldCoins = c4(this.user(accountId).balance + (to === 'wallet' ? this.st.walletCoins?.[accountId] ?? 0 : 0));
+    const blocked = nextAt > now ? 'airdrop_too_soon' : heldCoins >= AIRDROP.enoughCoins ? 'airdrop_enough' : undefined;
+    return {
+      accountId, coins: AIRDROP.coins, to, heldCoins, enoughCoins: AIRDROP.enoughCoins, againBelowCoins: AIRDROP.againBelowCoins, lastAt, nextAt,
+      ...(blocked ? { blocked } : {}),
+    };
+  }
+
+  airdropStatus(accountId: string): Promise<AirdropStatus> {
+    return this.tick(() => this.airdropStatusOf(accountId, this.airdropTarget(accountId)));
+  }
+
+  airdrop(accountId: string): Promise<AirdropResult> {
+    return this.tick(() => {
+      const to = this.airdropTarget(accountId);
+      const st = this.airdropStatusOf(accountId, to);
+      if (st.blocked === 'airdrop_too_soon') {
+        const mins = Math.max(1, Math.ceil((st.nextAt - this.now()) / 60_000));
+        throw apiError('airdrop_too_soon', `one airdrop per ${AIRDROP.everyMinutes} minutes: the next one in ${mins} min`, 429, { retryAt: st.nextAt });
+      }
+      if (st.blocked === 'airdrop_enough') throw apiError('airdrop_enough', `you hold ${st.heldCoins} already; the airdrop is for balances under ${AIRDROP.enoughCoins}`, 409, { heldCoins: st.heldCoins });
+      (this.st.airdrops ??= {})[accountId] = this.now();
+      const u = this.user(accountId);
+      let wallet: WalletInfo | undefined;
+      if (to === 'game') {
+        // straight into the game balance; a locked Turing bonus comes with it, as with any deposit
+        u.balance = c4(u.balance + AIRDROP.coins + u.lockedBonus);
+        u.lockedBonus = 0;
+      } else {
+        // into the wallet itself, registered on the coin (the faucet pays the storage)
+        const w = (this.st.walletCoins ??= {});
+        w[accountId] = (w[accountId] ?? 0) + AIRDROP.coins;
+        const reg = (this.st.registered ??= []);
+        if (!reg.includes(accountId)) reg.push(accountId);
+        wallet = this.walletInfoOf(accountId);
+      }
+      this.save();
+      const me = this.meOf(accountId);
+      this.emit({ t: 'me', me }, accountId);
+      return { tx: fakeTx(this.r), coins: AIRDROP.coins, to, me, ...(wallet ? { wallet } : {}), status: this.airdropStatusOf(accountId, to) };
+    });
+  }
+
+  /** Tests and QA: when the account last had an airdrop (ms; null: never). */
+  setAirdropAt(accountId: string, at: number | null): void {
+    const a = (this.st.airdrops ??= {});
+    if (at === null) delete a[accountId];
+    else a[accountId] = at;
+    this.save();
   }
 
   // ----- the mock chain the mock wallet talks to (MockLedger) -----
