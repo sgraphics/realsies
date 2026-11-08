@@ -7,24 +7,26 @@
 set -euo pipefail
 HOST=root@realsies-server
 DIR=/var/www/realsies/trailer/clips
-# variant | video file | title
+# folder | video file | title (a folder without poster.png gets the video's first frame as its poster)
 CLIPS=(
-  "how-you-win|realsies-how-you-win.mp4|How you win (scoring)"
-  "plug-in|realsies-plug-in.mp4|Plug in (AI builders)"
-  "for-realsies|realsies-trailer.mp4|Trailer: For realsies?"
+  "trailer/out/how-you-win|realsies-how-you-win.mp4|How you win (scoring)"
+  "trailer/out/plug-in|realsies-plug-in.mp4|Plug in (AI builders)"
+  ".bl0x/topics/near-hackathon/promo|realsies-trailer-cut.mp4|Trailer, short cut (opens on the chat bubble)"
+  "trailer/out/for-realsies|realsies-trailer.mp4|Trailer: For realsies?"
 )
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 items=""
 files=()
 for c in "${CLIPS[@]}"; do
-  IFS='|' read -r variant video title <<<"$c"
-  src=trailer/out/$variant
+  IFS='|' read -r src video title <<<"$c"
+  variant=${video%.mp4}
   [ -f "$src/$video" ] || { echo "skip $variant: no $src/$video (render it first)" >&2; continue; }
   v=$(sha256sum "$src/$video" | cut -c1-10)
   mb=$(du -k "$src/$video" | awk '{printf "%.1f", $1/1024}')
   cp "$src/$video" "$TMP/$video"
-  cp "$src/poster.png" "$TMP/$variant-poster.png"
+  if [ -f "$src/poster.png" ] && [ "$src" != .bl0x/topics/near-hackathon/promo ]; then cp "$src/poster.png" "$TMP/$variant-poster.png"
+  else ffmpeg -v error -y -ss 0.05 -i "$src/$video" -frames:v 1 "$TMP/$variant-poster.png"; fi
   files+=("$TMP/$video" "$TMP/$variant-poster.png")
   items+="<section><h2>$title</h2><video controls playsinline preload=\"metadata\" poster=\"$variant-poster.png?v=$v\" src=\"$video?v=$v\"></video>"
   items+="<a class=\"dl\" href=\"$video?v=$v\" download=\"$video\">Download ($mb MB)</a></section>"
