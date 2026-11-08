@@ -32,7 +32,7 @@ trailer/
       montage.ts        the game montage: lobby, 3-2-1 countdown, chat, Real human? call screen
       endcard.ts        the hero end card: shining logo over a smug trio, tagline, URL; the poster
       jackin.ts         the jack-in: a socket in the side of the head, plug and cable, digital rain, a console
-      promo/scoring.ts  how you win: you and a partner, the room's calls, the call, the reveal, the coins moving
+      promo/howwin.ts   how you win: you and a labelled partner, calls into a chest, the reveal, the table, WIN
   variants/
     for-realsies/     everything specific to one trailer
       storyboard.ts     shots and timings, dialogue lines with ids, actor direction, music grid, cues, end-card text
@@ -41,7 +41,7 @@ trailer/
       trailer.ts        binds the storyboard to the scenes; script.md prose
       voice/            optional recordings, one per line id
     plug-in/          5 s clip for the AI builders post: a plug seats in her head, three pairs of eyes open
-    how-you-win/      29 s scoring video: you and a partner, all four call cases, the big win
+    how-you-win/      29 s scoring video, slow and step by step: two winning calls, a bot and a human
   scripts/            render.ts and new.ts (the npm scripts)
   out/                renders, one folder per variant (gitignored)
 ```

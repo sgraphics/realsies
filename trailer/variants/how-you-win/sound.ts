@@ -1,15 +1,15 @@
 // How you win: the soundtrack, all synthesised. A light chiptune bed at 120 BPM (C, G, Am, F; a
-// 12.5% pulse arpeggio and a stepped triangle bass, a soft kick and hats), and the game's sounds on
-// every beat of every case: the bar sweeping in, your call, your coin joining the room, the reveal
-// (a glitch for a bot), RIGHT or WRONG, coins landing, the counter; a crash and the chime on the big
-// win, and the chime again on the outro. The order of the calls below matters: noise-based sounds
-// share one deterministic source.
+// 12.5% pulse arpeggio, a stepped triangle bass, a soft kick and hats) and the game's sounds on each
+// step: a whoosh as your partner slides in, a chirp for every call, coins clinking into the chest,
+// the reveal (a glitch for a bot, a warm ping for a human), ticks as the marks land, coins moving
+// across the table, a crash and the chime on WIN; the chime again on the outro.
+// The order of the calls below matters: noise-based sounds share one deterministic source.
 
-import { Mix, resetNoise, fadeTail, midi, nn, Pulse, ad, type Stereo } from '../../src/engine/audio/dsp.ts';
+import { Mix, resetNoise, fadeTail, midi, nn, type Stereo } from '../../src/engine/audio/dsp.ts';
 import { arpeggios, bassLine, kick, hat, crash, beep, whoosh, chirp, shing, ping, chime, glitchSfx, type Song } from '../../src/engine/audio/instruments.ts';
 import type { VoiceClip } from '../../src/engine/audio/voice.ts';
-import { BEATS, outcome } from '../../src/scenes/promo/scoring.ts';
-import { SCENARIOS, STARTS, OUTRO_AT, DURATION } from './storyboard.ts';
+import { T, settle } from '../../src/scenes/promo/howwin.ts';
+import { CASES, STARTS, OUTRO_AT, DURATION } from './storyboard.ts';
 
 const STEP = 0.125; // a 16th at 120 BPM: a bar is 2 s
 const BARS = Math.ceil(DURATION / (16 * STEP));
@@ -23,7 +23,6 @@ const LOOP: [string[], string][] = [
 function song(): Song {
   const chords: string[][] = [], roots: string[] = [];
   for (let b = 0; b < BARS; b++) {
-    // resolve to C under the outro
     const [c, r] = OUTRO_AT <= b * 2 ? LOOP[0] : LOOP[b % 4];
     chords.push(c);
     roots.push(r);
@@ -41,39 +40,40 @@ function drums(m: Mix): void {
     }
 }
 
-/** A falling buzz for WRONG. */
-function buzz(m: Mix, at: number): void {
-  const o = new Pulse(0.5);
-  m.add(at, 0.4, 0, (_i, t) => o.next(260 * Math.pow(0.5, t / 0.4)) * ad(t, 0.004, 0.4, 2) * 0.09);
+/** A few coins clinking in, `n` of them from `at`. */
+function clink(m: Mix, at: number, n: number, pan = 0): void {
+  for (let k = 0; k < n; k++) beep(m, at + k * 0.06, 1900 + (k % 3) * 320, 0.03, 0.045, 0.5, pan);
 }
 
 function cases(m: Mix): void {
-  SCENARIOS.forEach((s, i) => {
+  CASES.forEach((c, i) => {
     const t0 = STARTS[i];
-    const o = outcome(s);
-    whoosh(m, t0 + BEATS.bar, 0.35, 400, 6, 0.08);
-    chirp(m, t0 + BEATS.call, 0.09, 700, 2, 0.1, -0.3);
-    beep(m, t0 + BEATS.join, midi(nn('G6')), 0.05, 0.08, 0.5, -0.2);
-    beep(m, t0 + BEATS.joined, midi(nn('C7')), 0.09, 0.08, 0.5, 0.2);
-    // the reveal: a glitch for a bot, a warm two-note ping for a human
-    if (s.truth === 'bot') {
-      glitchSfx(m, t0 + BEATS.reveal);
-      shing(m, t0 + BEATS.reveal + 0.1, midi(nn('E7')));
+    const s = settle(c);
+    whoosh(m, t0 + T.partnerIn[0], 0.6, 250, 6, 0.1);
+    chirp(m, t0 + T.youCall, 0.09, 700, 2, 0.11, 0.3);
+    clink(m, t0 + T.youCoins[1] - 0.15, 5, 0);
+    c.callers.slice(1).forEach((_k, j) => {
+      const p = t0 + T.player(j);
+      whoosh(m, p, 0.4, 400, 5, 0.06);
+      chirp(m, p + 0.6, 0.08, 800, 2, 0.09, 0.4);
+      clink(m, p + 1.35, 4, 0.1);
+    });
+    // the reveal
+    crash(m, t0 + T.reveal, 0.35);
+    if (c.truth === 'bot') {
+      glitchSfx(m, t0 + T.reveal + 0.3);
+      shing(m, t0 + T.reveal + 0.4, midi(nn('E7')));
     } else {
-      ping(m, t0 + BEATS.reveal, midi(nn('E6')), 0.5, 0.07, 0.3);
-      ping(m, t0 + BEATS.reveal + 0.07, midi(nn('A6')), 0.5, 0.06, 0.3);
+      ping(m, t0 + T.reveal + 0.3, midi(nn('E6')), 0.6, 0.08, -0.3);
+      ping(m, t0 + T.reveal + 0.38, midi(nn('A6')), 0.6, 0.07, -0.3);
     }
-    // the verdict
-    if (o.right) ['C6', 'E6', 'G6', 'C7'].forEach((n, k) => beep(m, t0 + BEATS.verdict + k * 0.05, midi(nn(n)), 0.08, 0.08, 0.25));
-    else buzz(m, t0 + BEATS.verdict);
-    // coins landing
-    const n = o.right ? Math.max(3, Math.min(16, Math.round(o.net / 4) + 3)) : 10;
-    for (let k = 0; k < n; k++) beep(m, t0 + BEATS.fly + BEATS.flyDur + k * 0.04, 1900 + (k % 3) * 300, 0.03, 0.04, 0.5, o.right ? -0.3 : 0.3);
-    // the counter ticking
-    for (let t = 0; t < BEATS.countDur; t += 0.05) beep(m, t0 + BEATS.count + t, 2600, 0.01, 0.025, 0.5);
-    if (o.right && o.net >= 10) {
-      crash(m, t0 + BEATS.verdict, 0.7);
-      chime(m, t0 + BEATS.count + BEATS.countDur);
+    // the table: marks, then coins moving
+    c.callers.forEach((_k, j) => beep(m, t0 + T.marks + j * 0.05, j === 0 ? midi(nn('C6')) : midi(nn('G5')), 0.05, 0.06, 0.5));
+    clink(m, t0 + T.move[0] + 0.5, 6, 0);
+    // WIN
+    if (s.net[0] > 0) {
+      ['C6', 'E6', 'G6', 'C7'].forEach((n, k) => beep(m, t0 + T.win + k * 0.05, midi(nn(n)), 0.08, 0.08, 0.25, 0.3));
+      chime(m, t0 + T.win + 0.25);
     }
   });
 }
@@ -87,7 +87,7 @@ export function soundtrack(_voices: VoiceClip[]): Stereo {
   drums(m);
   cases(m);
   whoosh(m, OUTRO_AT, 0.5, 300, 8, 0.12);
-  chime(m, OUTRO_AT + 1.4);
+  chime(m, OUTRO_AT + 1.3);
   fadeTail(m, DURATION, 0.6);
   return m;
 }
