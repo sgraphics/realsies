@@ -22,3 +22,4 @@ art/out/
 
 # trailer renders (npm run render in trailer/) stay out of git
 trailer/out/
+.bl0x/topics/near-hackathon/how-you-win/*.mp4

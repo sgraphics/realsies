@@ -46,9 +46,9 @@ export class JackActor {
 
   /**
    * `bigEyes`: the trailer's large blue eyes with highlights instead of the look's own. `side`: the
-   * socket on the viewer's right (1) or left (-1).
+   * socket on the viewer's right (1) or left (-1); `socket` false: no socket at all (a plain character).
    */
-  constructor(look: Look, readonly bigEyes = false, readonly side: 1 | -1 = 1) {
+  constructor(look: Look, readonly bigEyes = false, readonly side: 1 | -1 = 1, readonly withSocket = true) {
     look.front = -1; // hands at the sides
     this.look = look;
     this.s = buildSprites(look);
@@ -101,7 +101,7 @@ export class JackActor {
     blit(h, s.hair[0], 0, 0);
     if (s.hat) blit(h, s.hat[0], 0, 0);
     if (this.bigEyes) this.big(h, st.eyes);
-    this.socket(h, st.lit);
+    if (this.withSocket) this.socket(h, st.lit);
     blit(b, h, st.jolt, 0);
     return b;
   }
