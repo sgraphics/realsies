@@ -24,6 +24,9 @@ export function TermsScreen(p: { onClose(): void; testnet?: boolean }) {
           <li><Icon name="star" /> Be kind to the people you meet. Some of them are real. No harassment, no scams, no cheating; we may remove players who break this.</li>
           <li><Icon name="check" /> The game is provided as is, as far as the law allows. By playing you accept all of this at your own risk.</li>
         </ul>
+        <p class="px-dim" style={{ fontSize: '13px', margin: '0 0 8px' }}>
+          This is the short version. The full terms are at <a class="px-link" href="/terms.html" target="_blank" rel="noopener">realsies.lol/terms.html</a>.
+        </p>
         <div class="px-row center">
           <Button kind="primary" onClick={p.onClose}>Got it</Button>
         </div>
