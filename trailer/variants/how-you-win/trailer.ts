@@ -20,14 +20,15 @@ const sc = () =>
     you: S.youLook(),
     partners: { human: { look: S.humanLook() }, bot: { look: S.botLook(), bigEyes: true } },
     chestLabel: S.CHEST_LABEL,
-    title: 'How you win',
+    title: S.TITLE_LINES,
   }));
 
 function drawer(): (out: Rgba, shot: Shot, t: number) => void {
   const s = sc();
   return (out, shot, t) => {
     if (shot.kind === 'outro') return s.outro(out, t - shot.start, S.OUTRO_LINES);
-    s.render(out, S.CASES[Number(shot.kind.slice(4))], t - shot.start);
+    const i = Number(shot.kind.slice(4));
+    s.render(out, S.CASES[i], t - S.CASE_T0[i], i === 0);
   };
 }
 
@@ -39,7 +40,7 @@ const results = S.CASES.map((c, i) => {
 
 const script: TrailerDef['script'] = {
   heading: 'Realsies: "How you win", the scoring video',
-  summary: `About ${Math.round(S.DURATION)} seconds for X, slow and one step at a time, winning cases only. You stand large in the bottom-right corner, the way your side of a chat sits; your partner slides in from the left with a label instead of a name (AI BOT or REAL HUMAN). You say your call and your coins fly into a treasure chest labelled ${S.CHEST_LABEL}; two more players slide in from the right and add theirs. ROUND REVEAL, then a small table of everyone's calls, where the coins of the wrong rows move to the right rows, and WIN over you. The amounts come from the game's rules in code: ${RULES.fee * 100}% of a play to the bot fund, then the coins of wrong calls split ${RULES.right * 100}% to the right callers by the coins they played, ${RULES.character * 100}% to the character (the Turing bonus), ${RULES.game * 100}% to the game.`,
+  summary: `About ${Math.round(S.DURATION)} seconds for X, slow and one step at a time, winning cases only. It opens on the question, "${S.TITLE_LINES.join(' ')}", and on you, held ${S.HOLD} s before anyone else comes in. You stand large in the bottom-right corner, the way your side of a chat sits; your partner slides in from the left with a label instead of a name (AI BOT or REAL HUMAN). You say your call and your coins fly into a treasure chest labelled ${S.CHEST_LABEL}; two more players slide in from the right and add theirs. ROUND REVEAL, then a small table of everyone's calls, where the coins of the wrong rows move to the right rows, and WIN over you. The amounts come from the game's rules in code: ${RULES.fee * 100}% of a play to the bot fund, then the coins of wrong calls split ${RULES.right * 100}% to the right callers by the coins they played, ${RULES.character * 100}% to the character (the Turing bonus), ${RULES.game * 100}% to the game.`,
   framing: 'Framing: one 1920x1080 layout. You and your partner at 20 px per game pixel, waist on the bottom edge; the other two players small (7 px) in the upper right; the chest in the top centre. Results:\n\n' + results.map((r) => '- ' + r).join('\n'),
   dialogueNote: 'No voice: the calls are speech bubbles on screen.',
   sound: [
@@ -64,7 +65,8 @@ export const trailer: TrailerDef = {
   lines: [],
   dir: DIR,
   drawer,
-  poster: (out) => drawer()(out, S.SHOTS[0], S.STARTS[0] + 11.5),
+  // the poster is the first frame: the question and you
+  poster: (out) => drawer()(out, S.SHOTS[0], 1.0),
   soundtrack,
   script,
 };

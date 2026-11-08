@@ -9,7 +9,7 @@ import { Mix, resetNoise, fadeTail, midi, nn, type Stereo } from '../../src/engi
 import { arpeggios, bassLine, kick, hat, crash, beep, whoosh, chirp, shing, ping, chime, glitchSfx, type Song } from '../../src/engine/audio/instruments.ts';
 import type { VoiceClip } from '../../src/engine/audio/voice.ts';
 import { T, settle } from '../../src/scenes/promo/howwin.ts';
-import { CASES, STARTS, OUTRO_AT, DURATION } from './storyboard.ts';
+import { CASES, CASE_T0, OUTRO_AT, DURATION } from './storyboard.ts';
 
 const STEP = 0.125; // a 16th at 120 BPM: a bar is 2 s
 const BARS = Math.ceil(DURATION / (16 * STEP));
@@ -47,7 +47,7 @@ function clink(m: Mix, at: number, n: number, pan = 0): void {
 
 function cases(m: Mix): void {
   CASES.forEach((c, i) => {
-    const t0 = STARTS[i];
+    const t0 = CASE_T0[i];
     const s = settle(c);
     whoosh(m, t0 + T.partnerIn[0], 0.6, 250, 6, 0.1);
     chirp(m, t0 + T.youCall, 0.09, 700, 2, 0.11, 0.3);

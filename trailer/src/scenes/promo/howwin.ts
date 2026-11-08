@@ -65,7 +65,8 @@ export interface HowWinConfig {
   partners: Record<Side, { look: Look; bigEyes?: boolean }>;
   /** The chest's label. */
   chestLabel: string;
-  title: string;
+  /** The question, in two lines: big on the first frame, small in the corner after. */
+  title: [string, string];
 }
 
 // layout (output px)
@@ -73,9 +74,9 @@ const K = 20; // the big characters
 const YOU_CX = 1610, PARTNER_CX = 330;
 const BIG_TOP = OUT_H - 34 * K; // waist on the bottom edge
 const SMALL_K = 7;
-const PLAYER_CX = [1360, 1740];
-const SMALL_TOP = 350 - 34 * SMALL_K;
-const CHEST = { cx: 960, y: 170, k: 8 };
+const PLAYER_CX = [1420, 1760];
+const SMALL_TOP = 150;
+const CHEST = { cx: 960, y: 120, k: 8 };
 const TABLE = { x: 570, y: 250, w: 780, rowH: 76 };
 
 const coinIcon = icon('coin');
@@ -125,6 +126,13 @@ function chestSprite(open: number): Rgba {
   return out;
 }
 
+/** The top 35 rows of a standing frame: waist up. */
+function waistUp(f: Rgba): Rgba {
+  const b = createBuffer(32, 35);
+  b.data.set(f.data.subarray(0, 32 * 35 * 4));
+  return b;
+}
+
 // ---------------------------------------------------------------- the scene
 
 export class HowWinScene {
@@ -151,18 +159,22 @@ export class HowWinScene {
     return a;
   }
 
-  private base(out: Rgba): void {
+  private base(out: Rgba, bigTitle: boolean): void {
     fillOut(out, P.black);
     blitK(out, this.bg, 0, 0, 6);
     logo(out, 40, 28, 3, { sparkles: false });
-    drawText(out, this.cfg.title, 40 + LOGO_W * 3 + 30, 40, { color: P.cream, scale: 6, outline: P.black });
+    if (bigTitle) {
+      // the first frame: the question big, and you, pointed out
+      this.cfg.title.forEach((l, i) => drawTextC(out, l, 960, 150 + i * 120, { color: i === 0 ? P.white : P.gold, scale: 9, outline: P.black, extrude: i === 0 ? P.slate : P.orange }));
+      drawText(out, 'Your character →', 860, BIG_TOP + 200, { color: P.white, scale: 6, outline: P.black });
+    }
   }
 
-  private bubble(out: Rgba, text: string, rightX: number, bottomY: number, k: number, pop: boolean): void {
+  private bubble(out: Rgba, rows: string[], rightX: number, bottomY: number, k: number, pop: boolean): void {
     const st = bubbleStyles('space').me;
     const m = bubbleMetrics(k);
-    const sz = bubbleSize([text], m);
-    drawBubble(out, st, m, even(rightX - sz.w), even(bottomY - sz.h - (pop ? k : 0)), sz.w, sz.h, [text], 99);
+    const sz = bubbleSize(rows, m);
+    drawBubble(out, st, m, even(rightX - sz.w), even(bottomY - sz.h - (pop ? k : 0)), sz.w, sz.h, rows, 999);
   }
 
   private flyCoins(out: Rgba, from: { x: number; y: number }, to: { x: number; y: number }, a: number, dur: number, n: number, k = 6): void {
@@ -184,13 +196,14 @@ export class HowWinScene {
     return n;
   }
 
-  render(out: Rgba, c: Case, u: number, last = false): void {
-    this.base(out);
+  /** One case at u seconds from its start; `intro`: the first case, held on the title before u = 0. */
+  render(out: Rgba, c: Case, u: number, intro = false): void {
+    this.base(out, intro && u < T.partnerIn[1]);
     const s = settle(c);
     const youWin = s.net[0];
 
     // ---- the chest and its label, until the table takes over
-    if (u < T.table) {
+    if (u >= T.youCall && u < T.table) {
       const coins = this.chestCoins(c, u);
       const spr = chestSprite(coins);
       const x = even(CHEST.cx - (spr.w * CHEST.k) / 2);
@@ -211,11 +224,11 @@ export class HowWinScene {
       const cx = PLAYER_CX[i] + (inX + outX) * 700;
       if (cx > OUT_W + 200) return;
       const a = this.player(k.seed);
-      blitK(out, a.frame({ eyes: 'open', jolt: 0, lit: false }), even(cx - 16 * SMALL_K), SMALL_TOP, SMALL_K);
+      blitK(out, waistUp(a.frame({ eyes: 'open', jolt: 0, lit: false })), even(cx - 16 * SMALL_K), SMALL_TOP, SMALL_K);
       const tw = textW(k.name) * 4 + 16;
-      tag(out, k.name, even(cx - tw / 2), SMALL_TOP + 2 * SMALL_K - 20, { bg: P.slate, fg: P.white, scale: 4, padX: 8 });
-      if (u >= t0 + 0.6 && u < T.playersOut[0]) this.bubble(out, k.call === 'human' ? 'Human!' : 'Bot!', cx + 70, SMALL_TOP - 26, 5, u - t0 - 0.6 < 0.08);
-      this.flyCoins(out, { x: cx, y: SMALL_TOP + 220 }, { x: CHEST.cx, y: CHEST.y + 90 }, u - t0 - 0.9, 0.6, 4, 5);
+      tag(out, k.name, even(cx - tw / 2), SMALL_TOP - 10, { bg: P.slate, fg: P.white, scale: 4, padX: 8 });
+      if (u >= t0 + 0.6 && u < T.playersOut[0]) this.bubble(out, ['I think', k.call === 'human' ? "it's human" : "it's a bot"], cx + 70, SMALL_TOP - 22, 4, u - t0 - 0.6 < 0.08);
+      this.flyCoins(out, { x: cx, y: SMALL_TOP + 180 }, { x: CHEST.cx, y: CHEST.y + 90 }, u - t0 - 0.9, 0.6, 4, 5);
     });
 
     // ---- the partner slides in from the left, labelled
@@ -242,7 +255,7 @@ export class HowWinScene {
       tag(out, 'YOU', even(YOU_CX - tw / 2), BIG_TOP + 30 + hop, { bg: P.gold, fg: P.black, scale: 7, padX: 14 });
     }
     // your call, then your coins to the chest
-    if (u >= T.youCall && u < T.reveal) this.bubble(out, c.callers[0].call === 'human' ? 'Human!' : 'Bot!', YOU_CX - 170, BIG_TOP + 190, 9, u - T.youCall < 0.08);
+    if (u >= T.youCall && u < T.reveal) this.bubble(out, ["I think you're", c.callers[0].call === 'human' ? 'human' : 'a bot'], YOU_CX - 170, BIG_TOP + 190, 8, u - T.youCall < 0.08);
     this.flyCoins(out, { x: YOU_CX - 120, y: BIG_TOP + 560 }, { x: CHEST.cx, y: CHEST.y + 90 }, u - T.youCoins[0], T.youCoins[1] - T.youCoins[0], 5);
 
     // ---- the reveal
@@ -263,12 +276,11 @@ export class HowWinScene {
       const amt = `${fmt(youWin)} coins`;
       drawTextC(out, amt, 1600, 150, { color: P.gold, scale: 8, outline: P.black, extrude: P.orange });
     }
-    void last;
   }
 
   private table(out: Rgba, c: Case, s: ReturnType<typeof settle>, u: number): void {
     const a = u - T.table;
-    const cols = [{ h: 'PLAYER', w: 230 }, { h: 'CALL', w: 190 }, { h: 'COINS', w: 140 }, { h: 'RESULT', w: 150 }];
+    const cols = [{ h: 'PLAYER', w: 256 }, { h: 'CALL', w: 174 }, { h: 'COINS', w: 126 }, { h: 'RESULT', w: 150 }];
     const x0 = TABLE.x, y0 = TABLE.y, rows = c.callers.length;
     const H = TABLE.rowH * (rows + 1) + 20;
     const reveal = ease(clamp01(a / 0.3));
