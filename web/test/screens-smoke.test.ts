@@ -359,7 +359,7 @@ try {
   render(h(LoginModal, { key: 'testnet', store: gs, onConsent() {}, onClose() {} }), root as unknown as Element);
   for (let i = 0; i < 40 && !/Finn/.test(root.textContent); i++) await sleep(25);
   const gt = root.textContent;
-  ok(/Sign in to play/.test(gt) && /Testnet: free test tokens, no real money\./.test(gt) && !!findButton(root as never, /Sign in with a NEAR wallet/) && /Or play as a test player:/.test(gt), 'testnet: the wallet, and the test players from the same prompt');
+  ok(/Sign in to play/.test(gt) && !!findButton(root as never, /Sign in with a NEAR wallet/) && /Or play as a test player:/.test(gt), 'testnet: the wallet, and the test players from the same prompt');
   ok(['Ana', 'Ben', 'Cleo', 'Dex', 'Eve', 'Finn'].every((n) => !!findButton(root as never, new RegExp('^' + n))), 'the six test players');
   click(findButton(root as never, /^Ben/));
   for (let i = 0; i < 40 && !gs.get().welcomed; i++) await sleep(25);

@@ -85,7 +85,6 @@ export function LoginModal(p: {
           <h2 id="login-title" class="px-title">Sign in to play</h2>
           <Button small kind="ghost" disabled={busy} onClick={close}>Back</Button>
         </div>
-        {testMode && cfg?.network === 'testnet' && <p class="who-net">Testnet: free test tokens, no real money.</p>}
         {walletOn && <WalletSignInPanel store={p.store} tight />}
         {testMode && (
           <div class="login-players-box">
