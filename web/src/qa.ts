@@ -11,11 +11,16 @@
 //   &long=1                        chat: a long scripted conversation
 //   &kb=300                        pretend a phone keyboard of this many CSS px is open
 //   &menu=1                        open the HUD menu
-//   &consent=1                     the 18+ / terms box already ticked (who are you)
+//   &consent=1                     the terms already accepted (any screen past "Before you play" accepts them)
+// A guest (no ?as): the room before signing in, and "Before you play" (Login.tsx) after a tap on seat 2 (&seat=N):
+//   &qa=guest                      the room as a guest
+//   &qa=consent                    the tap of a first-time visitor: the terms with the checkbox (&tick=1: ticked)
+//   &qa=guest-tap                  the tap of a visitor who accepted them before: the sign-in step
+//   &qa=guest-seat                 then signed in (a test player, or the mock wallet with &wallet=): the seat opens
 //   &longnames=1                   every seat gets an 11-character gamertag
 //   &nobots=1                      the bots are napping: every pick gets bots_unavailable (no new chats)
 // Wallet sign-in (protocol v1.3), with &wallet=1 (a relay without test mode: no test users):
-//   &qa=signin-wait&hold=signIn    the sign-in waiting for the wallet
+//   &qa=signin-wait&hold=signIn    the sign-in step waiting for the wallet
 //   &qa=signin-error&reject=signIn the player closed the wallet
 //   &as=sam&qa=key                 signed in as sam.testnet: the one approval a first paid play asks for (&hold=key: waiting)
 //   &as=sam&qa=deposit             the wallet deposit dialog (200 test coins in the wallet, none in the game);
@@ -31,7 +36,7 @@
 
 import type { Level } from '../../shared/protocol.ts';
 import type { Store, AppState } from './state/store.ts';
-import { acceptTerms } from './state/consent.ts';
+import { acceptTerms, forgetTerms } from './state/consent.ts';
 import { isCounting } from './state/countdown.ts';
 import { EVIDENCE_CHAT_ID } from './net/mock/evidence.ts';
 import { mockLaunchOf } from './launch/phase.ts';
@@ -89,21 +94,46 @@ export const LONG_CHAT: { from: 'me' | 'them'; text: string }[] = [
   { from: 'me', text: 'that is exactly what a bot would say' },
 ];
 
+/**
+ * Before the first render: screenshots past "Before you play" accept the terms first (a player the QA hooks sign
+ * in, or any QA screen); `qa=consent` shows the step itself, as a first-time visitor sees it.
+ */
+export function qaConsent(search: string): void {
+  const q = new URLSearchParams(search);
+  if (q.get('mock') !== '1') return;
+  const step = q.get('qa');
+  if (step === 'consent') forgetTerms();
+  else if (q.get('as') || q.get('consent') === '1' || step) acceptTerms();
+}
+
+/** QA: "Before you play" with its box already ticked (&tick=1). */
+export function qaTicked(search: string): boolean {
+  const q = new URLSearchParams(search);
+  return q.get('mock') === '1' && q.get('tick') === '1';
+}
+
 export async function runQa(store: Store, search: string, open: (what: string, arg?: unknown) => void): Promise<void> {
   const q = new URLSearchParams(search);
-  if (q.get('mock') === '1' && q.get('consent') === '1') acceptTerms();
   if (q.get('mock') === '1' && q.get('qa') === 'terms' && !q.get('as')) {
     open('terms');
     return;
   }
   // a mainnet-like mock (&wallet=1, or &launch=: before REAL) signs in with the mock wallet
   const walletMode = q.get('mock') === '1' && (q.get('wallet') === '1' || q.get('wallet') === 'test' || mockLaunchOf(search) !== null);
-  if (walletMode && !q.get('as')) {
-    // the sign-in screens: waiting for the wallet, or the wallet closed
-    if (q.get('qa') === 'signin-wait' || q.get('qa') === 'signin-error') {
-      acceptTerms();
-      await store.actions.loadConfig();
-      void store.actions.walletSignIn();
+  if (q.get('mock') === '1' && !q.get('as')) {
+    // a guest: the room, then "Before you play" after a tap on a character, then signed in
+    const step = q.get('qa') ?? '';
+    if (!['consent', 'guest-tap', 'guest-seat', 'signin-wait', 'signin-error'].includes(step)) return;
+    await store.actions.loadConfig();
+    const level = Math.min(3, Math.max(1, Number(q.get('level') ?? 1))) as Level;
+    if (level !== 1) store.actions.enterRoom(level);
+    await until(store, (s) => !!s.rooms[level]);
+    open('login', { level, index: Number(q.get('seat') ?? 2) });
+    if (step === 'signin-wait' || step === 'signin-error') void store.actions.walletSignIn();
+    if (step === 'guest-seat') {
+      await new Promise((r) => setTimeout(r, 300));
+      if (walletMode) await store.actions.walletSignIn();
+      else await store.actions.selectUser('ben.realsies.testnet');
     }
     return;
   }
@@ -111,7 +141,6 @@ export async function runQa(store: Store, search: string, open: (what: string, a
   if (!plan) return;
   const as = q.get('as')!;
   if (walletMode) {
-    acceptTerms();
     await store.actions.loadConfig();
     await store.actions.walletSignIn();
   } else {

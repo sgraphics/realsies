@@ -150,6 +150,15 @@ html.kit .hud-title { padding: 2px calc(var(--upx) * 2 + 6px); }
 /* "Who are you?" on testnet: what the coins are */
 .who-net { margin: 0; flex: 1 1 100%; font-family: var(--font-body); font-size: 15px; font-weight: 600; color: #f77622; }
 
+/* a guest: "Sign in" where the player's coins and rating are (one line: after the clock; two lines: next to it) */
+.hud .hud-signin { min-height: 0; font-size: 11px; padding: 0 14px; gap: 8px; }
+html.kit .hud .hud-signin { padding: 0 calc(var(--upx) * 2 + 8px); }
+.hud .hud-signin .hud-btn-label { display: inline; }
+@media (min-width: 1000px), (min-width: 700px) and (max-height: 520px) { .hud-signin { order: 4; } }
+@media (max-width: 999px) and (min-height: 521px), (max-width: 699px) { .hud-signin { order: 7; flex: 1 1 0; justify-content: center; } }
+@media (min-width: 1800px) { .hud .hud-signin { font-size: 13px; padding: 0 20px; } }
+@media (min-width: 2200px) { .hud .hud-signin { font-size: 15px; } }
+
 /* the menu */
 .hud-menu-scrim { position: fixed; inset: 0; z-index: 26; }
 .hud-menu {

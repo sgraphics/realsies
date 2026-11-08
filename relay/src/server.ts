@@ -124,6 +124,8 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
     return game.me(account);
   });
   route('GET', /^\/api\/rounds$/, () => game.listRounds());
+  // v1.7: the current round, public: a guest watches the room before signing in (no session, nothing stored)
+  route('GET', /^\/api\/round$/, () => ({ round: game.roundState() }));
   route('GET', /^\/api\/rounds\/(\d+)\/results\/([^/]+)$/, (m, req) => {
     const account = seg(m[2]);
     actAs(req, account);

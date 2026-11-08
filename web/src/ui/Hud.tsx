@@ -3,7 +3,8 @@
 // the TESTNET panel above the bar: TestnetPanel.tsx), level tabs with the theme name, the round clock,
 // coins and locked coins, rating, "x of 10 called", Results with its badge, and a menu (coins,
 // past rounds, terms, switch player, test tools). One line on wide screens and phones held
-// sideways, two lines on phones and tablets. The world lays itself out under it (hudSize.ts).
+// sideways, two lines on phones and tablets. The world lays itself out under it (hudSize.ts). A guest (not signed
+// in) gets "Sign in" where the coins and rating are, and a menu with only what needs no account.
 
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -34,6 +35,9 @@ export interface HudProps {
   /** wallet players: sign out (the session ends, this browser forgets its play key) */
   onSignOut?(): void;
   onTerms?(): void;
+  /** a guest watching the room: "Sign in" instead of the player's coins, rating and results */
+  guest?: boolean;
+  onSignIn?(): void;
   /** who: the title panel content. */
   title?: ComponentChildren;
 }
@@ -167,18 +171,26 @@ export function Hud(p: HudProps) {
           <span class="hud-theme">{THEME_NAMES[theme]}</span>
         </div>
         {clock}
-        {coins}
-        {rating}
-        <Stat area="called" icon="check" k="Called" v={<>{called}<span class="hud-of">/{seats}</span></>} title={`${called} of ${seats} called`} />
-        <button
-          type="button"
-          class={'hud-cell px-btn hud-results' + (s.resultsReady.length ? ' primary' : '')}
-          title="Results"
-          onClick={() => (latestReady ? p.onResults?.(latestReady) : p.onRounds?.())}
-        >
-          <Icon name="trophy" /><span class="hud-btn-label">Results</span>
-          {s.resultsReady.length > 0 && <span class="px-badge">{s.resultsReady.length}</span>}
-        </button>
+        {p.guest ? (
+          <button type="button" class="hud-cell px-btn primary hud-signin" title="Sign in to play" onClick={p.onSignIn}>
+            <Icon name="user" /><span class="hud-btn-label">Sign in</span>
+          </button>
+        ) : (
+          <>
+            {coins}
+            {rating}
+            <Stat area="called" icon="check" k="Called" v={<>{called}<span class="hud-of">/{seats}</span></>} title={`${called} of ${seats} called`} />
+            <button
+              type="button"
+              class={'hud-cell px-btn hud-results' + (s.resultsReady.length ? ' primary' : '')}
+              title="Results"
+              onClick={() => (latestReady ? p.onResults?.(latestReady) : p.onRounds?.())}
+            >
+              <Icon name="trophy" /><span class="hud-btn-label">Results</span>
+              {s.resultsReady.length > 0 && <span class="px-badge">{s.resultsReady.length}</span>}
+            </button>
+          </>
+        )}
         {menuBtn}
       </>
     );
@@ -251,7 +263,12 @@ export function Hud(p: HudProps) {
         <>
           <div class="hud-menu-scrim" onClick={() => setMenu(false)} />
           <nav class="hud-menu px-panel sheet-enter" role="menu" aria-label="Menu">
-            {kind === 'lobby' && (
+            {kind === 'lobby' && p.guest && (
+              <button type="button" class="px-btn small primary hud-menu-item" onClick={() => { setMenu(false); p.onSignIn?.(); }}>
+                <Icon name="user" /> Sign in to play
+              </button>
+            )}
+            {kind === 'lobby' && !p.guest && (
               <>
                 <button type="button" class="px-btn small hud-menu-item" onClick={() => { setMenu(false); p.onWallet?.(); }}>
                   <Icon name="coin" /> {me && me.balanceCoins > 0 ? 'Your coins' : 'Deposit to earn'}
@@ -279,7 +296,7 @@ export function Hud(p: HudProps) {
                 <Icon name="user" /> Switch player ({label})
               </button>
             )}
-            {kind !== 'who' && <DevMenu store={store} onDone={() => setMenu(false)} />}
+            {kind !== 'who' && !p.guest && <DevMenu store={store} onDone={() => setMenu(false)} />}
           </nav>
         </>
       )}

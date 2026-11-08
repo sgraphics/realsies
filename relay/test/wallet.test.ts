@@ -118,6 +118,10 @@ test('wallet players without test mode: sign-in, session, ticketed socket, walle
     const ws = await WsClient.connectTicket(base, t1.ticket, acct);
     const welcome = await ws.waitT('welcome', 5000);
     assert.equal(welcome.me.kind, 'wallet');
+    // a guest watches the room: the current round, public, no session
+    const guest = await api(base, 'GET', '/api/round');
+    assert.equal(guest.status, 200);
+    assert.ok(guest.body.round.roundId === welcome.round.roundId && guest.body.round.endsAt === welcome.round.endsAt && !!guest.body.round.themes[1], 'the current round for a guest, without a session');
     await assert.rejects(WsClient.connectTicket(base, t1.ticket, acct), 'a ticket works once');
     assert.equal((await api(base, 'POST', '/api/session/ticket', {})).status, 401, 'no ticket without a session');
 

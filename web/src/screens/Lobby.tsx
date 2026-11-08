@@ -1,5 +1,6 @@
 // Lobby: the HUD (logo, level tabs and theme, round clock, coins, rating, called, Results, menu) over
 // ten pedestals under an arch, each with its gamertag on a tag beneath. Tap a character -> seat dialog.
+// A guest sees the same room (drawn for guests, state/guest.ts) with "Sign in" in the HUD; a tap asks to sign in.
 
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { Level, Seat } from '../../../shared/protocol.ts';
@@ -24,6 +25,9 @@ export interface LobbyProps {
   onSignOut?(): void;
   onTerms(): void;
   selectedSeat?: number | null;
+  /** not signed in: watching the room */
+  guest?: boolean;
+  onSignIn?(): void;
 }
 
 function seatLook(seat: Seat, selected: boolean): SeatLook {
@@ -77,7 +81,7 @@ export function LobbyScreen(p: LobbyProps) {
 
   return (
     <>
-      <Hud store={store} kind="lobby" onResults={p.onResults} onRounds={p.onRounds} onWallet={p.onWallet} onSwitchUser={p.onSwitchUser} onSignOut={p.onSignOut} onTerms={p.onTerms} />
+      <Hud store={store} kind="lobby" guest={p.guest} onSignIn={p.onSignIn} onResults={p.onResults} onRounds={p.onRounds} onWallet={p.onWallet} onSwitchUser={p.onSwitchUser} onSignOut={p.onSignOut} onTerms={p.onTerms} />
       <World theme={theme} kind="lobby" seats={sceneSeats}>
         {(w) => {
           const l = w.layout.kind === 'lobby' ? w.layout : null;

@@ -70,9 +70,9 @@ Realsies adds all three, inside a game people play for fun: coins on every call,
 
 ## Try it now (testnet): do X, see Y
 
-1. Open https://testnet.realsies.lol. See "Who are you?" with six test users and "Testnet: free test tokens, no real money." Pick one, for example Ben, or tap "Sign in with a NEAR wallet" with a testnet wallet (Meteor, Intear or Nightly).
+1. Open https://testnet.realsies.lol. See the room right away, as a guest: ten characters, the round clock and "Sign in" at the top. Tap a character. See "Before you play": tick "I'm 18 or older, I play at my own risk and I accept the terms" and tap Continue (once per browser). Then sign in: tap one of the six test players, for example Ben, or "Sign in with a NEAR wallet" with a testnet wallet (Meteor, Intear or Nightly). The character you tapped opens.
 2. See the orange TESTNET panel above the room (it shows while you hold no test tokens at all). Tap "Airdrop 100 tREAL test tokens": no further action needed. A test player's tokens go straight into the game balance and show on the pillar. A wallet's land in the wallet ("100 tREAL are in your wallet"); from there it works like the real game: tap your coins and deposit, one wallet approval that also lets your plays and calls run without popups, then play. Or skip it and play free. Once you hold tokens the panel is gone; one airdrop per account per 10 minutes.
-3. See the room: ten characters on pedestals, each with a gamertag and a face generated for you alone. Tap one, choose 5 coins or Play free.
+3. See your room: ten characters on pedestals, each with a gamertag and a face generated for you alone. Tap one, choose 5 coins or Play free.
 4. See a full-screen 3, 2, 1, CHAT! countdown, then chat for up to two minutes. Answer Real human? Yes / No. See "Locked until the round ends".
 5. To meet a human instead of a bot, open a second browser window as another test user and tap a character in both windows within a few seconds.
 6. Rounds last 10 minutes on testnet. To skip ahead, open the menu at the top right and choose End round now. See Results: who was who, the persona card of every bot you met, your score and rating, coins won, and a Verify button on every bot chat.

@@ -1,13 +1,15 @@
-// App root: picks the screen from store state (who are you -> lobby -> searching/chat -> call ->
-// locked) and layers the dialogs (seat, deposit, results, verify, past rounds) on top.
+// App root: picks the screen from store state (the room as a guest -> the room as a player -> searching/chat ->
+// call -> locked) and layers the dialogs (sign-in, seat, deposit, results, verify, past rounds) on top. A guest
+// watches the room without a session; tapping a character (or "Sign in") opens "Before you play" (Login.tsx): the
+// terms with one checkbox, then the sign-in; once signed in, the tapped character's seat opens.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Level, Seat, ThemeId } from '../../shared/protocol.ts';
 import { themeFor } from '../../shared/protocol.ts';
 import type { Store } from './state/store.ts';
 import { useStore } from './state/hooks.ts';
-import { WhoScreen } from './screens/Who.tsx';
 import { LobbyScreen } from './screens/Lobby.tsx';
+import { LoginModal } from './screens/Login.tsx';
 import { SeatDialog } from './screens/SeatDialog.tsx';
 import { DepositDialog } from './screens/Deposit.tsx';
 import { ChatScreen } from './screens/Chat.tsx';
@@ -19,8 +21,10 @@ import { TermsScreen } from './screens/Terms.tsx';
 import { KeySetupDialog } from './screens/KeySetup.tsx';
 import { Button, Icon, type IconName } from './ui/kit.tsx';
 import { applyTheme } from './ui/theme.ts';
-import { runQa } from './qa.ts';
+import { qaConsent, qaTicked, runQa } from './qa.ts';
 import { airdropOn, holdsAny, panelMode } from './state/airdrop.ts';
+import { termsAccepted } from './state/consent.ts';
+import type { PendingSeat } from './state/guest.ts';
 
 type Overlay =
   | { kind: 'seat'; level: Level; seat: Seat }
@@ -40,6 +44,15 @@ export function App({ store }: { store: Store }) {
   const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info'; at: number; icon?: IconName; results?: boolean; ms?: number } | null>(null);
   const gated = useRef(new Set<string>());
   const lastReady = useRef(0);
+  // the terms of this version accepted in this browser (QA screenshots past this step accept them first)
+  const [consented, setConsented] = useState(() => {
+    qaConsent(location.search);
+    return termsAccepted();
+  });
+  // "Before you play" for a guest, with the seat that was tapped (or none: the HUD's Sign in)
+  const [login, setLogin] = useState<{ seat?: PendingSeat } | null>(null);
+  // the tapped seat, waiting for the player's own room after sign-in
+  const pending = useRef<PendingSeat | null>(null);
 
   useEffect(() => {
     // a wallet session stored in this browser signs straight back in (QA runs drive their own)
@@ -54,8 +67,45 @@ export function App({ store }: { store: Store }) {
       if (what === 'results') setOverlay({ kind: 'results', roundId: arg as number });
       if (what === 'verify') setVerify(arg as string);
       if (what === 'terms') setTerms(true);
+      if (what === 'login') setLogin({ seat: arg as PendingSeat | undefined });
     }).catch((e) => console.warn(e));
   }, [store]);
+
+  // a guest watches the room: the current round, public, no session; again every 30 s
+  const configured = !!s.config;
+  useEffect(() => {
+    if (s.accountId || !configured) return;
+    void store.actions.loadGuest();
+    const t = setInterval(() => void store.actions.loadGuest(), 30_000);
+    return () => clearInterval(t);
+  }, [s.accountId, configured]);
+  // and the next round as soon as this one ends
+  useEffect(() => {
+    if (s.accountId || !s.round) return;
+    const t = setTimeout(() => void store.actions.loadGuest(), Math.max(1000, s.round.endsAt - Date.now() + 3000));
+    return () => clearTimeout(t);
+  }, [s.accountId, s.round?.endsAt]);
+
+  // signed in (a wallet, or a test player): the prompt goes; the tapped seat waits for the player's own room
+  useEffect(() => {
+    if (!s.accountId) return;
+    setConsented(termsAccepted());
+    if (!login) return;
+    if (login.seat) pending.current = login.seat;
+    setLogin(null);
+  }, [s.accountId]);
+  useEffect(() => {
+    const want = pending.current;
+    if (!want || !s.accountId || !s.welcomed || s.chat || s.search) return;
+    const room = s.rooms[want.level];
+    if (!room) {
+      if (s.level !== want.level) store.actions.enterRoom(want.level);
+      return;
+    }
+    pending.current = null;
+    const seat = room.seats[want.index];
+    if (seat && seat.state === 'open') setOverlay({ kind: 'seat', level: want.level, seat });
+  }, [s.accountId, s.welcomed, s.rooms, s.level]);
 
   // theme of what is on screen drives the CSS kit (panels, buttons, bubbles)
   const round = s.round;
@@ -80,6 +130,10 @@ export function App({ store }: { store: Store }) {
     if (s.config?.coinsOpen === false) return; // nothing to deposit yet: free play only
     const key = `${s.accountId}:${round.roundId}:${s.level}`;
     if (gated.current.has(key)) return;
+    if (pending.current) {
+      gated.current.add(key); // the tapped character's seat comes first
+      return;
+    }
     if (airdropOn(s.config) && !dropKnown && !holdsAny(s)) return; // the relay's view of the airdrop first
     gated.current.add(key);
     if (panelMode(s, 'lobby') !== 'none') return;
@@ -117,8 +171,25 @@ export function App({ store }: { store: Store }) {
 
   const testnet = !!(s.config?.testMode || s.config?.network === 'testnet');
   const openTerms = () => setTerms(true);
+  const openLogin = (seat?: PendingSeat) => setLogin({ seat });
+  // a signed-in player whose accepted terms are older than the current version: the terms again, first
+  const reconsent = !!s.accountId && !consented;
   let screen;
-  if (!s.accountId) screen = <WhoScreen store={store} onTerms={openTerms} />;
+  if (!s.accountId)
+    screen = (
+      <LobbyScreen
+        store={store}
+        guest
+        selectedSeat={login?.seat?.level === s.level ? login.seat.index : null}
+        onSeat={(lv, seat) => openLogin({ level: lv, index: seat.index })}
+        onSignIn={() => openLogin()}
+        onResults={() => openLogin()}
+        onRounds={() => openLogin()}
+        onWallet={() => openLogin()}
+        onSwitchUser={() => openLogin()}
+        onTerms={openTerms}
+      />
+    );
   else if (s.search && !s.chat) screen = <ChatScreen store={store} onTerms={openTerms} />;
   else if (s.chat && (s.chat.phase === 'searching' || s.chat.phase === 'placing' || s.chat.phase === 'chatting')) screen = <ChatScreen store={store} onTerms={openTerms} />;
   else if (s.chat) screen = <CallScreen store={store} onBack={() => store.actions.clearChat()} onTerms={openTerms} />;
@@ -149,9 +220,20 @@ export function App({ store }: { store: Store }) {
       />
     );
 
+  const modal = (!!login && !s.accountId) || reconsent;
   return (
     <>
-      {screen}
+      {/* behind "Before you play" nothing takes a tap or a key */}
+      <div class="app-screen" inert={modal}>{screen}</div>
+      {modal && (
+        <LoginModal
+          store={store}
+          consentOnly={reconsent}
+          ticked={qaTicked(location.search)}
+          onConsent={() => setConsented(true)}
+          onClose={() => setLogin(null)}
+        />
+      )}
       {overlay?.kind === 'seat' && (
         <SeatDialog
           store={store}

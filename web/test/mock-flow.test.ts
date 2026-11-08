@@ -166,6 +166,10 @@ try {
   ok(cfg.testMode && cfg.presets[1][0] === 5 && cfg.feeBps === 500, 'config');
   const users = await store.actions.loadTestUsers();
   ok(users.length === 6 && users.filter((u) => u.balanceCoins === 0).length >= 2, 'six test users, two with zero coins');
+  // a guest watches the room before signing in: the public round, ten characters per level, no socket
+  const guest = await store.actions.loadGuest();
+  ok(!!guest && guest.roundId >= 1 && store.get().rooms[1]?.seats.length === 10 && store.get().rooms[3]?.seats.every((x) => x.state === 'open'), 'a guest sees the round and three rooms');
+  ok(!store.get().accountId && store.get().status === 'idle' && !store.get().welcomed, 'as a guest: no account, no socket');
   await store.actions.selectUser(ANA);
   ok(store.get().welcomed && store.get().me?.accountId === ANA, 'welcome received');
   const s1 = await waitFor(store, (s) => (s.rooms[1]?.seats.length ?? 0) === 10, 'room 1');
@@ -360,6 +364,7 @@ console.log('real client');
   await rc.faucet('ana.realsies.testnet', 50);
   await rc.withdraw('ana.realsies.testnet', 5);
   await rc.listRounds();
+  await rc.currentRound();
   await rc.getResults(7, 'ana.realsies.testnet');
   await rc.getVerify('c1', 'ana.realsies.testnet');
   await rc.leaderboard();
@@ -372,7 +377,7 @@ console.log('real client');
   }
   const got = calls.map((c) => `${c.method} ${c.url.replace('http://relay', '')}`);
   const want = [
-    'GET /api/config', 'GET /api/test-users', 'POST /api/test-users/ana.realsies.testnet/faucet', 'POST /api/withdraw', 'GET /api/rounds',
+    'GET /api/config', 'GET /api/test-users', 'POST /api/test-users/ana.realsies.testnet/faucet', 'POST /api/withdraw', 'GET /api/rounds', 'GET /api/round',
     'GET /api/rounds/7/results/ana.realsies.testnet', 'GET /api/verify/c1?account=ana.realsies.testnet', 'GET /api/leaderboard', 'POST /api/dev/end-round',
     'GET /api/me/ghost.testnet',
   ];

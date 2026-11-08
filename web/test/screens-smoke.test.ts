@@ -62,6 +62,7 @@ class FNode {
     return { putImageData() {}, drawImage() {}, clearRect() {}, fillRect() {}, createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }), imageSmoothingEnabled: false };
   }
   toDataURL() { return 'data:image/png;base64,'; }
+  getBoundingClientRect() { return { width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, x: 0, y: 0 }; }
   querySelector() { return null; }
   classList = { add() {}, remove() {}, toggle() {}, contains: () => false };
   width = 0;
@@ -130,6 +131,8 @@ const { AgentsPage } = await import('../src/agents/AgentsPage.tsx');
 const { Dashboard } = await import('../src/agents/Dashboard.tsx');
 const { MockBuilderClient } = await import('../src/net/mock/builders.ts');
 const { WalletSignInPanel } = await import('../src/screens/SignIn.tsx');
+const { LoginModal, CONSENT_LINE } = await import('../src/screens/Login.tsx');
+const { Hud } = await import('../src/ui/Hud.tsx');
 const { KeySetupDialog, ONE_APPROVAL } = await import('../src/screens/KeySetup.tsx');
 const { FIRST_DEPOSIT } = await import('../src/screens/WalletCoins.tsx');
 const { SeatDialog } = await import('../src/screens/SeatDialog.tsx');
@@ -283,10 +286,87 @@ try {
   const wc = new MockGameClient({ wallet: true, storageKey: null, timeScale: 0.02, searchMs: [20, 40], noHuman: true, loadEvidence: fsLoader, buyUrl: 'https://meme.cooking' });
   const ws = createStore(wc, new MockWallet(wc, { accountId: 'sam.testnet', delayMs: 2 }));
   await ws.actions.loadConfig();
-  render(h(WalletSignInPanel, { store: ws, ok: true, onNeedConsent() {} }), root as unknown as Element);
+  render(h(WalletSignInPanel, { store: ws }), root as unknown as Element);
   await sleep(20);
   const si = root.textContent;
   ok(/Sign in with a NEAR wallet/.test(si) && /no transaction, no gas/.test(si) && /Get a wallet/.test(si), 'sign-in panel: the button, free to play, get a wallet: ' + si.slice(0, 90));
+
+  // "Before you play" (Login.tsx), the one way in: the terms with one checkbox (compulsory), then the sign-in
+  type El = { childNodes: unknown[]; nodeName?: string; textContent: string; attrs: Record<string, string>; listeners?: Record<string, unknown>; checked?: boolean };
+  const findEl = (n: El, name: string, text?: RegExp): El | null => {
+    if (n.nodeName === name && (!text || text.test(n.textContent))) return n;
+    for (const c of n.childNodes as El[]) {
+      const f = findEl(c, name, text);
+      if (f) return f;
+    }
+    return null;
+  };
+  const change = (el: El | null, checked: boolean) => {
+    if (!el) return;
+    el.checked = checked;
+    const f = el.listeners?.change;
+    if (typeof f === 'function') f.call(el, { type: 'change', target: el, currentTarget: el });
+  };
+  consent.forgetTerms();
+  let consents = 0;
+  render(h(LoginModal, { key: 'first', store: ws, onConsent: () => consents++, onClose() {} }), root as unknown as Element);
+  await sleep(20);
+  const lt = root.textContent;
+  ok(/Before you play/.test(lt) && /a game for entertainment/.test(lt) && /public/.test(lt) && lt.includes(CONSENT_LINE), 'the terms step: the short terms (the Terms list itself) and the one checkbox');
+  ok(CONSENT_LINE === "I'm 18 or older, I play at my own risk and I accept the terms", 'the checkbox in those words');
+  const full = findEl(root as never, 'A', /Full terms/);
+  ok(full?.attrs.href === '/terms.html' && full.attrs.target === '_blank', 'Full terms: /terms.html, in a new tab');
+  ok(disabled(findButton(root as never, /^Continue$/)) && !findButton(root as never, /Back|Close|Not now|×/), 'Continue is off until the box is ticked, and there is no way to close it');
+  change(findEl(root as never, 'INPUT'), true);
+  await sleep(10);
+  ok(!disabled(findButton(root as never, /^Continue$/)), 'ticked: Continue is on');
+  click(findButton(root as never, /^Continue$/));
+  await sleep(30);
+  const sst = root.textContent;
+  ok(consent.termsAccepted() && consents === 1, 'Continue accepts the terms of this version');
+  ok(/Sign in to play/.test(sst) && !!findButton(root as never, /Sign in with a NEAR wallet/) && !/test player/.test(sst) && !!findButton(root as never, /^Back$/), 'then the sign-in; without test mode the wallet only; this step can be left');
+  render(null, root as unknown as Element);
+  // a signed-in player whose accepted terms are older than this version: the terms step alone
+  consent.forgetTerms();
+  let again = 0;
+  render(h(LoginModal, { key: 'again', store: ws, consentOnly: true, ticked: true, onConsent: () => again++, onClose() {} }), root as unknown as Element);
+  await sleep(20);
+  click(findButton(root as never, /^Continue$/));
+  await sleep(20);
+  ok(again === 1 && consent.termsAccepted() && !/Sign in to play/.test(root.textContent), 'the terms again, alone, for a player signed in before this version');
+  render(null, root as unknown as Element);
+
+  // a guest watches the room: the current round (public), three rooms of ten open seats, no socket
+  const gc = new MockGameClient({ storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
+  const gs = createStore(gc, new MockWallet(gc, { accountId: 'gil.testnet', delayMs: 2 }));
+  await gs.actions.loadConfig();
+  const gr = await gs.actions.loadGuest();
+  const rs = gs.get().rooms;
+  ok(!!gr && [1, 2, 3].every((L) => rs[L as 1 | 2 | 3]?.seats.length === 10 && rs[L as 1 | 2 | 3]!.seats.every((x) => x.state === 'open' && /^[0-9a-f]{64}$/.test(x.skin.seed))), 'a guest: three rooms of ten open characters for this round');
+  ok(!gs.get().accountId && gs.get().status === 'idle' && gs.get().round?.roundId === gr!.roundId, 'no account, no socket, the round clock from the public round');
+  gs.actions.enterRoom(2);
+  ok(gs.get().level === 2 && gs.get().status === 'idle', 'a guest changes level without a socket');
+  gs.actions.enterRoom(1);
+  let signIns = 0;
+  render(h(Hud, { store: gs, kind: 'lobby', guest: true, onSignIn: () => signIns++ }), root as unknown as Element);
+  await sleep(30);
+  const ht = root.textContent;
+  ok(/Sign in/.test(ht) && !/Results|Rating|Coins|Deposit/.test(ht) && /TESTNET/.test(ht), 'the HUD of a guest: Sign in where the coins and rating are, no results');
+  click(findButton(root as never, /Sign in/));
+  ok(signIns === 1, 'tapping Sign in opens the prompt');
+  render(null, root as unknown as Element);
+  // the terms are accepted now: a tap goes straight to the sign-in; on testnet the wallet and the six test players
+  render(h(LoginModal, { key: 'testnet', store: gs, onConsent() {}, onClose() {} }), root as unknown as Element);
+  for (let i = 0; i < 40 && !/Finn/.test(root.textContent); i++) await sleep(25);
+  const gt = root.textContent;
+  ok(/Sign in to play/.test(gt) && /Testnet: free test tokens, no real money\./.test(gt) && !!findButton(root as never, /Sign in with a NEAR wallet/) && /Or play as a test player:/.test(gt), 'testnet: the wallet, and the test players from the same prompt');
+  ok(['Ana', 'Ben', 'Cleo', 'Dex', 'Eve', 'Finn'].every((n) => !!findButton(root as never, new RegExp('^' + n))), 'the six test players');
+  click(findButton(root as never, /^Ben/));
+  for (let i = 0; i < 40 && !gs.get().welcomed; i++) await sleep(25);
+  ok(gs.get().accountId === 'ben.realsies.testnet' && gs.get().welcomed, 'a test player is one tap');
+  render(null, root as unknown as Element);
+  gs.actions.logout();
+  gc.dispose();
   await ws.actions.walletSignIn();
   render(h(KeySetupDialog, { store: ws, onDone() {} }), root as unknown as Element);
   await sleep(20);
@@ -521,7 +601,7 @@ try {
 }
 ok(errors.length === 0, 'no uncaught errors' + (errors.length ? ': ' + String(errors[0]) : ''));
 const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
-for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Who.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx']) {
+for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Login.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }

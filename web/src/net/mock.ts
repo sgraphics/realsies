@@ -1040,6 +1040,11 @@ export class MockGameClient implements GameClient, MockLedger {
     return this.tick(() => this.meOf(accountId));
   }
 
+  /** v1.7: the current round for a guest (GET /api/round on the relay): no account, no socket. */
+  currentRound(): Promise<RoundState | null> {
+    return this.tick(() => this.roundState());
+  }
+
   listRounds(): Promise<RoundSummary[]> {
     return this.tick(() =>
       [...this.st.rounds]

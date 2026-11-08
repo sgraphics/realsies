@@ -13,6 +13,7 @@ import type {
   PlayKeyInfo,
   PublicConfig,
   RoundResults,
+  RoundState,
   RoundSummary,
   ServerMsg,
   TestUser,
@@ -111,6 +112,10 @@ export class RealGameClient implements GameClient {
   }
   listRounds(): Promise<RoundSummary[]> {
     return this.http('GET', '/api/rounds');
+  }
+  /** v1.7: the current round for a guest, public, no session */
+  async currentRound(): Promise<RoundState | null> {
+    return (await this.http<{ round: RoundState | null }>('GET', '/api/round')).round ?? null;
   }
   getResults(roundId: number, accountId: string): Promise<RoundResults> {
     return this.http('GET', `/api/rounds/${roundId}/results/${enc(accountId)}`);

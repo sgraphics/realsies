@@ -15,6 +15,7 @@ import { parsePublicKey, signTransaction } from '../wallet/tx.ts';
 import { base58Decode, base64Decode, base64Encode } from '../wallet/base58.ts';
 import { depositCheck, emptyWalletText, shortWalletText, symbolOf } from './walletFunds.ts';
 import { AIRDROP_IDLE, airdropErrorText, airdropOn, landedNote, type AirdropView } from './airdrop.ts';
+import { guestRooms } from './guest.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -102,6 +103,8 @@ export interface AppState {
 
 export interface StoreActions {
   loadConfig(): Promise<PublicConfig>;
+  /** A guest (not signed in) watches the room: the current round, public, no session (protocol v1.7). */
+  loadGuest(): Promise<RoundState | null>;
   loadTestUsers(): Promise<TestUser[]>;
   selectUser(accountId: string): Promise<void>;
   logout(): void;
@@ -554,6 +557,16 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
       set({ config });
       return config;
     },
+    async loadGuest() {
+      if (state.accountId || !client.currentRound) return null;
+      const round = await client.currentRound().catch(() => null);
+      // signed in meanwhile: the player's own round and rooms come over the socket
+      if (state.accountId || !round || round.roundId < 1) return null;
+      const same = state.round?.roundId === round.roundId && state.rooms[1]?.roundId === round.roundId;
+      if (!same) set({ round, rooms: guestRooms(round) });
+      else if (state.round!.status !== round.status || state.round!.endsAt !== round.endsAt) set({ round });
+      return round;
+    },
     async loadTestUsers() {
       const testUsers = await client.listTestUsers();
       set({ testUsers });
@@ -584,7 +597,8 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
     },
     enterRoom(level) {
       set({ level });
-      client.send({ t: 'enter_room', level });
+      // a guest has no socket: its rooms are drawn from the round (loadGuest)
+      if (state.accountId) client.send({ t: 'enter_room', level });
     },
     pickSeat(level, seatIndex, mode, coins) {
       pickedCoins = mode === 'paid' ? coins ?? 0 : null;

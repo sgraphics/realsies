@@ -21,7 +21,16 @@ kb() { # a plausible on-screen keyboard height for the size
   if [ "$W" -gt "$H" ]; then echo $(( H / 2 )); elif [ "$W" -ge 700 ]; then echo $(( H * 32 / 100 )); else echo $(( H * 40 / 100 )); fi
 }
 PHONES="360x640:2 390x844:3 430x932:3 844x390:3 768x1024:2 1024x768:2"
-add who            "mock=1&qa=who" 6000
+# the way in: a guest watches the room; a tap on a character opens "Before you play" (the terms with one checkbox,
+# before and after ticking), then the sign-in (testnet: the wallet and the six test players; mainnet: the wallet),
+# and once signed in the tapped character's seat opens
+add guest          "mock=1&qa=guest" 8000
+add guest-mainnet  "mock=1&wallet=1&qa=guest" 8000
+add consent        "mock=1&qa=consent" 8000
+add consent-ticked "mock=1&qa=consent&tick=1" 8000
+add guest-tap      "mock=1&qa=guest-tap" 8000
+add guest-tap-mainnet "mock=1&wallet=1&qa=guest-tap" 8000
+add guest-seat     "mock=1&qa=guest-seat" 9000
 add lobby-jungle   "mock=1&as=ana&level=1" 8000
 add lobby-desert   "mock=1&as=ana&level=2" 8000
 add lobby-cave     "mock=1&as=ana&level=3" 8000
@@ -56,8 +65,7 @@ add terms          "mock=1&qa=terms" 5000
 add deposit        "mock=1&as=ben&qa=deposit" 8000
 add lobby-napping  "mock=1&as=ana&qa=search&level=1&nobots=1" 4500
 # wallet sign-in (protocol v1.3): a relay without test mode (&wallet=1), the mock wallet signs as sam.testnet
-add signin         "mock=1&wallet=1&qa=signin" 6000
-add signin-wait    "mock=1&wallet=1&qa=signin-wait&hold=signIn" 6000
+add signin-wait    "mock=1&wallet=1&qa=signin-wait&hold=signIn" 8000
 # the one approval a first paid play asks for (when no deposit brought the play key along), and waiting for it
 add playkey        "mock=1&wallet=1&as=sam&qa=key" 8000
 add playkey-wait   "mock=1&wallet=1&as=sam&qa=key&hold=key" 8000
