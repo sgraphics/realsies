@@ -97,6 +97,20 @@ console.log('the video card');
   ok(!('videoUrl' in none) && !('xUrl' in none), '&nox=1: no X link');
 }
 
+console.log('the footer links');
+{
+  const labels = (l: LaunchConfig | undefined) => L.footLinksOf(l).map((f) => f.label).join(' · ');
+  const all = L.footLinksOf({ ...LAUNCH, telegramUrl: 'https://t.me/realsieslol', xUrl: 'https://x.com/realsieslol', videoUrl: 'https://x.com/realsieslol/status/9' });
+  ok(labels({ ...LAUNCH, telegramUrl: 'https://t.me/a', xUrl: 'https://x.com/a' }) === 'Telegram · X' && all[0].href === 'https://t.me/realsieslol' && all[1].href === 'https://x.com/realsieslol', 'Telegram, then X: the account, not the launch tweet');
+  ok(all[0].aria === 'Realsies on Telegram' && all[1].aria === 'Realsies on X', 'names that say where they go (and keep the visible word)');
+  ok(labels({ ...LAUNCH, videoUrl: 'https://x.com/realsieslol/status/9' }) === '', 'the launch tweet alone: no X in the footer');
+  ok(labels({ ...LAUNCH, telegramUrl: 'https://t.me/realsieslol' }) === 'Telegram' && labels({ ...LAUNCH, xUrl: 'https://x.com/realsieslol' }) === 'X', 'each on its own');
+  ok(labels(LAUNCH) === '' && labels(undefined) === '', 'neither: Terms alone');
+  const m = L.mockLaunch('soon', T0);
+  ok(m.telegramUrl === L.MOCK_TELEGRAM_URL && L.MOCK_TELEGRAM_URL === 'https://t.me/realsieslol', 'the mock: the Telegram the owner named');
+  ok(!('telegramUrl' in L.mockLaunch('soon', T0, { telegram: false })) && L.mockLaunch('soon', T0, { x: false }).telegramUrl === L.MOCK_TELEGRAM_URL, 'telegram: false drops Telegram only; x: false keeps it');
+}
+
 console.log('the countdown');
 {
   ok(JSON.stringify(L.countdownParts(1)) === '{"d":0,"h":0,"m":0,"s":1}', 'rounded up: one second shows until the very end');
@@ -146,9 +160,14 @@ console.log('the mock relay before REAL is live');
   const acc = createClient('?mock=1&launch=soon&tweet=0') as InstanceType<typeof MockGameClient>;
   const nx = createClient('?mock=1&launch=soon&nox=1') as InstanceType<typeof MockGameClient>;
   ok(L.teaserOf((await tw.getConfig()).launch)?.tweet === true && L.teaserOf((await acc.getConfig()).launch)?.tweet === false && L.teaserOf((await nx.getConfig()).launch) === null, 'soon: the card to the tweet; &tweet=0 to the account; &nox=1 none');
+  const ntg = createClient('?mock=1&launch=soon&notg=1') as InstanceType<typeof MockGameClient>;
+  const foot = async (c: InstanceType<typeof MockGameClient>) => L.footLinksOf((await c.getConfig()).launch).map((f) => f.label).join(' · ');
+  const [fTw, fNx, fNtg] = [await foot(tw), await foot(nx), await foot(ntg)];
+  ok(fTw === 'Telegram · X' && fNx === 'Telegram' && fNtg === 'X', `the footer links: Telegram and X; &nox=1 Telegram; &notg=1 X (${fTw} / ${fNx} / ${fNtg})`);
   tw.dispose();
   acc.dispose();
   nx.dispose();
+  ntg.dispose();
   const g = createClient('?mock=1&launch=soon&startin=2') as InstanceType<typeof MockGameClient>;
   const gc = await g.getConfig();
   ok(L.comingSoon(gc, Date.now()) && !L.comingSoon(gc, Date.now() + 2500), '&startin=2: the game 2 s in');

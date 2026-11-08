@@ -218,7 +218,8 @@ curl -s -H "Authorization: Bearer $TOKEN" https://realsies.lol/api/botmaster/exp
 
 | Method and path | Body | |
 |---|---|---|
-| `GET /api/admin/health` | | `{ok, round, ai: {status, since, spendUsd, budgetUsd, reason?}, keys: [{keyId, status, since, spendUsd, calls, reason?}]}`: the relay's key and every botmaster's own key |
+| `GET /api/admin/health` | | `{ok, round, ai: {status, since, spendUsd, budgetUsd, reason?}, keys: [{keyId, status, since, spendUsd, calls, reason?}], beta}`: the relay's key and every botmaster's own key; `beta: {capUsd, spendUsd, closed}` with `BETA_SPEND_CAP_USD` (else null) |
+| `POST /api/admin/beta/reopen` | `{addUsd}` | raises the testnet beta's spend cap (`relay/README.md`); the beta reopens when the spend is below it, and a round starts |
 | `GET /api/admin/requests?status=pending` | | requests, newest first (`pending`, `approved`, `rejected`, `all`) |
 | `GET /api/admin/requests/{id}` | | one request |
 | `POST /api/admin/requests/{id}/approve` | `{name?, payoutAccount?, silenceMs?}` | creates the botmaster (name from the company or name); returns `{request, botmaster, token}`; **the token is shown once** |

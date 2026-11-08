@@ -97,6 +97,15 @@ export interface Config {
   agentRequestsPerHour: number;
   /** builder slots: per round and per level, at most this many AI builders' personas join the cast (round-robin over botmasters) */
   agentSlotsPerLevel: number;
+  // ---------- the testnet beta's spend cap ----------
+  /**
+   * the beta closes when the relay's own NEAR AI key has spent this much in its lifetime (USD, the credit monitor's
+   * estimate): no new chats, sessions or rounds; running chats finish; players are sent to betaClosedRedirect.
+   * Unset = no cap. POST /api/admin/beta/reopen raises it.
+   */
+  betaSpendCapUsd?: number;
+  /** where a closed beta sends players (with ?beta=over) */
+  betaClosedRedirect: string;
   // ---------- NEAR AI credits ----------
   /** house key budget in USD: crossing 80% of the estimated spend warns in the log (health: low_credit) */
   nearAiBudgetUsd: number;
@@ -127,7 +136,7 @@ export interface Config {
 }
 
 /** Every variable of the launch; setting any one of them turns it on. */
-export const LAUNCH_VARS = ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_VIDEO_URL', 'LAUNCH_X_URL'] as const;
+export const LAUNCH_VARS = ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_VIDEO_URL', 'LAUNCH_X_URL', 'LAUNCH_TELEGRAM_URL'] as const;
 /** Variables of the first launch page (demo, trailer), no longer read: the relay warns when one is set. */
 export const LAUNCH_RETIRED = ['LAUNCH_DEMO_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER'] as const;
 /** The meme.cooking auction runs this long when LAUNCH_AUCTION_END is not given. */
@@ -153,26 +162,38 @@ export function launchFromEnv(env: NodeJS.ProcessEnv): LaunchConfig | undefined 
   const tokenUrl = get('LAUNCH_TOKEN_URL');
   const videoUrl = get('LAUNCH_VIDEO_URL');
   const xUrl = get('LAUNCH_X_URL');
+  const telegramUrl = get('LAUNCH_TELEGRAM_URL');
   return {
     ...(auctionStart !== undefined ? { auctionStart } : {}),
     ...(auctionEnd !== undefined ? { auctionEnd } : {}),
     ...(tokenUrl ? { tokenUrl } : {}),
     ...(videoUrl ? { videoUrl } : {}),
     ...(xUrl ? { xUrl } : {}),
+    ...(telegramUrl ? { telegramUrl } : {}),
   };
 }
 
 const HTTPS_URL = /^https:\/\/[^\s"'<>\\]+$/;
 
-/** An https link on X: x.com or twitter.com (and their subdomains, e.g. mobile.twitter.com). */
-export function isXUrl(v: string): boolean {
+/** An https link whose host matches `host`, with no user, password or port. */
+function isHttpsOn(v: string, host: RegExp): boolean {
   if (!HTTPS_URL.test(v)) return false;
   try {
     const u = new URL(v);
-    return u.protocol === 'https:' && !u.username && !u.password && !u.port && /(^|\.)(x|twitter)\.com$/i.test(u.hostname);
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port && host.test(u.hostname);
   } catch {
     return false;
   }
+}
+
+/** An https link on X: x.com or twitter.com (and their subdomains, e.g. mobile.twitter.com). */
+export function isXUrl(v: string): boolean {
+  return isHttpsOn(v, /(^|\.)(x|twitter)\.com$/i);
+}
+
+/** An https link on Telegram: t.me or telegram.me (and their subdomains, e.g. realsieslol.t.me). */
+export function isTelegramUrl(v: string): boolean {
+  return isHttpsOn(v, /(^|\.)(t|telegram)\.me$/i);
 }
 
 /** Throws on launch settings the web could not show as meant. */
@@ -184,6 +205,7 @@ export function checkLaunch(l: LaunchConfig): void {
   if (l.tokenUrl !== undefined && !HTTPS_URL.test(l.tokenUrl)) throw new Error('LAUNCH_TOKEN_URL must be an https URL');
   for (const [k, v] of [['LAUNCH_VIDEO_URL', l.videoUrl], ['LAUNCH_X_URL', l.xUrl]] as const)
     if (v !== undefined && !isXUrl(v)) throw new Error(`${k} must be an https link on x.com or twitter.com`);
+  if (l.telegramUrl !== undefined && !isTelegramUrl(l.telegramUrl)) throw new Error('LAUNCH_TELEGRAM_URL must be an https link on t.me or telegram.me');
 }
 
 function num(name: string, def: number): number {
@@ -240,6 +262,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     notifyOutbox: resolveFromRepo(env.NOTIFY_OUTBOX || path.join(path.dirname(env.DB || 'relay/data/realsies.db'), 'outbox')),
     agentRequestsPerHour: num('AGENT_REQUESTS_PER_HOUR', 5),
     agentSlotsPerLevel: num('AGENT_SLOTS_PER_LEVEL', 3),
+    betaSpendCapUsd: env.BETA_SPEND_CAP_USD?.trim() ? num('BETA_SPEND_CAP_USD', 0) : undefined,
+    betaClosedRedirect: (env.BETA_CLOSED_REDIRECT || 'https://realsies.lol').trim(),
     nearAiBudgetUsd: num('NEAR_AI_BUDGET_USD', 10),
     nearAiRecheckSeconds: num('NEAR_AI_RECHECK_SECONDS', 180),
     authRecipient: (env.AUTH_RECIPIENT || 'realsies.lol').trim(),
@@ -260,6 +284,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (!(cfg.nearAiBudgetUsd >= 0)) throw new Error('NEAR_AI_BUDGET_USD must be 0 or more');
   if (!(cfg.nearAiRecheckSeconds > 0)) throw new Error('NEAR_AI_RECHECK_SECONDS must be more than 0');
   if (!(Number.isInteger(cfg.agentSlotsPerLevel) && cfg.agentSlotsPerLevel >= 0 && cfg.agentSlotsPerLevel <= 50)) throw new Error('AGENT_SLOTS_PER_LEVEL must be a whole number from 0 to 50');
+  if (cfg.betaSpendCapUsd !== undefined && !(cfg.betaSpendCapUsd > 0)) throw new Error('BETA_SPEND_CAP_USD must be more than 0 (unset it for no cap)');
+  if (!HTTPS_URL.test(cfg.betaClosedRedirect)) throw new Error('BETA_CLOSED_REDIRECT must be an https URL');
   if (!/^[a-z0-9.-]{3,100}$/i.test(cfg.authRecipient)) throw new Error('AUTH_RECIPIENT must be a domain such as realsies.lol');
   if (!(cfg.sessionDays > 0 && cfg.sessionDays <= 365)) throw new Error('SESSION_DAYS must be from 1 to 365');
   if (cfg.buyUrl && !/^https:\/\//.test(cfg.buyUrl)) throw new Error('BUY_URL must be an https URL');

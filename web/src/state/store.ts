@@ -87,6 +87,8 @@ export interface AppState {
   lastError?: { code: string; message: string; at: number };
   /** A friendly note for the room that is not an error (the bots are napping). */
   notice?: { code: string; message: string; at: number };
+  /** the relay said beta_closed (a pick or a sign-in): the testnet beta is over (src/state/beta.ts) */
+  betaOver?: { at: number };
   /** True once the welcome for the current account arrived. */
   welcomed: boolean;
   // ----- wallet sign-in (v1.3) -----
@@ -411,6 +413,12 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
           }));
           return;
         }
+        if (m.code === 'beta_closed') {
+          // the testnet beta is over: no new chats; the app says so and moves on (the config says where)
+          set({ search: undefined, betaOver: { at: Date.now() } });
+          void actions.loadConfig().catch(() => undefined);
+          return;
+        }
         const running = state.chat && (state.chat.phase === 'searching' || state.chat.phase === 'placing' || state.chat.phase === 'chatting');
         if (m.code === 'bots_unavailable' && !running) {
           // the bots are out of credits, so no new chats start for now: the search ends, the seat goes back
@@ -697,6 +705,12 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
         await actions.selectUser(s.accountId);
         return true;
       } catch (e) {
+        if (errCode(e) === 'beta_closed') {
+          // the beta is over: no new sign-ins; the app says so and moves on
+          set({ signIn: IDLE, betaOver: { at: Date.now() } });
+          void actions.loadConfig().catch(() => undefined);
+          return false;
+        }
         set({ signIn: { phase: 'error', error: errText(e) } });
         return false;
       }

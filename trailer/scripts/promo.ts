@@ -1,6 +1,7 @@
 // npx tsx scripts/promo.ts [--dashboard]
 //   Renders the X thread's stills into out/promo/: mechanics.png, ai-builders-and-tees.png,
-//   summary.png (1920x1080) and summary-square.png (1080x1080). The demo video is a variant:
+//   summary.png (1920x1080) and summary-square.png (1080x1080), beta-open.png (1920x1080) and
+//   beta-open-square.png (1080x1080). The demo video is a variant:
 //   npm run render -- how-it-plays (out/how-it-plays/how-it-plays.mp4). --dashboard copies the
 //   stills and, when it has been rendered, the video into .bl0x/topics/near-hackathon/promo/.
 
@@ -11,6 +12,7 @@ import { createBuffer } from '../src/art.ts';
 import { writeRgbPng } from '../src/engine/png.ts';
 import { castLook } from '../src/engine/actor.ts';
 import { mechanics, builders, summary, summarySquare, type SummaryOpts } from '../src/scenes/promo/stills.ts';
+import { betaOpen, betaOpenSquare, type BetaOpts } from '../src/scenes/promo/beta.ts';
 import { CAST, END_SEATS, lobbySeeds } from '../variants/for-realsies/cast.ts';
 import { URL_TEXT } from '../variants/for-realsies/storyboard.ts';
 
@@ -35,11 +37,16 @@ const opts: SummaryOpts = {
   ],
 };
 
+// "Beta open" for Telegram and X: the end-card scene, a stamp, a tagline and the testnet URL only
+const beta: BetaOpts = { trio: opts.trio, badge: ['BETA', 'OPEN'], tagline: 'Real or not?', url: 'testnet.realsies.lol' };
+
 const stills: [string, number, number, (b: ReturnType<typeof createBuffer>) => void][] = [
   ['mechanics.png', 1920, 1080, mechanics],
   ['ai-builders-and-tees.png', 1920, 1080, builders],
   ['summary.png', 1920, 1080, (b) => summary(b, opts)],
   ['summary-square.png', 1080, 1080, (b) => summarySquare(b, opts)],
+  ['beta-open.png', 1920, 1080, (b) => betaOpen(b, beta)],
+  ['beta-open-square.png', 1080, 1080, (b) => betaOpenSquare(b, beta)],
 ];
 
 const written: string[] = [];

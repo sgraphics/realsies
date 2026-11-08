@@ -77,7 +77,16 @@ export interface MockOptions {
   opensAfterMs?: number;
   /** the public config says mainnet (REAL, mainnet explorer links): the launch mock; the ledger is the same */
   mainnet?: boolean;
+  /**
+   * The testnet beta is over (protocol v1.9, PublicConfig.betaClosed): picks and sign-ins get beta_closed, and the
+   * game goes to `betaRedirect` (default the mock launch page, /?mock=1&launch=soon) with ?beta=over.
+   */
+  betaClosed?: boolean;
+  betaRedirect?: string;
 }
+
+/** The relay's words for beta_closed. */
+const BETA_CLOSED = 'The beta test is over. Thanks for playing! See you on mainnet.';
 
 /** The relay's words for bots_unavailable on a search (the web shows its own calm note instead). */
 const BOTS_UNAVAILABLE = 'The bots are out of NEAR AI credits: no new chats for a few minutes.';
@@ -95,7 +104,7 @@ function apiError(code: string, message: string, status = 400, data?: Record<str
 }
 
 /** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
-export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet'> = {}): PublicConfig {
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet' | 'betaClosed' | 'betaRedirect'> = {}): PublicConfig {
   return {
     testMode: !opts.wallet,
     network: opts.mainnet ? 'mainnet' : 'testnet',
@@ -124,6 +133,7 @@ export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds'
       gas: { deposit: '100000000000000', withdraw: '50000000000000', storage: '30000000000000' },
     },
     ...(opts.launch ? { launch: { ...opts.launch } } : {}),
+    ...(opts.betaClosed ? { betaClosed: { redirect: opts.betaRedirect ?? '/?mock=1&launch=soon', reason: 'spend_cap' as const } } : {}),
   };
 }
 
@@ -674,6 +684,7 @@ export class MockGameClient implements GameClient, MockLedger {
 
   authChallenge(): Promise<AuthChallenge> {
     return this.tick(() => {
+      if (this.config.betaClosed) throw apiError('beta_closed', BETA_CLOSED, 403);
       const nonce = new Uint8Array(32);
       for (let i = 0; i < 32; i++) nonce[i] = this.r.int(256);
       const n = base64Encode(nonce);
@@ -1233,6 +1244,12 @@ export class MockGameClient implements GameClient, MockLedger {
     if (this.activeChatOf(viewer)) return this.err('busy', 'Finish your current chat first.', viewer);
     const seat = this.seatOf(viewer, level, seatIndex);
     if (seat.state !== 'open') return this.err('seat_taken', 'You already met this character this round.', viewer);
+    // the beta is over: no new chats
+    if (this.config.betaClosed) {
+      this.err('beta_closed', BETA_CLOSED, viewer);
+      this.emitSeat(viewer, level, seatIndex);
+      return;
+    }
     let n = 0;
     if (mode === 'paid') {
       if (this.config.coinsOpen === false) return this.err('coins_closed', 'Coins open when $REAL launches. Play free for now.', viewer);

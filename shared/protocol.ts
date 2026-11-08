@@ -1,4 +1,6 @@
-// Realsies relay <-> web protocol, v1.7 (2026-11-08: GET /api/round, the current round for a guest without a session; additive).
+// Realsies relay <-> web protocol, v1.9 (2026-11-08: PublicConfig.betaClosed, the testnet beta's end at its NEAR AI spend cap, and error beta_closed; BotmasterProfile.schedule, the builder slots; additive).
+// v1.8 (2026-11-08): LaunchConfig.telegramUrl, the Telegram link in the coming-soon page's footer; additive.
+// v1.7 (2026-11-08): GET /api/round, the current round for a guest without a session; additive.
 // v1.6 (2026-11-07): the testnet airdrop, AirdropStatus and AirdropResult; additive.
 // v1.5 (2026-11-07): WalletInfo.walletBalance, the coin in the wallet itself; additive.
 // v1.4 (2026-11-06): PublicConfig.launch, the coming-soon page and the auction banner; additive.
@@ -92,6 +94,14 @@ export interface PublicConfig {
    * the coin is set on the contract (`coinsOpen`). A test relay never sends it, and the web ignores it on one.
    */
   launch?: LaunchConfig;
+  // ----- v1.9, optional -----
+  /**
+   * The beta is over: the relay's NEAR AI spend reached its cap (BETA_SPEND_CAP_USD, the testnet relay). Sent in the
+   * config and pushed to every connection (`config`) when it happens. No new chats (pick_seat: error beta_closed),
+   * no new sign-ins (beta_closed) and no new rounds; running chats finish and the round settles. The web shows "The
+   * beta test is over" and, after 5 s and once no chat is running, goes to `redirect` with ?beta=over.
+   */
+  betaClosed?: { redirect: string; reason: 'spend_cap' };
 }
 
 // ---------- the launch (v1.4) ----------
@@ -110,8 +120,10 @@ export interface LaunchConfig {
   tokenUrl?: string;
   /** the launch tweet with the trailer (x.com or twitter.com): where the coming-soon page's video card goes */
   videoUrl?: string;
-  /** the game's X account: where the video card goes until there is a launch tweet; neither = no card */
+  /** the game's X account: where the video card goes until there is a launch tweet; neither = no card. Also "X" in the page's footer */
   xUrl?: string;
+  /** the game's Telegram (t.me or telegram.me): "Telegram" in the coming-soon page's footer (v1.8) */
+  telegramUrl?: string;
 }
 
 // ---------- wallet sign-in (v1.3) ----------
@@ -452,6 +464,11 @@ export interface BotmasterProfile {
   personas: BotmasterPersonaSummary[];
   byok: boolean; // uses its own NEAR AI key
   createdAt: number;
+  /**
+   * v1.9: the builder slots (AGENT_SLOTS_PER_LEVEL a level a round, round-robin over botmasters by round id): this
+   * botmaster's next three rounds with a slot and their levels, as of now
+   */
+  schedule?: { slotsPerLevel: number; nextRounds: { roundId: number; levels: Level[] }[] };
 }
 
 export interface BotmasterScore {

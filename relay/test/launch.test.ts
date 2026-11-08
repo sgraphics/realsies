@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AuthChallenge, LaunchConfig, PublicConfig } from '../../shared/protocol.js';
-import { AUCTION_HOURS, LAUNCH_RETIRED, LAUNCH_VARS, checkLaunch, isXUrl, launchFromEnv, loadConfig, parseIsoTime } from '../src/config.js';
+import { AUCTION_HOURS, LAUNCH_RETIRED, LAUNCH_VARS, checkLaunch, isTelegramUrl, isXUrl, launchFromEnv, loadConfig, parseIsoTime } from '../src/config.js';
 import { createApp, type App } from '../src/app.js';
 import { MockChain } from '../src/chain/mock.js';
 import { WsClient } from './client.js';
@@ -58,16 +58,17 @@ test('LAUNCH_* into the launch: nothing set, a 24-hour auction by default, every
     { videoUrl: 'https://x.com/realsieslol/status/1', xUrl: 'https://x.com/realsieslol' },
     'the launch tweet and the account',
   );
+  assert.deepEqual(launchFromEnv({ LAUNCH_TELEGRAM_URL: ' https://t.me/realsieslol ' }), { telegramUrl: 'https://t.me/realsieslol' }, 'Telegram alone: coming soon, the link in the footer');
   assert.deepEqual(launchFromEnv({ LAUNCH_AUCTION_START: START }), { auctionStart: T0, auctionEnd: T0 + AUCTION_HOURS * H }, 'the end defaults to 24 hours after the start');
   assert.deepEqual(
     launchFromEnv({ LAUNCH_AUCTION_START: '2026-11-08T16:00:00+01:00', LAUNCH_AUCTION_END: '2026-11-09T15:30Z', LAUNCH_TOKEN_URL: 'https://meme.cooking/meme/123' }),
     { auctionStart: T0, auctionEnd: T0 + 24.5 * H, tokenUrl: 'https://meme.cooking/meme/123' },
   );
-  assert.deepEqual([...LAUNCH_VARS], ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_VIDEO_URL', 'LAUNCH_X_URL']);
+  assert.deepEqual([...LAUNCH_VARS], ['LAUNCH_AUCTION_START', 'LAUNCH_AUCTION_END', 'LAUNCH_TOKEN_URL', 'LAUNCH_VIDEO_URL', 'LAUNCH_X_URL', 'LAUNCH_TELEGRAM_URL']);
   assert.deepEqual([...LAUNCH_RETIRED], ['LAUNCH_DEMO_URL', 'LAUNCH_TRAILER', 'LAUNCH_POSTER']);
 });
 
-test('the launch settings are checked: times with their zone, the end after the start, an https token page, X links on X', () => {
+test('the launch settings are checked: times with their zone, the end after the start, an https token page, X links on X, Telegram on t.me', () => {
   assert.equal(parseIsoTime('X', '2026-11-08T15:00:00.000Z'), T0);
   assert.equal(parseIsoTime('X', '2026-11-08T17:00+0200'), T0);
   for (const bad of ['2026-11-08T15:00:00', '2026-11-08', 'Sunday 3pm', '2026-11-08 15:00Z', ''])
@@ -88,6 +89,12 @@ test('the launch settings are checked: times with their zone, the end after the 
   checkLaunch({ ...ok, videoUrl: 'https://x.com/realsieslol/status/1', xUrl: 'https://twitter.com/realsieslol' });
   assert.throws(() => checkLaunch({ ...ok, videoUrl: 'https://youtube.com/watch?v=1' }), /LAUNCH_VIDEO_URL must be an https link on x.com or twitter.com/);
   assert.throws(() => checkLaunch({ ...ok, xUrl: 'http://x.com/realsieslol' }), /LAUNCH_X_URL must be an https link on x.com or twitter.com/);
+  for (const good of ['https://t.me/realsieslol', 'https://t.me/+AbCdEf123', 'https://telegram.me/realsieslol', 'https://realsieslol.t.me/'])
+    assert.ok(isTelegramUrl(good), good);
+  for (const bad of ['http://t.me/realsieslol', 'https://x.com/realsieslol', 'https://evilt.me/a', 'https://t.me.evil.io/a', 'https://t.me:8443/a', 'https://user@t.me/a', 't.me/realsieslol', 'tg://resolve?domain=realsieslol'])
+    assert.ok(!isTelegramUrl(bad), bad);
+  checkLaunch({ ...ok, telegramUrl: 'https://t.me/realsieslol' });
+  assert.throws(() => checkLaunch({ ...ok, telegramUrl: 'https://discord.gg/realsies' }), /LAUNCH_TELEGRAM_URL must be an https link on t.me or telegram.me/);
 });
 
 test('loadConfig reads LAUNCH_* from the env and refuses a bad one at boot', () => {
@@ -99,12 +106,20 @@ test('loadConfig reads LAUNCH_* from the env and refuses a bad one at boot', () 
     process.env.LAUNCH_AUCTION_START = START;
     process.env.LAUNCH_TOKEN_URL = 'https://meme.cooking/meme/123';
     process.env.LAUNCH_X_URL = 'https://x.com/realsieslol';
+    process.env.LAUNCH_TELEGRAM_URL = 'https://t.me/realsieslol';
     process.env.LAUNCH_TRAILER = '/trailer/realsies-trailer.mp4';
     const cfg = loadConfig({});
-    assert.deepEqual(cfg.launch, { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123', xUrl: 'https://x.com/realsieslol' }, 'the X account is read, a retired variable is not');
+    assert.deepEqual(
+      cfg.launch,
+      { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123', xUrl: 'https://x.com/realsieslol', telegramUrl: 'https://t.me/realsieslol' },
+      'the X account and Telegram are read, a retired variable is not',
+    );
     process.env.LAUNCH_VIDEO_URL = 'https://www.youtube.com/watch?v=1';
     assert.throws(() => loadConfig({}), /LAUNCH_VIDEO_URL must be an https link on x.com or twitter.com/);
     delete process.env.LAUNCH_VIDEO_URL;
+    process.env.LAUNCH_TELEGRAM_URL = 'https://t.me.example.com/realsieslol';
+    assert.throws(() => loadConfig({}), /LAUNCH_TELEGRAM_URL must be an https link on t.me or telegram.me/);
+    delete process.env.LAUNCH_TELEGRAM_URL;
     assert.equal(loadConfig({ launch: undefined }).launch, undefined, 'an override wins over the env');
     process.env.LAUNCH_AUCTION_END = '2026-11-08T14:00:00Z';
     assert.throws(() => loadConfig({}), /LAUNCH_AUCTION_END must be after LAUNCH_AUCTION_START/);
@@ -118,7 +133,14 @@ test('loadConfig reads LAUNCH_* from the env and refuses a bad one at boot', () 
   }
 });
 
-const LAUNCH: LaunchConfig = { auctionStart: T0, auctionEnd: T0 + 24 * H, tokenUrl: 'https://meme.cooking/meme/123', videoUrl: 'https://x.com/realsieslol/status/1', xUrl: 'https://x.com/realsieslol' };
+const LAUNCH: LaunchConfig = {
+  auctionStart: T0,
+  auctionEnd: T0 + 24 * H,
+  tokenUrl: 'https://meme.cooking/meme/123',
+  videoUrl: 'https://x.com/realsieslol/status/1',
+  xUrl: 'https://x.com/realsieslol',
+  telegramUrl: 'https://t.me/realsieslol',
+};
 
 test('a mainnet-like relay sends the launch until the coin is set, then drops it and tells every connection', { timeout: 60_000 }, async () => {
   const chain = mainnetBeforeCoin();

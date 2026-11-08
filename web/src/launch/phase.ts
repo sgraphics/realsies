@@ -76,6 +76,22 @@ export function teaserOf(l: LaunchConfig | null | undefined): TeaserLink | null 
   return null;
 }
 
+/** A link in the coming-soon page's footer, before Terms. */
+export interface FootLink {
+  label: 'Telegram' | 'X';
+  href: string;
+  /** what a screen reader says */
+  aria: string;
+}
+
+/** The footer's links before Terms: Telegram (LAUNCH_TELEGRAM_URL), then X (LAUNCH_X_URL, the account); each only when set. */
+export function footLinksOf(l: LaunchConfig | null | undefined): FootLink[] {
+  return [
+    ...(l?.telegramUrl ? [{ label: 'Telegram' as const, href: l.telegramUrl, aria: 'Realsies on Telegram' }] : []),
+    ...(l?.xUrl ? [{ label: 'X' as const, href: l.xUrl, aria: 'Realsies on X' }] : []),
+  ];
+}
+
 export interface Parts {
   d: number;
   h: number;
@@ -135,17 +151,19 @@ export function fmtUtc(at: number, o: { timeZone?: string } = {}): string {
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`;
 }
 
-/** The mock's X links: the account the owner named, and a stand-in for the launch tweet. */
+/** The mock's links: the X account and the Telegram the owner named, and a stand-in for the launch tweet. */
 export const MOCK_X_URL = 'https://x.com/realsieslol';
 export const MOCK_VIDEO_URL = 'https://x.com/realsieslol/status/1';
+export const MOCK_TELEGRAM_URL = 'https://t.me/realsieslol';
 
 /**
  * The mock relay's launch (?mock=1&launch=soon|auction|finalizing), on the hour like the real one: soon opens in
  * two days and some hours (or `startInMs` from now: QA of the moment it goes live), auction ends in about 17 hours,
  * finalizing ended 6 minutes ago. `token: false`: no meme.cooking page yet; `tweet: false`: no launch tweet yet
- * (the card goes to the account); `x: false`: no X link at all (no card).
+ * (the card goes to the account); `x: false`: no X link at all (no card, no X in the footer); `telegram: false`: no
+ * Telegram link.
  */
-export function mockLaunch(phase: MockLaunch, now = Date.now(), o: { startInMs?: number; token?: boolean; tweet?: boolean; x?: boolean } = {}): LaunchConfig {
+export function mockLaunch(phase: MockLaunch, now = Date.now(), o: { startInMs?: number; token?: boolean; tweet?: boolean; x?: boolean; telegram?: boolean } = {}): LaunchConfig {
   const hour = Math.floor(now / HOUR) * HOUR;
   const start =
     phase === 'soon' ? (o.startInMs !== undefined ? now + o.startInMs : hour + 2 * DAY + 6 * HOUR)
@@ -158,6 +176,7 @@ export function mockLaunch(phase: MockLaunch, now = Date.now(), o: { startInMs?:
     ...(o.token === false ? {} : { tokenUrl: 'https://meme.cooking' }),
     ...(x && o.tweet !== false ? { videoUrl: MOCK_VIDEO_URL } : {}),
     ...(x ? { xUrl: MOCK_X_URL } : {}),
+    ...(o.telegram === false ? {} : { telegramUrl: MOCK_TELEGRAM_URL }),
   };
 }
 

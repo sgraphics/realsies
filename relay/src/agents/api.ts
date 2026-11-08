@@ -210,7 +210,15 @@ export function createAgentApi(d: AgentApiDeps) {
   // the operator's view of NEAR AI: spend, budget and why a key is out (GET /api/health shows only status and since)
   route('GET', /^\/api\/admin\/health$/, (_m, req) => {
     requireAdmin(req);
-    return { ok: true, round: d.game.current?.id ?? null, ai: d.credits.health('house'), keys: d.credits.all() };
+    return { ok: true, round: d.game.current?.id ?? null, ai: d.credits.health('house'), keys: d.credits.all(), beta: d.game.betaState() ?? null };
+  });
+
+  // the testnet beta's spend cap (BETA_SPEND_CAP_USD): raise it by addUsd; the beta reopens when the spend is below it
+  route('POST', /^\/api\/admin\/beta\/reopen$/, async (_m, req) => {
+    requireAdmin(req);
+    const b = await readBody(req);
+    if (typeof b.addUsd !== 'number') throw new ApiError('invalid_request', 'addUsd: dollars to add to the cap, a number above 0', 400, 'addUsd');
+    return { beta: d.game.reopenBeta(b.addUsd) };
   });
 
   route('GET', /^\/api\/admin\/requests$/, (_m, req, _res, url) => {

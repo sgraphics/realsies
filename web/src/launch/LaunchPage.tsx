@@ -1,7 +1,8 @@
 // The coming-soon page at / until REAL's meme.cooking auction and the mainnet game open (PublicConfig.launch):
 // the logo, one headline, the countdown as the hero, "Get REAL" (the meme.cooking page, which shows its own
 // countdown before the auction), a silent trailer teaser under a big PLAY icon that opens the launch tweet on X (the
-// account until there is one; beside the countdown on wide screens), and the 18+ terms. No wallet, nothing else.
+// account until there is one; beside the countdown on wide screens), and the footer: 18+ and a small row of links
+// (Telegram and X when set, Terms). No wallet, nothing else.
 // At zero the countdown turns into the
 // game's own CHAT! and the page hands over to the game in place (`onLive`), no reload. The config is re-read every
 // minute (the start may move), and the page also steps aside if coins open first.
@@ -15,7 +16,8 @@ import { Icon } from '../ui/kit.tsx';
 import { useNow } from '../ui/hooks.ts';
 import { TermsScreen } from '../screens/Terms.tsx';
 import { BigClock } from './BigClock.tsx';
-import { comingSoon, fmtUtc, fmtWhen, teaserOf, tokenUrlOf, type TeaserLink } from './phase.ts';
+import { comingSoon, fmtUtc, fmtWhen, footLinksOf, teaserOf, tokenUrlOf, type TeaserLink } from './phase.ts';
+import { BETA_OVER_LANDING, consumeBetaOver } from '../state/beta.ts';
 
 const POLL_MS = 60_000;
 /** CHAT! stays on screen this long before the game takes over (shorter without motion). */
@@ -49,6 +51,8 @@ function useViewport(): { w: number; h: number } {
 export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive(): void; pollMs?: number }) {
   const [cfg, setCfg] = useState(p.config);
   const [terms, setTerms] = useState(false);
+  // sent here by the testnet game when its beta closed (?beta=over): one line of thanks; the parameter leaves the address
+  const [betaOver] = useState(consumeBetaOver);
   const now = useNow(250);
   const vp = useViewport();
   // the last launch settings stay on screen if the relay drops them (coins open: the game anyway)
@@ -108,10 +112,13 @@ export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive
   const utc = start !== undefined ? fmtUtc(start) : '';
   // the video card: the coming-soon phase only, while there is an X link to open
   const teaser = live ? null : teaserOf(cfg.launch ?? last.current);
+  // the footer's links before Terms: Telegram, X
+  const links = footLinksOf(cfg.launch ?? last.current);
   return (
     <div class={'ln' + (live ? ' is-live' : '')}>
       <Sky />
       <main class="ln-main">
+        {betaOver && <p class="ln-beta" role="status">{BETA_OVER_LANDING}</p>}
         <Brand w={vp.w} h={vp.h} />
         <h1 class="ln-h1">Real or <span class="ln-hl">not?</span></h1>
         <p class="ln-cap">{live ? 'The game is open' : start !== undefined ? CAPTION : 'The game and $REAL go live soon'}</p>
@@ -135,9 +142,17 @@ export function LaunchPage(p: { client: GameClient; config: PublicConfig; onLive
         </div>
       </main>
       <footer class="ln-foot">
-        <span class="ln-18">18+</span>
-        <span><T text="For players 18 and older." /></span>
-        <button type="button" class="px-link" onClick={() => setTerms(true)}>Terms</button>
+        <p class="ln-age">
+          <span class="ln-18">18+</span>
+          <span><T text="For players 18 and older." /></span>
+        </p>
+        <nav class="ln-links" aria-label="Links">
+          {links.flatMap((l) => [
+            <a key={l.label} class="px-link" href={l.href} target="_blank" rel="noopener" aria-label={`${l.aria} (opens in a new tab)`}>{l.label}</a>,
+            <span key={l.label + '-dot'} class="ln-dot" aria-hidden="true">·</span>,
+          ])}
+          <button type="button" class="px-link" onClick={() => setTerms(true)}>Terms</button>
+        </nav>
       </footer>
       {live && <div class="ln-flash" aria-hidden="true" />}
       {terms && <TermsScreen testnet={false} onClose={() => setTerms(false)} />}

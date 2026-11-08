@@ -479,4 +479,6 @@ const agents = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'agent
 const wallet = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'wallet.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
 // ---------- 8. the launch page at / before REAL is live (own process) ----------
 const launch = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'launch.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
-process.exit(failures || smoke.status !== 0 || agents.status !== 0 || wallet.status !== 0 || launch.status !== 0 ? 1 : 0);
+// ---------- 9. the testnet beta's end: betaClosed, beta_closed, ?beta=over (own process) ----------
+const beta = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'beta.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
+process.exit(failures || smoke.status !== 0 || agents.status !== 0 || wallet.status !== 0 || launch.status !== 0 || beta.status !== 0 ? 1 : 0);

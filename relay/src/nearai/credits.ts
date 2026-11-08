@@ -129,6 +129,8 @@ export class CreditMonitor {
   clientFor: (keyId: string) => NearAi | undefined = () => undefined;
   /** a key went out, recovered, or crossed into low credit */
   onChange?: (s: KeyState, before: AiStatus) => void;
+  /** spend was recorded on a key (every successful completion): the game rechecks the beta's spend cap */
+  onSpend?: (keyId: string, spendUsd: number) => void;
 
   constructor(private db: Db, opts: CreditOptions) {
     this.budgetUsd = opts.budgetUsd;
@@ -249,6 +251,7 @@ export class CreditMonitor {
       s.calls++;
       if (s.out) this.recover(s, 'a call succeeded');
       this.refresh(s);
+      this.spent(s);
       return;
     }
     const f = keyFailure(res.status, res.response);
@@ -284,6 +287,15 @@ export class CreditMonitor {
     s.spendUsd += usd;
     s.calls += calls;
     this.refresh(s);
+    this.spent(s);
+  }
+
+  private spent(s: KeyState): void {
+    try {
+      this.onSpend?.(s.keyId, s.spendUsd);
+    } catch (e) {
+      log.warn(`spend hook: ${errMsg(e)}`);
+    }
   }
 
   /** The one-token completion: back to ok when it succeeds. */

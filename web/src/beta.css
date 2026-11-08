@@ -1,0 +1,33 @@
+/* The testnet beta's end (src/state/beta.ts): one calm note across the full width, above everything, in the game's
+   panel colours; and the launch page's one-line thank-you after the redirect. */
+.beta-over {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: var(--panel, #262b44);
+  color: var(--ink, #ead4aa);
+  border-bottom: 3px solid var(--accent, #feae34);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.35);
+  text-align: center;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.beta-over .px-body { font-size: 16px; }
+.ln-beta {
+  margin: 0 auto 12px;
+  padding: 8px 14px;
+  max-width: min(92vw, 640px);
+  text-align: center;
+  color: var(--ink, #ead4aa);
+  background: rgba(38, 43, 68, 0.85);
+  border: 2px solid var(--accent, #feae34);
+  font-size: 15px;
+  line-height: 1.4;
+}

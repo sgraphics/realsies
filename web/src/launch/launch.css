@@ -149,8 +149,14 @@ html.kit .ln .ln-cta .px-icon { width: 1.25em; height: 1.25em; }
 
 /* ---------- foot ---------- */
 .ln-foot { position: relative; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 12px; padding: 10px var(--ln-pad) max(14px, env(safe-area-inset-bottom)); font-size: 14px; color: var(--ln-dim); text-shadow: 1px 1px 0 var(--ln-edge); }
+.ln-age { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
 .ln-18 { display: inline-block; padding: 5px 6px 4px; font-family: var(--font-pixel); font-size: 8px; line-height: 1; color: #ffffff; text-shadow: none; background: #a22633; border: 2px solid #3e2731; }
 .ln-foot .px-link { color: var(--ln-gold); font: inherit; }
+/* Telegram · X · Terms: small text links (the countdown and Get $REAL stay the heroes), each a fair tap target
+   whose padding reaches past the line without making the footer taller */
+.ln-links { display: inline-flex; align-items: center; }
+.ln-links .px-link { padding: 6px 8px; margin: -6px 0; }
+.ln-dot { color: var(--ln-dim); }
 @media (min-width: 1800px) and (min-height: 900px) { .ln-foot { font-size: 18px; } .ln-18 { font-size: 16px; } }
 
 /* ---------- phones held sideways (last, so it wins): less of everything around the countdown ---------- */

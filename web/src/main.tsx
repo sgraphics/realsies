@@ -8,6 +8,7 @@ import './screens.css';
 import './hud.css';
 import './countdown.css';
 import './wallet.css';
+import './beta.css';
 import type { GameClient, PublicConfig } from '../../shared/protocol.ts';
 import { App } from './app.tsx';
 import { createClient, createWallet } from './net/index.ts';

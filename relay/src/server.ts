@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ServerMsg } from '../../shared/protocol.js';
-import { Game, GameError, type Conn } from './game/game.js';
+import { BETA_CLOSED, Game, GameError, type Conn } from './game/game.js';
 import type { BotmasterHub } from './bot/remote.js';
 import { BRAIN_PROTOCOL, INTENTS, LENGTHS, LIMITS, TOPICS } from './bot/api.js';
 import { STEERING, STEERING_SHA256, STEER_VERSION } from './bot/intents.js';
@@ -141,11 +141,13 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   // ---------- wallet sign-in and sessions (protocol v1.3; src/auth/service.ts) ----------
   route('POST', /^\/api\/auth\/challenge$/, (_m, req) => {
     if (!auth) throw new GameError('wallet_disabled', 'wallet sign-in is off on this relay', 404);
+    if (game.betaClosed()) throw new GameError('beta_closed', BETA_CLOSED, 403); // the beta is over: no new sessions
     if (!signIns.allow(clientIp(req))) throw new GameError('rate_limited', 'too many sign-ins from here; wait a few minutes', 429);
     return auth.challenge();
   });
   route('POST', /^\/api\/auth\/verify$/, async (_m, req) => {
     if (!auth) throw new GameError('wallet_disabled', 'wallet sign-in is off on this relay', 404);
+    if (game.betaClosed()) throw new GameError('beta_closed', BETA_CLOSED, 403);
     const body = await readBody(req);
     const { token, session } = await auth.verify(body);
     game.ensureWalletUser(session.account);

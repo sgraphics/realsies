@@ -25,6 +25,7 @@ import { qaConsent, qaTicked, runQa } from './qa.ts';
 import { airdropOn, holdsAny, panelMode } from './state/airdrop.ts';
 import { termsAccepted } from './state/consent.ts';
 import type { PendingSeat } from './state/guest.ts';
+import { BETA_OVER, BETA_OVER_LANDING, BETA_REDIRECT_MS, betaEndOf, betaOverUrl, chatRunning, consumeBetaOver } from './state/beta.ts';
 
 type Overlay =
   | { kind: 'seat'; level: Level; seat: Seat }
@@ -53,6 +54,20 @@ export function App({ store }: { store: Store }) {
   const [login, setLogin] = useState<{ seat?: PendingSeat } | null>(null);
   // the tapped seat, waiting for the player's own room after sign-in
   const pending = useRef<PendingSeat | null>(null);
+
+  // the testnet beta is over (config.betaClosed, or a beta_closed error): one calm note across the top, then, 5 s on
+  // and once the player's running chat (and its call) is done, the relay's redirect with ?beta=over
+  const betaEnd = betaEndOf(s);
+  const running = chatRunning(s);
+  useEffect(() => {
+    if (!betaEnd || running) return;
+    const t = setTimeout(() => location.assign(betaOverUrl(betaEnd.redirect, location.href)), BETA_REDIRECT_MS);
+    return () => clearTimeout(t);
+  }, [!!betaEnd, betaEnd?.redirect, running]);
+  // arrived from a closed beta (?beta=over): one thank-you line; the parameter leaves the address
+  useEffect(() => {
+    if (consumeBetaOver()) setToast({ text: BETA_OVER_LANDING, kind: 'info', at: Date.now(), icon: 'chat', ms: 7000 });
+  }, []);
 
   useEffect(() => {
     // a wallet session stored in this browser signs straight back in (QA runs drive their own)
@@ -289,6 +304,11 @@ export function App({ store }: { store: Store }) {
       {terms && <TermsScreen testnet={testnet} onClose={() => setTerms(false)} />}
       {s.accountId && s.status !== 'open' && s.welcomed && (
         <div class="toast-stack"><div class="px-panel tight toast">Reconnecting…</div></div>
+      )}
+      {betaEnd && (
+        <div class="beta-over" role="status" aria-live="polite">
+          <Icon name="chat" /> <span class="px-body">{BETA_OVER}</span>
+        </div>
       )}
       {toast && (
         <div class="toast-stack" role="status">

@@ -5,6 +5,7 @@
 
 import { render } from 'preact';
 import './launch.css';
+import '../beta.css';
 import type { GameClient, PublicConfig } from '../../../shared/protocol.ts';
 import { applyTheme } from '../ui/theme.ts';
 import { LaunchPage } from './LaunchPage.tsx';

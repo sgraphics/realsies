@@ -44,7 +44,8 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `LAUNCH_AUCTION_START`, `LAUNCH_AUCTION_END` | | the launch (protocol v1.4, `PublicConfig.launch`): REAL's meme.cooking auction, which opens with the mainnet game; ISO times with their zone (`2026-11-08T15:00:00Z`), the end defaulting to 24 hours after the start. Setting any `LAUNCH_*` turns it on. Until the start `/` is the coming-soon page (a countdown to the start and "Get REAL"; the game at `/play`); at the start the page hands over to the game in place, and from then `/` is the game with a banner: "REAL auction is live, ends in hh:mm, Get REAL", after the end "REAL is finalizing, coins open soon". Once the coin is set on the contract (`coinsOpen`, re-read every minute) the relay drops `launch`, pushes the config to every socket and the banner goes, no restart. Ignored with `TEST_MODE=1`: the testnet demo never shows any of it. A bad value stops the relay at boot |
 | `LAUNCH_TOKEN_URL` | `BUY_URL` | "Get REAL" (https): the meme.cooking page of REAL, on the coming-soon page (meme.cooking shows its own countdown before the auction) and in the banner; unset and no `BUY_URL`: the page shows the start time instead |
 | `LAUNCH_VIDEO_URL` | | the launch tweet with the trailer: the coming-soon page's video card (a silent teaser loop, `web/public/launch-teaser.mp4`, under a big PLAY icon) opens it in a new tab. An https link on x.com or twitter.com |
-| `LAUNCH_X_URL` | | the game's X account (`https://x.com/realsieslol`): where the video card goes until `LAUNCH_VIDEO_URL` is set ("Follow @realsieslol on X"); neither set: no card. An https link on x.com or twitter.com. `LAUNCH_DEMO_URL`, `LAUNCH_TRAILER` and `LAUNCH_POSTER` are no longer read (the relay warns when one is set) |
+| `LAUNCH_X_URL` | | the game's X account (`https://x.com/realsieslol`): where the video card goes until `LAUNCH_VIDEO_URL` is set ("Follow @realsieslol on X"); neither set: no card. Also "X" in the coming-soon page's footer links. An https link on x.com or twitter.com. `LAUNCH_DEMO_URL`, `LAUNCH_TRAILER` and `LAUNCH_POSTER` are no longer read (the relay warns when one is set) |
+| `LAUNCH_TELEGRAM_URL` | | the game's Telegram (`https://t.me/realsieslol`, protocol v1.8, `launch.telegramUrl`): "Telegram" in the coming-soon page's footer links (Telegram, X, Terms), in a new tab; unset: no Telegram link. An https link on t.me or telegram.me |
 | `PLAY_KEY_ALLOWANCE_NEAR` | 0.25 | gas allowance of the play key a browser asks its wallet to add |
 | `PLAY_GAS_TGAS` | 30 | prepaid gas of each browser-signed play and call (only burnt gas is charged; a play burns about 3 Tgas) |
 | `SIGN_TIMEOUT_SECONDS` | 20 | a browser has this long to sign a play or call (`sign_tx`); then the play goes free |
@@ -71,6 +72,8 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `AGENT_NOTIFY_EMAIL`, `AGENT_NOTIFY_FROM`, `NOTIFY_OUTBOX` | | operator emails for every access request and every persona to review (`src/agents/notify.ts`): queued as files in the outbox, sent through Amazon SES by the root-only `deploy/realsies-mail.py`; off unless the address is set |
 | `AGENT_REQUESTS_PER_HOUR` | 5 | access requests per IP per hour |
 | `AGENT_SLOTS_PER_LEVEL` | 3 | builder slots: per round and per level, at most this many AI builders' (and remote-brain botmasters') personas join the cast, round-robin over botmasters by round id; 0 = none |
+| `BETA_SPEND_CAP_USD` | | the testnet beta's cap (set 4 on the testnet relay only): when the relay's own NEAR AI key's lifetime spend reaches it (checked at every recorded completion) the beta closes: `PublicConfig.betaClosed` pushed to every connection, `pick_seat` and new sign-ins get `beta_closed`, no new rounds, running chats finish and the round settles; one log line. `POST /api/admin/beta/reopen {addUsd}` raises the cap (kept in the DB); `GET /api/admin/health` shows `beta: {capUsd, spendUsd, closed}`. Unset = no cap |
+| `BETA_CLOSED_REDIRECT` | https://realsies.lol | where the web sends players when the beta closes (with `?beta=over`) |
 | `NEAR_AI_BUDGET_USD` | 10 | the relay's own key: 80% of the estimated spend warns in the log, `/api/health` `ai.status` `low_credit` (spend in `GET /api/admin/health`) |
 | `NEAR_AI_RECHECK_SECONDS` | 180 | a key out of credits is retried with a one-token completion this often; any success recovers it |
 | `REMOTE_SILENCE_SECONDS` | 20 | a remote brain silent this long is replaced by the default brain |
@@ -209,7 +212,7 @@ Same code with `TEST_MODE=0`. It needs, next to the testnet relay (its own unit,
 | `AUTH_RECIPIENT` | `realsies.lol` (and `testnet.realsies.lol` on the testnet relay once it moves there) |
 | `ROUND_MINUTES`, `FREE_CHATS_PER_DAY` | 360 and 3 |
 | `BUY_URL` | the meme.cooking page of REAL now; the Rhea swap after the launch finalizes (a restart) |
-| `LAUNCH_AUCTION_START` (`LAUNCH_AUCTION_END` if not 24 hours), `LAUNCH_TOKEN_URL`, `LAUNCH_X_URL`, then `LAUNCH_VIDEO_URL` once the launch tweet is up (a restart) | the coming-soon page at `/` until the start (the game at `/play`), then the game with the auction banner until the coin is set. In `.env.mainnet`, and realsies.lol pointed at this relay: a test relay ignores them |
+| `LAUNCH_AUCTION_START` (`LAUNCH_AUCTION_END` if not 24 hours), `LAUNCH_TOKEN_URL`, `LAUNCH_X_URL`, `LAUNCH_TELEGRAM_URL`, then `LAUNCH_VIDEO_URL` once the launch tweet is up (a restart) | the coming-soon page at `/` until the start (the game at `/play`), then the game with the auction banner until the coin is set. In `.env.mainnet`, and realsies.lol pointed at this relay: a test relay ignores them |
 | `NEAR_AI_API_KEY`, `NEAR_AI_BUDGET_USD`, `ADMIN_TOKEN`, `RELAY_ENCRYPTION_KEY` | as on testnet; its own NEAR AI budget |
 | `CHAIN` | `near` (or `auto` with the secrets file present) |
 
@@ -284,9 +287,9 @@ the airdrop: 100 into the wallet itself, registered on the coin, a second at onc
 route refused the same way, still none ten minutes on while wallet plus game hold 100, the test users' faucet refused to a
 wallet account; a test user's airdrop straight into its game balance, open again ten minutes on under 50, none at 130).
 
-The launch (`test/launch.test.ts`): `LAUNCH_*` into `PublicConfig.launch` (nothing set, the 24-hour end, every field, the X links, the retired
+The launch (`test/launch.test.ts`): `LAUNCH_*` into `PublicConfig.launch` (nothing set, the 24-hour end, every field, the X and Telegram links, the retired
 variables read no more), the checks that stop a bad value at boot (a time without its zone, an end before the start or without one, X links not on X,
-a token page that is not https); then in-process relays: without test mode `launch` is in `/api/config` and the welcome until the
+a Telegram link not on t.me, a token page that is not https); then in-process relays: without test mode `launch` is in `/api/config` and the welcome until the
 coin is set, then dropped from both and pushed to every socket; a test relay never sends it, not even with no coin on the contract; no
 `LAUNCH_*`, no `launch`; `/play` is the app's `index.html` like `/`.
 

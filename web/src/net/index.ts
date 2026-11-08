@@ -11,6 +11,9 @@
 //                               with its banner; &startin=3 starts the auction 3 s in (the page turns into the
 //                               game), &opens=5 sets the coin 5 s in (the banner goes), &notoken=1 no token page;
 //                               the video card opens the launch tweet, &tweet=0 the account instead, &nox=1 no card
+//                               (and no X in the footer); the footer links Telegram, X and Terms, &notg=1 no Telegram
+//   &betaclosed=1               the testnet beta is over (config.betaClosed): the game's note, then after 5 s the mock
+//                               launch page with ?beta=over (also: ?mock=1&launch=soon&beta=over for that page alone)
 
 import type { GameClient } from '../../../shared/protocol.ts';
 import { MockGameClient, type MockOptions, resetMockState } from './mock.ts';
@@ -41,12 +44,14 @@ export function createClient(search?: string): GameClient {
     const opens = Number(q.get('opens'));
     const startIn = Number(q.get('startin'));
     const token = q.get('notoken') !== '1';
-    const links = { tweet: q.get('tweet') !== '0', x: q.get('nox') !== '1' }; // the video card: the launch tweet, the account, none
+    // the video card (the launch tweet, the account, none) and the footer's Telegram and X
+    const links = { tweet: q.get('tweet') !== '0', x: q.get('nox') !== '1', telegram: q.get('notg') !== '1' };
     const client = new MockGameClient({
       longNames: q.get('longnames') === '1',
       ...(round > 1 ? { startRoundId: round } : {}),
       ...(searchMs > 0 ? { searchMs: [searchMs, searchMs] as [number, number] } : {}),
       ...(q.get('nobots') === '1' ? { noBots: true } : {}), // the bots are napping: no new chats (bots_unavailable)
+      ...(q.get('betaclosed') === '1' ? { betaClosed: true } : {}), // the testnet beta is over: the note, then the launch page with ?beta=over
       ...(q.get('wallet') === '1' ? { wallet: true, buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet:v1' } : {}),
       ...(q.get('wallet') === '1' && q.get('net') === 'mainnet' ? { mainnet: true, storageKey: 'realsies:mock:wallet-main:v1' } : {}),
       ...(q.get('wallet') === 'test' ? { buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet-test:v1' } : {}),

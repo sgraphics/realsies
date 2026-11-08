@@ -48,6 +48,8 @@ const SAY_INTERVAL_MS = 600;
  * empty key), so no new chat starts. Neutral on purpose: it never hints that a human may still come.
  */
 export const BOTS_UNAVAILABLE = 'The bots are napping. New chats are paused for a few minutes; chats already running finish as normal.';
+/** error beta_closed (new searches and sign-ins once the testnet beta's NEAR AI spend cap is reached) */
+export const BETA_CLOSED = 'The beta test is over. Thanks for playing! See you on mainnet.';
 const BOT_CHAT_ABORTED = 'The bots are napping, so this chat could not start. New chats are paused for a few minutes; if you played coins, your locked coins come back when the round settles.';
 
 /** AI builders, NEAR AI credit tracking and wallet sessions (src/agents/, src/nearai/credits.ts, src/auth/); all optional. */
@@ -161,6 +163,8 @@ export class Game implements BotHost {
   readonly credits: CreditMonitor;
   /** botmasters' own NEAR AI keys */
   readonly byok?: ByokKeys;
+  /** the testnet beta reached its NEAR AI spend cap (BETA_SPEND_CAP_USD): no new chats, sign-ins or rounds */
+  private betaClosedNow = false;
   /** wallet sign-in: sessions and their browsers' play keys */
   readonly auth?: AuthService;
   /** plays and calls waiting for a browser's signature, by request id */
@@ -185,6 +189,10 @@ export class Game implements BotHost {
     this.byok = ext.byok;
     this.auth = ext.auth;
     this.credits = ext.credits ?? new CreditMonitor(db, { budgetUsd: cfg.nearAiBudgetUsd, recheckMs: cfg.nearAiRecheckSeconds * 1000 });
+    // the beta's spend cap is rechecked every time the house key's spend is recorded
+    this.credits.onSpend = (keyId) => {
+      if (keyId === 'house') this.checkBeta();
+    };
   }
 
   // =====================================================================================
@@ -208,6 +216,8 @@ export class Game implements BotHost {
       }
     }
     this.coinUnit = this.chainCfg.coinUnit;
+    this.betaClosedNow = !!this.betaState()?.closed;
+    if (this.betaClosedNow) log.warn(`beta closed: ${this.betaLine()}; no new chats, sign-ins or rounds`);
     this.publicConfig = this.makePublicConfig();
     if (!this.chainCfg.coinsOpen) log.warn(`${this.chain.contractId} has no coin set yet: free play only, "Coins open when REAL launches" (re-checked every minute)`);
     this.logLaunch();
@@ -216,7 +226,8 @@ export class Game implements BotHost {
     this.lastHumanAt = Number.isFinite(seen) && seen > 0 ? seen : Date.now();
     await this.resume();
     if (!this.current) {
-      if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; the next round starts when one connects`);
+      if (this.betaClosedNow) log.info('beta closed: no new round');
+      else if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; the next round starts when one connects`);
       else await this.startRound();
     }
     this.housekeeping = setInterval(() => this.housekeep(), 30_000);
@@ -253,7 +264,68 @@ export class Game implements BotHost {
         gas: { deposit: (100n * TGAS).toString(), withdraw: (50n * TGAS).toString(), storage: (30n * TGAS).toString() },
       },
       ...(this.launchOn() ? { launch: { ...this.cfg.launch! } } : {}),
+      ...(this.betaClosedNow ? { betaClosed: { redirect: this.cfg.betaClosedRedirect, reason: 'spend_cap' as const } } : {}),
     };
+  }
+
+  // =====================================================================================
+  // the testnet beta's spend cap (BETA_SPEND_CAP_USD)
+  // =====================================================================================
+
+  /** extra cap given by the operator (POST /api/admin/beta/reopen), kept in the DB */
+  private betaExtraUsd(): number {
+    const v = Number(this.db.getKv('beta_cap_add_usd') ?? '0');
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  }
+
+  /** The cap, the house key's lifetime spend, and whether the beta is closed; undefined without a cap. */
+  betaState(): { capUsd: number; spendUsd: number; closed: boolean } | undefined {
+    if (this.cfg.betaSpendCapUsd === undefined) return undefined;
+    const capUsd = Math.round((this.cfg.betaSpendCapUsd + this.betaExtraUsd()) * 1e6) / 1e6;
+    const spendUsd = Math.round((this.credits.state('house')?.spendUsd ?? 0) * 1e6) / 1e6;
+    return { capUsd, spendUsd, closed: spendUsd >= capUsd };
+  }
+
+  private betaLine(): string {
+    const b = this.betaState();
+    return b ? `NEAR AI spend $${b.spendUsd.toFixed(4)} of the $${b.capUsd} cap (BETA_SPEND_CAP_USD)` : 'no cap';
+  }
+
+  /** The beta is closed: no new chats, sign-ins or rounds; running chats finish and the round settles. */
+  betaClosed(): boolean {
+    return this.betaClosedNow;
+  }
+
+  /**
+   * After every house spend and on reopen: closes the beta when the spend reaches the cap, reopens it when the
+   * cap moves above the spend. Either way the public config changes and every connection gets it.
+   */
+  checkBeta(): void {
+    const closed = !!this.betaState()?.closed;
+    if (closed === this.betaClosedNow) return;
+    this.betaClosedNow = closed;
+    if (closed) {
+      log.warn(`beta closed: ${this.betaLine()}; no new chats, sign-ins or rounds; running chats finish; players go to ${this.cfg.betaClosedRedirect}`);
+      // searches under way end here, like the ones refused from now on
+      for (const sr of [...this.searches.values()]) {
+        this.cancelSearch(sr.account, true);
+        this.sendTo(sr.account, { t: 'error', code: 'beta_closed', message: BETA_CLOSED });
+      }
+    } else log.info(`beta reopened: ${this.betaLine()}`);
+    if (!this.publicConfig) return; // before start(): the config is made there
+    this.publicConfig = this.makePublicConfig();
+    this.broadcast({ t: 'config', config: this.publicConfig });
+    if (!closed && !this.current && !this.startingRound && !this.stopped && !this.isIdle()) void this.startRound();
+  }
+
+  /** The operator raises the cap by `addUsd` (kept across restarts); the beta reopens if the spend is below it now. */
+  reopenBeta(addUsd: number): { capUsd: number; spendUsd: number; closed: boolean } {
+    if (this.cfg.betaSpendCapUsd === undefined) throw new GameError('beta_cap_off', 'BETA_SPEND_CAP_USD is not set on this relay: there is no cap to raise', 409);
+    if (!(typeof addUsd === 'number' && Number.isFinite(addUsd) && addUsd > 0 && addUsd <= 10_000)) throw new GameError('invalid_request', 'addUsd: a number of dollars above 0', 400);
+    this.db.setKv('beta_cap_add_usd', String(this.betaExtraUsd() + addUsd));
+    log.info(`beta cap raised by $${addUsd}`);
+    this.checkBeta();
+    return this.betaState()!;
   }
 
   /**
@@ -274,7 +346,8 @@ export class Game implements BotHost {
     else if (this.launchOn()) {
       log.info(
         `launch: / is the coming-soon page until ${at(l.auctionStart)} (the game at /play meanwhile), then the game with the auction banner ` +
-          `until ${at(l.auctionEnd)} and "coins open soon" until the coin is set; "Get REAL" ${l.tokenUrl ?? this.cfg.buyUrl ?? 'not set yet'}; video card ${l.videoUrl ?? l.xUrl ?? 'none (no LAUNCH_VIDEO_URL or LAUNCH_X_URL)'}`,
+          `until ${at(l.auctionEnd)} and "coins open soon" until the coin is set; "Get REAL" ${l.tokenUrl ?? this.cfg.buyUrl ?? 'not set yet'}; video card ${l.videoUrl ?? l.xUrl ?? 'none (no LAUNCH_VIDEO_URL or LAUNCH_X_URL)'}; ` +
+          `footer links: ${[l.telegramUrl && `Telegram ${l.telegramUrl}`, l.xUrl && `X ${l.xUrl}`, 'Terms'].filter(Boolean).join(', ')}`,
       );
     } else log.info('LAUNCH_* is set, but coins are open: no coming-soon page or banner, the game is at /');
   }
@@ -456,7 +529,7 @@ export class Game implements BotHost {
       if (this.conns.size > 0) this.markHuman();
       if (this.current) this.db.pruneAttestationRaw(this.current.id - 30);
       for (const r of this.rounds.values()) if (r.status === 'settling' && !this.settling.has(r.id)) void this.settle(r);
-      if (!this.current && !this.startingRound && !this.stopped && !this.isIdle()) void this.startRound();
+      if (!this.current && !this.startingRound && !this.stopped && !this.isIdle() && !this.betaClosedNow) void this.startRound();
       void this.pruneSettled();
     } catch (e) {
       log.error('housekeeping', e);
@@ -891,7 +964,8 @@ export class Game implements BotHost {
       this.current = null;
       if (this.stopped) {
         /* shutting down */
-      } else if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; no new round until one connects`);
+      } else if (this.betaClosedNow) log.info(`beta closed: round ${r.id} settles, no new round`);
+      else if (this.isIdle()) log.info(`idle: no human connected for ${this.cfg.idleMinutes} min; no new round until one connects`);
       else await this.startRound();
     }
     void this.settle(r);
@@ -903,8 +977,8 @@ export class Game implements BotHost {
     this.markHuman(true); // a tester is here
     const r = this.current;
     if (!r) {
-      // idle: nothing to end; a fresh round is what the caller is after
-      if (!this.stopped) await this.startRound();
+      // idle: nothing to end; a fresh round is what the caller is after (not with the beta closed)
+      if (!this.stopped && !this.betaClosedNow) await this.startRound();
       return;
     }
     if (r.endedEarly || r.status === 'settling' || r.status === 'settled') return;
@@ -936,7 +1010,7 @@ export class Game implements BotHost {
         this.saveRound(r);
         if (this.current === r) {
           this.current = null;
-          await this.startRound();
+          if (!this.betaClosedNow) await this.startRound();
         }
         await this.settle(r);
       } catch (e) {
@@ -1194,7 +1268,7 @@ export class Game implements BotHost {
     }
     const wasIdle = !this.current && this.cfg.idleMinutes > 0 && Date.now() - this.lastHumanAt >= this.cfg.idleMinutes * 60_000;
     this.markHuman(true);
-    if (!this.current && !this.stopped) {
+    if (!this.current && !this.stopped && !this.betaClosedNow) {
       // idle (or between rounds): a human is here, so a round starts now and the welcome shows it
       if (wasIdle) log.info(`${a} connected while idle; starting a round`);
       await this.startRound().catch((e) => log.error(`round start on connect of ${a}`, e));
@@ -1418,6 +1492,12 @@ export class Game implements BotHost {
     if (busy) throw new GameError('busy', 'finish your current chat first');
     const seat = this.seatOf(r.id, account, level, seatIndex);
     if (seat.state !== 'open') throw new GameError('seat_taken', `seat is ${seat.state}`);
+    // the beta is over (its NEAR AI spend cap): no new chats; the client shows the end and moves on
+    if (this.betaClosedNow) {
+      this.sendTo(account, { t: 'error', code: 'beta_closed', message: BETA_CLOSED });
+      this.pushSeat(account, r.id, level, seatIndex);
+      return;
+    }
     // no bots, no new chats: nobody is matched while no bot could talk, humans included
     if (this.chatsPaused(r, level)) {
       this.sendTo(account, { t: 'error', code: 'bots_unavailable', message: BOTS_UNAVAILABLE });

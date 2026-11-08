@@ -531,22 +531,36 @@ try {
   const vid = card && nodes(card).find((n) => n.localName === 'video');
   ok(/Watch the trailer on X/.test(st) && card?.attrs.href === mockLaunch('soon').videoUrl && card?.attrs.target === '_blank' && card?.attrs.rel === 'noopener', 'the video card opens the launch tweet in a new tab, rel noopener: ' + card?.attrs.href);
   ok(vid?.attrs.src === '/launch-teaser.mp4' && vid?.attrs.poster === '/launch-teaser.png' && vid?.attrs.preload === 'metadata', 'the teaser and its poster, preload metadata');
+  // the footer: a small row of links, Telegram · X · Terms; Telegram and X (the account) in a new tab
+  const footOf = () => {
+    const nav = nodes(root).find((n) => String(n.attrs.class ?? n.className).split(' ').includes('ln-links'));
+    return nav ? nodes(nav).filter((n) => n.localName === 'a' || n.localName === 'button') : [];
+  };
+  const fl = footOf();
+  ok(
+    fl.map((n) => n.textContent).join(' · ') === 'Telegram · X · Terms' && fl[0].attrs.href === 'https://t.me/realsieslol' && fl[1].attrs.href === 'https://x.com/realsieslol' &&
+      fl.slice(0, 2).every((n) => n.attrs.target === '_blank' && n.attrs.rel === 'noopener') && fl[2].localName === 'button',
+    'the footer: Telegram · X · Terms, Telegram and X in a new tab: ' + fl.map((n) => `${n.textContent} ${n.attrs.href ?? ''}`).join(' · '),
+  );
   render(null, root as unknown as Element);
   soonClient.dispose();
-  const cardText = async (o: { tweet?: boolean; x?: boolean }) => {
+  const cardText = async (o: { tweet?: boolean; x?: boolean; telegram?: boolean }) => {
     const c = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), o), storageKey: null, timeScale: 0.02 });
     render(h(LaunchPage, { client: c, config: await c.getConfig(), onLive() {}, pollMs: 60_000 }), root as unknown as Element);
     await sleep(30);
     const t = root.textContent;
     const a = nodes(root).find((n) => String(n.attrs.class ?? n.className).split(' ').includes('ln-teaser'));
+    const foot = footOf().map((n) => n.textContent).join(' · ');
     render(null, root as unknown as Element);
     c.dispose();
-    return { t, href: a?.attrs.href };
+    return { t, href: a?.attrs.href, foot };
   };
   const acct = await cardText({ tweet: false });
-  ok(/Follow @realsieslol on X/.test(acct.t) && acct.href === 'https://x.com/realsieslol' && !/Watch the trailer/.test(acct.t), 'no launch tweet yet: the card opens the account');
+  ok(/Follow @realsieslol on X/.test(acct.t) && acct.href === 'https://x.com/realsieslol' && !/Watch the trailer/.test(acct.t) && acct.foot === 'Telegram · X · Terms', 'no launch tweet yet: the card opens the account');
   const nox = await cardText({ x: false });
-  ok(nox.href === undefined && !/on X/.test(nox.t) && /Get \$REAL/.test(nox.t), 'no X link: no card, the countdown and Get REAL as before');
+  ok(nox.href === undefined && !/on X/.test(nox.t) && /Get \$REAL/.test(nox.t) && nox.foot === 'Telegram · Terms', 'no X link: no card and no X in the footer, the countdown and Get REAL as before: ' + nox.foot);
+  const bare = await cardText({ x: false, telegram: false });
+  ok(bare.foot === 'Terms' && /18\+/.test(bare.t), 'no X and no Telegram: 18+ and Terms alone: ' + bare.foot);
   const noToken = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon', Date.now(), { token: false }), storageKey: null, timeScale: 0.02 });
   render(h(LaunchPage, { client: noToken, config: await noToken.getConfig(), onLive() {}, pollMs: 60_000 }), root as unknown as Element);
   await sleep(40);
