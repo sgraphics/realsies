@@ -22,6 +22,9 @@ for c in "${CLIPS[@]}"; do
   IFS='|' read -r src video title <<<"$c"
   variant=${video%.mp4}
   [ -f "$src/$video" ] || { echo "skip $variant: no $src/$video (render it first)" >&2; continue; }
+  # phones refuse H.264 above level 5.1 (the first short cut was 6.2 and would not open on iPhone)
+  lvl=$(ffprobe -v error -select_streams v:0 -show_entries stream=level -of csv=p=0 "$src/$video")
+  [ "${lvl:-0}" -le 51 ] || echo "warning: $video is H.264 level $lvl; phones may refuse it. Re-encode: ffmpeg -i in.mp4 -c:v libx264 -profile:v high -level:v 4.1 -refs 4 -crf 18 -preset slow -c:a copy -movflags +faststart out.mp4" >&2
   v=$(sha256sum "$src/$video" | cut -c1-10)
   mb=$(du -k "$src/$video" | awk '{printf "%.1f", $1/1024}')
   cp "$src/$video" "$TMP/$video"
