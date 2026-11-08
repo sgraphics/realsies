@@ -33,7 +33,7 @@ export function ConsentLine(p: { nudge: number; box: { current: HTMLInputElement
         }}
       />
       <span class="who-check" aria-hidden="true"><Icon name="check" /></span>
-      <span>I'm 18 or older and accept the <button type="button" class="px-link" onClick={(e) => { e.preventDefault(); p.onTerms(); }}>terms</button></span>
+      <span>I'm 18 or older, I play at my own risk and I accept the <button type="button" class="px-link" onClick={(e) => { e.preventDefault(); p.onTerms(); }}>terms</button></span>
     </label>
   );
 }

@@ -1,5 +1,5 @@
 // "Who are you?" (test mode): the six test users idle on pedestals right under the top bar; tap one
-// to play as them. First entry asks once, lightly: "I'm 18 or older and accept the terms". Test mode also
+// to play as them. First entry asks once, lightly: "I'm 18 or older, I play at my own risk and I accept the terms". Test mode also
 // offers wallet sign-in (to try it on testnet); without test mode the wallet is the only door (SignIn.tsx).
 // On testnet one line says what the coins are: Testnet: free test tokens, no real money.
 
@@ -84,7 +84,7 @@ function TestUserScreen({ store, onTerms }: { store: Store; onTerms(): void }) {
             }}
           />
           <span class="who-check" aria-hidden="true"><Icon name="check" /></span>
-          <span>I'm 18 or older and accept the <button type="button" class="px-link" onClick={(e) => { e.preventDefault(); onTerms(); }}>terms</button></span>
+          <span>I'm 18 or older, I play at my own risk and I accept the <button type="button" class="px-link" onClick={(e) => { e.preventDefault(); onTerms(); }}>terms</button></span>
         </label>
       )}
     </div>
