@@ -13,6 +13,7 @@ import { AuthError, publicPlayKey, type AuthService, type SessionRec } from './a
 import { errMsg } from './util.js';
 import { logger } from './log.js';
 import { CORS, bearerToken, clientIp, readBody, sendJson } from './http.js';
+import { AuctionView, memeIdOf } from './auction.js';
 
 const log = logger('http');
 
@@ -126,6 +127,9 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   route('GET', /^\/api\/rounds$/, () => game.listRounds());
   // v1.7: the current round, public: a guest watches the room before signing in (no session, nothing stored)
   route('GET', /^\/api\/round$/, () => ({ round: game.roundState() }));
+  // v1.10: the REAL auction at a glance for the deposit dialog (meme.cooking's API has no CORS for us), cached 15 s
+  const auction = new AuctionView(() => memeIdOf(game.publicConfig.launch?.tokenUrl ?? process.env.LAUNCH_TOKEN_URL));
+  route('GET', /^\/api\/auction$/, () => auction.get());
   route('GET', /^\/api\/rounds\/(\d+)\/results\/([^/]+)$/, (m, req) => {
     const account = seg(m[2]);
     actAs(req, account);

@@ -37,6 +37,8 @@ export interface HudProps {
   /** a guest watching the room: "Sign in" instead of the player's coins, rating and results */
   guest?: boolean;
   onSignIn?(): void;
+  /** the auction banner's Get $REAL: the deposit dialog (mainnet, while REAL's auction runs) */
+  onAuctionDeposit?(): void;
   /** who: the title panel content. */
   title?: ComponentChildren;
 }
@@ -251,7 +253,7 @@ export function Hud(p: HudProps) {
   return (
     <header ref={ref} class={'hud hud-' + kind} role="banner">
       {/* REAL's auction (mainnet): measured with the HUD, so the world lays out under it */}
-      <LaunchBanner store={store} chat={kind === 'chat'} />
+      <LaunchBanner store={store} chat={kind === 'chat'} onDeposit={p.onAuctionDeposit} />
       {/* the testnet demo, in the room while the player holds nothing: free test tokens in one tap */}
       <TestnetPanel store={store} kind={kind} />
       <div class="hud-bar">

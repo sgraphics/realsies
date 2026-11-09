@@ -596,5 +596,54 @@ console.log('the testnet airdrop');
   }
 }
 
+// ---------- 7. the REAL auction on meme.cooking: the deposit batch (protocol v1.10) ----------
+console.log('the REAL auction deposit');
+{
+  const A = await import('../src/launch/auction.ts');
+  const acct = 'sam.near';
+  const one = 10n ** 24n;
+  const kinds = (txs: { receiverId: string; actions: { type: string; params: unknown }[] }[]) => txs.map((t) => `${t.receiverId}:${t.actions.map((a) => (a.type === 'FunctionCall' ? (a.params as { methodName: string }).methodName : a.type)).join('+')}`).join(' ');
+  // nothing registered, no wNEAR: register on both, wrap, transfer
+  const all = A.auctionDepositTxs(acct, one / 10n, { memeRegistered: false, wrapRegistered: false, wnear: 0n });
+  ok(kinds(all) === 'meme-cooking.near:storage_deposit wrap.near:storage_deposit wrap.near:near_deposit wrap.near:ft_transfer_call', 'new account: both registrations, the wrap, the transfer: ' + kinds(all));
+  const [ms, ws, nd, ft] = all.map((t) => (t.actions[0] as { params: { args: Record<string, unknown>; gas: string; deposit: string } }).params);
+  ok(JSON.stringify(ms.args) === JSON.stringify({ account_id: acct, registration_only: true }) && ms.deposit === '20000000000000000000000', 'meme-cooking.near storage_deposit: registration only, 0.02 NEAR');
+  ok(JSON.stringify(ws.args) === JSON.stringify({ account_id: acct, registration_only: true }) && ws.deposit === '1250000000000000000000', 'wrap.near storage_deposit: registration only, 0.00125 NEAR');
+  ok(JSON.stringify(nd.args) === '{}' && nd.deposit === (one / 10n).toString(), 'near_deposit: the amount attached');
+  ok(ft.args.receiver_id === 'meme-cooking.near' && ft.args.amount === '100000000000000000000000' && ft.args.msg === '{"Deposit":{"meme_id":2313}}' && ft.deposit === '1' && ft.gas === '100000000000000', 'ft_transfer_call: to meme-cooking.near, the amount in yocto, {"Deposit":{"meme_id":2313}}, 1 yoctoNEAR, 100 Tgas');
+  ok(kinds(A.auctionDepositTxs(acct, one, { memeRegistered: true, wrapRegistered: true, wnear: 0n })) === 'wrap.near:near_deposit wrap.near:ft_transfer_call', 'both registered: the wrap and the transfer');
+  ok(kinds(A.auctionDepositTxs(acct, one, { memeRegistered: true, wrapRegistered: false, wnear: 0n })) === 'wrap.near:storage_deposit wrap.near:near_deposit wrap.near:ft_transfer_call', 'registered on meme.cooking only: the wNEAR registration first');
+  ok(kinds(A.auctionDepositTxs(acct, one, { memeRegistered: false, wrapRegistered: true, wnear: 0n })) === 'meme-cooking.near:storage_deposit wrap.near:near_deposit wrap.near:ft_transfer_call', 'registered on wrap.near only: the meme.cooking registration first');
+  ok(kinds(A.auctionDepositTxs(acct, one, { memeRegistered: true, wrapRegistered: true, wnear: 2n * one })) === 'wrap.near:ft_transfer_call', 'enough wNEAR already: the transfer alone');
+  ok(kinds(A.auctionDepositTxs(acct, one, { memeRegistered: true, wrapRegistered: true, wnear: one / 2n })) === 'wrap.near:near_deposit wrap.near:ft_transfer_call', 'not enough wNEAR: the whole amount is wrapped');
+  ok(A.parseNear('0.1') === one / 10n && A.parseNear('1') === one && A.parseNear('2,5') === (5n * one) / 2n && A.parseNear('abc') === null && A.parseNear('') === null, 'amounts in NEAR');
+  ok(A.fmtNear(one / 10n) === '0.1' && A.fmtNear(12_345_678n * 10n ** 20n) === '1,234.5678' && A.fmtNear(0n) === '0', 'NEAR amounts read like money');
+  ok(A.nearNeeded(one, { memeRegistered: false, wrapRegistered: false, wnear: 0n }) === one + A.MEME_STORAGE + A.WRAP_STORAGE + A.GAS_RESERVE, 'what the batch takes from the wallet');
+  ok(A.auctionLine({ memeId: 2313, totalDeposit: ((375n * one) / 10n).toString(), softCap: (100n * one).toString(), startMs: 0, endMs: 21 * 3_600_000 + 5000, finalized: false }, 0) === 'Auction: 37.5 of 100 NEAR soft cap, 21 h left', 'the auction line');
+
+  // the batch on the mock mainnet, one wallet approval
+  const launch = { auctionStart: Date.now() - 3_600_000, auctionEnd: Date.now() + 20 * 3_600_000, tokenUrl: 'https://meme.cooking/meme/2313' };
+  const { client, wallet, store, done } = setup({ mainnet: true, coinsOpen: false, launch }, { accountId: acct });
+  try {
+    const cfg = await store.actions.loadConfig();
+    ok(A.auctionDepositOn(cfg, Date.now()) && !A.auctionDepositOn(cfg, launch.auctionEnd + 1) && !A.auctionDepositOn({ ...cfg, network: 'testnet' }, Date.now()), 'offered on mainnet while the auction runs only');
+    await store.actions.walletSignIn();
+    const before = await client.auctionInfo();
+    const a0 = await client.auctionViews.account(acct);
+    const txs = A.auctionDepositTxs(acct, one, a0);
+    await wallet.send(acct, txs);
+    const a1 = await client.auctionViews.account(acct);
+    const after = await client.auctionInfo();
+    ok(wallet.calls.filter((c) => c === 'tx').length === 1 && JSON.stringify(wallet.sent[0]) === JSON.stringify(['storage_deposit', 'storage_deposit', 'near_deposit', 'ft_transfer_call']), 'one wallet approval for the whole batch');
+    ok(a1.memeRegistered && a1.wrapRegistered && a1.wnear === 0n && a1.near === a0.near - one - A.MEME_STORAGE - A.WRAP_STORAGE, 'registered on both, the NEAR wrapped and sent');
+    ok(BigInt(after.totalDeposit) - BigInt(before.totalDeposit) === one, 'the auction counts the deposit');
+    const again = A.auctionDepositTxs(acct, one / 2n, a1);
+    ok(again.length === 2, 'a second deposit: the wrap and the transfer');
+  } finally {
+    done();
+    storage.clear();
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

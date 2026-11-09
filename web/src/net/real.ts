@@ -1,6 +1,7 @@
 // GameClient over the relay's HTTP API and WebSocket (spec section 4).
 
 import type {
+  AuctionInfo,
   AirdropResult,
   AirdropStatus,
   AuthChallenge,
@@ -112,6 +113,10 @@ export class RealGameClient implements GameClient {
   }
   listRounds(): Promise<RoundSummary[]> {
     return this.http('GET', '/api/rounds');
+  }
+  /** v1.10: the REAL auction on meme.cooking at a glance, public */
+  auctionInfo(): Promise<AuctionInfo> {
+    return this.http('GET', '/api/auction');
   }
   /** v1.7: the current round for a guest, public, no session */
   async currentRound(): Promise<RoundState | null> {

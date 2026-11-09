@@ -33,7 +33,8 @@ function cramped(): boolean {
   return typeof window !== 'undefined' && (window.innerWidth < 700 || window.innerHeight < 600);
 }
 
-export function LaunchBanner(p: { store: Store; chat?: boolean }) {
+/** `onDeposit`: Get $REAL opens the deposit dialog (mainnet, while the auction runs), else it is meme.cooking's page. */
+export function LaunchBanner(p: { store: Store; chat?: boolean; onDeposit?(): void }) {
   const s = useStore(p.store);
   const now = useNow(5000);
   const phase = bannerPhase(s.config, now);
@@ -67,7 +68,11 @@ export function LaunchBanner(p: { store: Store; chat?: boolean }) {
             {left && <span class="hud-launch-sep"> · </span>}
             {left && (narrow ? <><span class="hud-n">{left}</span> left</> : <>ends in <span class="hud-n">{left}</span></>)}
           </span>
-          {token && <a class="hud-launch-cta" href={token} target="_blank" rel="noopener">Get $REAL</a>}
+          {p.onDeposit && s.config?.network === 'mainnet' ? (
+            <button type="button" class="hud-launch-cta" onClick={p.onDeposit}>Get $REAL</button>
+          ) : (
+            token && <a class="hud-launch-cta" href={token} target="_blank" rel="noopener">Get $REAL</a>
+          )}
         </>
       ) : (
         <>

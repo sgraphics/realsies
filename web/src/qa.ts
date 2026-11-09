@@ -103,7 +103,13 @@ export function qaConsent(search: string): void {
   if (q.get('mock') !== '1') return;
   const step = q.get('qa');
   if (step === 'consent') forgetTerms();
-  else if (q.get('as') || q.get('consent') === '1' || step) acceptTerms();
+  else if (q.get('as') || q.get('consent') === '1' || q.get('deposit') === '1' || step) acceptTerms();
+}
+
+/** QA: the amount typed in the auction's deposit dialog (&near=0.1). */
+export function qaAmount(search: string): string | undefined {
+  const q = new URLSearchParams(search);
+  return q.get('mock') === '1' ? q.get('near') ?? undefined : undefined;
 }
 
 /** QA: "Before you play" with its box already ticked (&tick=1). */
@@ -120,6 +126,13 @@ export async function runQa(store: Store, search: string, open: (what: string, a
   }
   // a mainnet-like mock (&wallet=1, or &launch=: before REAL) signs in with the mock wallet
   const walletMode = q.get('mock') === '1' && (q.get('wallet') === '1' || q.get('wallet') === 'test' || mockLaunchOf(search) !== null);
+  // &launch=auction&deposit=1: signed in with the mock wallet, the auction's deposit dialog open (&near=0.1 typed)
+  if (walletMode && q.get('deposit') === '1') {
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+    open('auction');
+    return;
+  }
   if (q.get('mock') === '1' && !q.get('as')) {
     // a guest: the room, then "Before you play" after a tap on a character, then signed in
     const step = q.get('qa') ?? '';

@@ -10,6 +10,8 @@ import type { Store } from './state/store.ts';
 import { useStore } from './state/hooks.ts';
 import { LobbyScreen } from './screens/Lobby.tsx';
 import { LoginModal } from './screens/Login.tsx';
+import { AuctionDepositDialog } from './launch/AuctionDeposit.tsx';
+import { auctionDepositOn } from './launch/auction.ts';
 import { SeatDialog } from './screens/SeatDialog.tsx';
 import { DepositDialog } from './screens/Deposit.tsx';
 import { ChatScreen } from './screens/Chat.tsx';
@@ -21,7 +23,7 @@ import { TermsScreen } from './screens/Terms.tsx';
 import { KeySetupDialog } from './screens/KeySetup.tsx';
 import { Button, Icon, type IconName } from './ui/kit.tsx';
 import { applyTheme } from './ui/theme.ts';
-import { qaConsent, qaTicked, runQa } from './qa.ts';
+import { qaAmount, qaConsent, qaTicked, runQa } from './qa.ts';
 import { airdropOn, holdsAny, panelMode } from './state/airdrop.ts';
 import { termsAccepted } from './state/consent.ts';
 import type { PendingSeat } from './state/guest.ts';
@@ -54,6 +56,9 @@ export function App({ store }: { store: Store }) {
   const [login, setLogin] = useState<{ seat?: PendingSeat } | null>(null);
   // the tapped seat, waiting for the player's own room after sign-in
   const pending = useRef<PendingSeat | null>(null);
+  // the REAL auction's deposit dialog (Get $REAL on the banner); a guest signs in first, then it opens
+  const [auction, setAuction] = useState(false);
+  const pendingAuction = useRef(false);
 
   // the testnet beta is over (config.betaClosed, or a beta_closed error): one calm note across the top, then, 5 s on
   // and once the player's running chat (and its call) is done, the relay's redirect with ?beta=over
@@ -83,6 +88,7 @@ export function App({ store }: { store: Store }) {
       if (what === 'verify') setVerify(arg as string);
       if (what === 'terms') setTerms(true);
       if (what === 'login') setLogin({ seat: arg as PendingSeat | undefined });
+      if (what === 'auction') setAuction(true);
     }).catch((e) => console.warn(e));
   }, [store]);
 
@@ -105,6 +111,10 @@ export function App({ store }: { store: Store }) {
   useEffect(() => {
     if (!s.accountId) return;
     setConsented(termsAccepted());
+    if (pendingAuction.current) {
+      pendingAuction.current = false;
+      setAuction(true);
+    }
     if (!login) return;
     if (login.seat) pending.current = login.seat;
     setLogin(null);
@@ -187,6 +197,16 @@ export function App({ store }: { store: Store }) {
   const testnet = !!(s.config?.testMode || s.config?.network === 'testnet');
   const openTerms = () => setTerms(true);
   const openLogin = (seat?: PendingSeat) => setLogin({ seat });
+  // Get $REAL: the deposit dialog for a wallet player; a guest signs in first (mainnet, while the auction runs)
+  const openAuction = auctionDepositOn(s.config, Date.now())
+    ? () => {
+        if (s.session) setAuction(true);
+        else {
+          pendingAuction.current = true;
+          openLogin();
+        }
+      }
+    : undefined;
   // a signed-in player whose accepted terms are older than the current version: the terms again, first
   const reconsent = !!s.accountId && !consented;
   let screen;
@@ -198,6 +218,7 @@ export function App({ store }: { store: Store }) {
         selectedSeat={login?.seat?.level === s.level ? login.seat.index : null}
         onSeat={(lv, seat) => openLogin({ level: lv, index: seat.index })}
         onSignIn={() => openLogin()}
+        onAuctionDeposit={openAuction}
         onResults={() => openLogin()}
         onRounds={() => openLogin()}
         onWallet={() => openLogin()}
@@ -231,6 +252,7 @@ export function App({ store }: { store: Store }) {
           setOverlay(null);
           void store.actions.signOut();
         }}
+        onAuctionDeposit={openAuction}
         onTerms={openTerms}
       />
     );
@@ -246,9 +268,13 @@ export function App({ store }: { store: Store }) {
           consentOnly={reconsent}
           ticked={qaTicked(location.search)}
           onConsent={() => setConsented(true)}
-          onClose={() => setLogin(null)}
+          onClose={() => {
+            pendingAuction.current = false;
+            setLogin(null);
+          }}
         />
       )}
+      {auction && s.session && !modal && <AuctionDepositDialog store={store} onClose={() => setAuction(false)} amount={qaAmount(location.search)} />}
       {overlay?.kind === 'seat' && (
         <SeatDialog
           store={store}

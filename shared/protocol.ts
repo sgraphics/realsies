@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.9 (2026-11-08: PublicConfig.betaClosed, the testnet beta's end at its NEAR AI spend cap, and error beta_closed; BotmasterProfile.schedule, the builder slots; additive).
+// Realsies relay <-> web protocol, v1.10 (2026-11-09: GET /api/auction and AuctionInfo, the REAL auction on meme.cooking for a deposit from realsies.lol; additive).
+// v1.9 (2026-11-08: PublicConfig.betaClosed, the testnet beta's end at its NEAR AI spend cap, and error beta_closed; BotmasterProfile.schedule, the builder slots; additive).
 // v1.8 (2026-11-08): LaunchConfig.telegramUrl, the Telegram link in the coming-soon page's footer; additive.
 // v1.7 (2026-11-08): GET /api/round, the current round for a guest without a session; additive.
 // v1.6 (2026-11-07): the testnet airdrop, AirdropStatus and AirdropResult; additive.
@@ -110,6 +111,17 @@ export interface PublicConfig {
 // tweet on X (or the account until there is one; the game is at `/play` all along). From
 // the start `/` is the game, with a banner while the auction runs ("ends in hh:mm · Get REAL") and after it until
 // coins open ("coins open soon"). The phase follows the visitor's clock.
+
+/** v1.10: the REAL auction on meme.cooking (GET /api/auction): amounts in yocto of the deposit token (wNEAR, 24 decimals) */
+export interface AuctionInfo {
+  memeId: number;
+  totalDeposit: string;
+  softCap: string;
+  hardCap?: string;
+  startMs: number;
+  endMs: number;
+  finalized: boolean;
+}
 
 export interface LaunchConfig {
   /** ms epoch the auction opens, and the game at `/` with it; absent = not announced yet (coming soon) */
@@ -559,6 +571,8 @@ export interface GameClient {
   getConfig(): Promise<PublicConfig>;
   /** v1.7: the current round, public (GET /api/round): a guest watches the room before signing in, no session */
   currentRound?(): Promise<RoundState | null>;
+  /** v1.10: the REAL auction on meme.cooking at a glance, public (GET /api/auction, cached 15 s by the relay) */
+  auctionInfo?(): Promise<AuctionInfo>;
   listTestUsers(): Promise<TestUser[]>;
   faucet(accountId: string, coins?: number): Promise<{ tx: string; me: Me }>;
   withdraw(accountId: string, coins: number): Promise<{ tx: string; me: Me }>;

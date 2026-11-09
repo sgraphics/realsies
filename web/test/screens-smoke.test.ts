@@ -142,6 +142,7 @@ const { LaunchPage } = await import('../src/launch/LaunchPage.tsx');
 const { mockLaunch } = await import('../src/launch/phase.ts');
 const { LaunchBanner } = await import('../src/ui/LaunchBanner.tsx');
 const { TestnetPanel } = await import('../src/ui/TestnetPanel.tsx');
+const { AuctionDepositDialog, AUCTION_WARNING } = await import('../src/launch/AuctionDeposit.tsx');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EV = join(here, '..', '..', 'experiments', 'near-ai', 'evidence', '2026-11-04');
@@ -429,6 +430,35 @@ try {
   render(null, root as unknown as Element);
   ks.actions.logout();
   kc.dispose();
+
+  // the REAL auction's deposit dialog (protocol v1.10): mainnet, while the auction runs, one wallet approval
+  {
+    const launch = { auctionStart: Date.now() - 3_600_000, auctionEnd: Date.now() + 20 * 3_600_000 + 60_000, tokenUrl: 'https://meme.cooking/meme/2313' };
+    const ac = new MockGameClient({ wallet: true, mainnet: true, coinsOpen: false, launch, storageKey: null, timeScale: 0.02 });
+    const as = createStore(ac, new MockWallet(ac, { accountId: 'sam.near', delayMs: 2 }));
+    await as.actions.loadConfig();
+    await as.actions.walletSignIn();
+    render(h(AuctionDepositDialog, { store: as, onClose() {}, amount: '1' }), root as unknown as Element);
+    for (let i = 0; i < 40 && !/12\.5 NEAR/.test(root.textContent); i++) await sleep(25);
+    const at = root.textContent;
+    ok(/Deposit into the \$REAL auction/.test(at) && /Auction: 37\.5 of 100 NEAR soft cap, 20 h left/.test(at) && /In your wallet: 12\.5 NEAR/.test(at), 'the dialog: the auction line and the wallet: ' + at.slice(0, 160).replace(/\s+/g, ' '));
+    ok(at.includes(AUCTION_WARNING) && /or on meme\.cooking/.test(at) && !disabled(findButton(root as never, /^\s*Deposit$/)), 'the warning, the link to meme.cooking, Deposit on for 1 NEAR');
+    // the Deposit button submits its form
+    const form = findEl(root as never, 'FORM');
+    const submit = form?.listeners?.submit;
+    if (typeof submit === 'function') submit.call(form, { type: 'submit', target: form, currentTarget: form, preventDefault() {} });
+    for (let i = 0; i < 80 && !/Deposited/.test(root.textContent); i++) await sleep(25);
+    ok(/Deposited 1 NEAR\./.test(root.textContent) && /View transaction/.test(root.textContent), 'one tap: Deposited 1 NEAR, with the transaction');
+    for (let i = 0; i < 40 && !/38\.5 of 100/.test(root.textContent); i++) await sleep(25);
+    ok(/Auction: 38\.5 of 100 NEAR soft cap/.test(root.textContent), 'the auction line refreshed');
+    render(null, root as unknown as Element);
+    render(h(AuctionDepositDialog, { key: 'small', store: as, onClose() {}, amount: '0.05' }), root as unknown as Element);
+    for (let i = 0; i < 40 && !/smallest/.test(root.textContent); i++) await sleep(25);
+    ok(/The smallest deposit is 0\.1 NEAR\./.test(root.textContent) && disabled(findButton(root as never, /^\s*Deposit$/)), 'under 0.1 NEAR: off, with the reason');
+    render(null, root as unknown as Element);
+    as.actions.logout();
+    ac.dispose();
+  }
 
   // the TESTNET panel (protocol v1.6): testnet only, in the room, and only while the player holds nothing at all
   const panelOf = async (store: typeof ts, kind: 'lobby' | 'chat' | 'call' = 'lobby') => {

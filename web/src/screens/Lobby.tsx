@@ -28,6 +28,8 @@ export interface LobbyProps {
   /** not signed in: watching the room */
   guest?: boolean;
   onSignIn?(): void;
+  /** the auction banner's Get $REAL */
+  onAuctionDeposit?(): void;
 }
 
 function seatLook(seat: Seat, selected: boolean): SeatLook {
@@ -81,7 +83,7 @@ export function LobbyScreen(p: LobbyProps) {
 
   return (
     <>
-      <Hud store={store} kind="lobby" guest={p.guest} onSignIn={p.onSignIn} onResults={p.onResults} onRounds={p.onRounds} onWallet={p.onWallet} onSwitchUser={p.onSwitchUser} onSignOut={p.onSignOut} onTerms={p.onTerms} />
+      <Hud store={store} kind="lobby" guest={p.guest} onSignIn={p.onSignIn} onAuctionDeposit={p.onAuctionDeposit} onResults={p.onResults} onRounds={p.onRounds} onWallet={p.onWallet} onSwitchUser={p.onSwitchUser} onSignOut={p.onSignOut} onTerms={p.onTerms} />
       <World theme={theme} kind="lobby" seats={sceneSeats}>
         {(w) => {
           const l = w.layout.kind === 'lobby' ? w.layout : null;

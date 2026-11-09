@@ -9,8 +9,9 @@ import {
   type RoundStatus, type RoundSummary, type Seat, type ServerMsg, type Skin, type TestUser, type ThemeId, type Truth,
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
   type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo, type LaunchConfig,
-  type AirdropResult, type AirdropStatus, AIRDROP,
+  type AirdropResult, type AirdropStatus, AIRDROP, type AuctionInfo,
 } from '../../../shared/protocol.ts';
+import type { AuctionViews } from '../launch/auction.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { verifyNep413 } from '../wallet/nep413.ts';
 import { decodeSignedTransaction, publicKeyString, verifySignedTransaction } from '../wallet/tx.ts';
@@ -271,6 +272,8 @@ interface Persisted {
   deposits?: Record<string, string>;
   /** the testnet airdrop (v1.6): account -> when it last had one (ms) */
   airdrops?: Record<string, number>;
+  /** the REAL auction on meme.cooking (v1.10): the total deposited, and per account NEAR, wNEAR and registrations */
+  auction?: { total: string; near: Record<string, string>; wnear: Record<string, string>; meme: string[]; wrap: string[] };
 }
 
 interface Brain {
@@ -879,6 +882,83 @@ export class MockGameClient implements GameClient, MockLedger {
     });
   }
 
+  // ======================= the REAL auction on meme.cooking (protocol v1.10) =======================
+
+  private auctionState(): NonNullable<Persisted['auction']> {
+    return (this.st.auction ??= { total: (375n * 10n ** 23n).toString(), near: {}, wnear: {}, meme: [], wrap: [] });
+  }
+
+  /** What GET /api/auction says: 37.5 of 100 NEAR at first, plus every mock deposit. */
+  auctionInfo(): Promise<AuctionInfo> {
+    return this.tick(() => {
+      const l = this.config.launch;
+      return {
+        memeId: 2313, totalDeposit: this.auctionState().total, softCap: (100n * 10n ** 24n).toString(), hardCap: (500n * 10n ** 24n).toString(),
+        startMs: l?.auctionStart ?? this.now() - 3_600_000, endMs: l?.auctionEnd ?? this.now() + 20 * 3_600_000, finalized: false,
+      };
+    });
+  }
+
+  /** The account on the mock mainnet: 12.5 NEAR until the mock spends some, nothing registered, no wNEAR. */
+  readonly auctionViews: AuctionViews = {
+    account: (accountId) =>
+      this.tick(() => {
+        const a = this.auctionState();
+        return {
+          near: BigInt(a.near[accountId] ?? (125n * 10n ** 23n).toString()),
+          memeRegistered: a.meme.includes(accountId),
+          wrapRegistered: a.wrap.includes(accountId),
+          wnear: BigInt(a.wnear[accountId] ?? '0'),
+        };
+      }),
+  };
+
+  /** Tests: the account's NEAR, wNEAR and registrations on the mock mainnet. */
+  setAuctionAccount(accountId: string, v: { near?: bigint; wnear?: bigint; meme?: boolean; wrap?: boolean }): void {
+    const a = this.auctionState();
+    if (v.near !== undefined) a.near[accountId] = v.near.toString();
+    if (v.wnear !== undefined) a.wnear[accountId] = v.wnear.toString();
+    if (v.meme !== undefined) a.meme = v.meme ? [...new Set([...a.meme, accountId])] : a.meme.filter((x) => x !== accountId);
+    if (v.wrap !== undefined) a.wrap = v.wrap ? [...new Set([...a.wrap, accountId])] : a.wrap.filter((x) => x !== accountId);
+    this.save();
+  }
+
+  /** wrap.near and meme-cooking.near as the deposit batch meets them, with their rules. */
+  private auctionTx(account: string, tx: WalletTx): string {
+    const a0 = tx.actions[0];
+    if (!a0 || a0.type !== 'FunctionCall' || tx.actions.length !== 1) throw new Error('One function call per transaction.');
+    const s = this.auctionState();
+    const near = BigInt(s.near[account] ?? (125n * 10n ** 23n).toString());
+    const dep = BigInt(a0.params.deposit);
+    const args = a0.params.args as Record<string, unknown>;
+    const spend = (n: bigint) => {
+      if (n > near) throw new Error('Not enough NEAR in the wallet.');
+      s.near[account] = (near - n).toString();
+    };
+    const m = a0.params.methodName;
+    if (m === 'storage_deposit') {
+      if (args.account_id !== account || args.registration_only !== true) throw new Error('storage_deposit for another account.');
+      spend(dep);
+      const list = tx.receiverId === 'meme-cooking.near' ? s.meme : s.wrap;
+      if (!list.includes(account)) list.push(account);
+    } else if (tx.receiverId === 'wrap.near' && m === 'near_deposit') {
+      if (!s.wrap.includes(account)) throw new Error('The account is not registered on wrap.near.');
+      spend(dep);
+      s.wnear[account] = (BigInt(s.wnear[account] ?? '0') + dep).toString();
+    } else if (tx.receiverId === 'wrap.near' && m === 'ft_transfer_call') {
+      const amount = BigInt(String(args.amount));
+      const have = BigInt(s.wnear[account] ?? '0');
+      if (dep !== 1n) throw new Error('ft_transfer_call needs exactly 1 yoctoNEAR.');
+      if (args.receiver_id !== 'meme-cooking.near' || args.msg !== '{"Deposit":{"meme_id":2313}}') throw new Error('Not a deposit into meme 2313.');
+      if (!s.meme.includes(account)) throw new Error('The account is not registered on meme-cooking.near.');
+      if (amount > have) throw new Error('Not enough wNEAR.');
+      s.wnear[account] = (have - amount).toString();
+      s.total = (BigInt(s.total) + amount).toString();
+    } else throw new Error(`The mock wallet does not send ${tx.receiverId}.${m}.`);
+    this.save();
+    return fakeTx(this.r);
+  }
+
   /** Tests: whether the account is registered on the coin (NEP-145 storage). */
   setRegistered(account: string, on: boolean): void {
     const reg = (this.st.registered ??= []).filter((a) => a !== account);
@@ -903,6 +983,7 @@ export class MockGameClient implements GameClient, MockLedger {
   }
 
   ledgerWalletTx(account: string, tx: WalletTx): string {
+    if (tx.receiverId === 'meme-cooking.near' || tx.receiverId === 'wrap.near') return this.auctionTx(account, tx);
     const a = tx.actions[0];
     if (a?.type === 'AddKey' && tx.actions.length === 1) {
       // the browser's play key, added by the account itself (in the same approval as a deposit or withdrawal)
