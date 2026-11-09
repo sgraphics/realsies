@@ -5,6 +5,7 @@ import type {
   AirdropResult,
   AirdropStatus,
   AuthChallenge,
+  AuthFailure,
   AuthProof,
   AuthSession,
   ClientMsg,
@@ -65,7 +66,7 @@ export class RealGameClient implements GameClient {
 
   // ---------- HTTP ----------
 
-  private async http<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  private async http<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, keepalive?: boolean): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (this.session) headers.Authorization = `Bearer ${this.session.token}`;
@@ -73,6 +74,7 @@ export class RealGameClient implements GameClient {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...(keepalive ? { keepalive } : {}),
     });
     const text = await res.text();
     let data: unknown = null;
@@ -144,6 +146,10 @@ export class RealGameClient implements GameClient {
     const s = await this.http<AuthSession>('POST', '/api/auth/verify', proof);
     this.session = { token: s.token, accountId: s.accountId };
     return s;
+  }
+  /** v1.11: a failed sign-in for the operator's log; it still goes out when the visitor leaves right after */
+  async reportSignInFailure(f: AuthFailure): Promise<void> {
+    await this.http('POST', '/api/auth/failed', f, true);
   }
   async resumeSession(token: string): Promise<AuthSession | null> {
     const prev = this.session;

@@ -9,7 +9,7 @@ import {
   type RoundStatus, type RoundSummary, type Seat, type ServerMsg, type Skin, type TestUser, type ThemeId, type Truth,
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
   type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo, type LaunchConfig,
-  type AirdropResult, type AirdropStatus, AIRDROP, type AuctionInfo,
+  type AirdropResult, type AirdropStatus, AIRDROP, type AuctionInfo, type AuthFailure,
 } from '../../../shared/protocol.ts';
 import type { AuctionViews } from '../launch/auction.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -309,6 +309,10 @@ export class MockGameClient implements GameClient, MockLedger {
   private token: string | null = null;
   private challenges = new Map<string, { message: string; expiresAt: number }>();
   private spentNonces = new Set<string>();
+  /** what POST /api/auth/failed would have logged (v1.11), newest last */
+  readonly signInFailures: AuthFailure[] = [];
+  /** how many sign-in challenges were handed out */
+  challengeCount = 0;
   private signs = new Map<string, PendingSign>();
   private o: Required<Pick<MockOptions, 'timeScale'>> & MockOptions;
   private now: () => number;
@@ -693,7 +697,16 @@ export class MockGameClient implements GameClient, MockLedger {
       const n = base64Encode(nonce);
       const c = { message: `Sign in to Realsies at ${this.config.wallet!.recipient}.\n\nThis is a signature, not a transaction: it costs nothing and moves nothing.`, expiresAt: this.now() + 600_000 };
       this.challenges.set(n, c);
+      this.challengeCount++;
       return { nonce: n, message: c.message, recipient: this.config.wallet!.recipient, expiresAt: c.expiresAt };
+    });
+  }
+
+  /** v1.11: the relay logs one line per failed sign-in; the mock keeps the last 50 (realsiesMock.signInFailures) */
+  reportSignInFailure(f: AuthFailure): Promise<void> {
+    return this.tick(() => {
+      this.signInFailures.push(f);
+      if (this.signInFailures.length > 50) this.signInFailures.shift();
     });
   }
 

@@ -92,6 +92,21 @@ export function App({ store }: { store: Store }) {
     }).catch((e) => console.warn(e));
   }, [store]);
 
+  // mainnet: NEAR Connect loads once the room is on screen and the browser is idle, so the first tap finds it ready
+  // (a phone opens a wallet only from the tap itself, with nothing loading in between)
+  const mainnet = s.config?.network === 'mainnet' && !!s.config.wallet;
+  useEffect(() => {
+    if (!mainnet || !store.wallet?.warm) return;
+    const warm = () => store.wallet?.warm?.();
+    const w = window as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void };
+    if (w.requestIdleCallback) {
+      const h = w.requestIdleCallback(warm, { timeout: 4000 });
+      return () => w.cancelIdleCallback?.(h);
+    }
+    const t = setTimeout(warm, 1500); // Safari: no idle callback
+    return () => clearTimeout(t);
+  }, [mainnet]);
+
   // a guest watches the room: the current round, public, no session; again every 30 s
   const configured = !!s.config;
   useEffect(() => {

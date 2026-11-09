@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.10 (2026-11-09: GET /api/auction and AuctionInfo, the REAL auction on meme.cooking for a deposit from realsies.lol; additive).
+// Realsies relay <-> web protocol, v1.11 (2026-11-09: POST /api/auth/failed and AuthFailure, a browser's failed sign-in for the operator's log; additive).
+// v1.10 (2026-11-09: GET /api/auction and AuctionInfo, the REAL auction on meme.cooking for a deposit from realsies.lol; additive).
 // v1.9 (2026-11-08: PublicConfig.betaClosed, the testnet beta's end at its NEAR AI spend cap, and error beta_closed; BotmasterProfile.schedule, the builder slots; additive).
 // v1.8 (2026-11-08): LaunchConfig.telegramUrl, the Telegram link in the coming-soon page's footer; additive.
 // v1.7 (2026-11-08): GET /api/round, the current round for a guest without a session; additive.
@@ -172,6 +173,24 @@ export interface AuthProof {
   signature: string; // base64 (also accepted: base64url, "ed25519:<base58>", hex)
   nonce: string; // the challenge nonce
   callbackUrl?: string; // only if the wallet signed one
+}
+
+/**
+ * POST /api/auth/failed (v1.11): a sign-in that failed in the browser, for the operator's log (one WARN line each,
+ * a few per IP). `connect`: the wallet list or the wallet did not open (closing the list counts); `sign`: the
+ * chosen wallet did not sign; `verify`: the relay refused the signature, or the session did not start.
+ */
+export interface AuthFailure {
+  stage: 'connect' | 'sign' | 'verify';
+  /** NEAR Connect's wallet id, once one was chosen */
+  walletId?: string;
+  /** what went wrong, in the wallet's or the relay's own words (with its code) */
+  message: string;
+  ua: string;
+  /** ms from the tap to the failure */
+  ms?: number;
+  /** the challenge was fetched before the tap, so the wallet opened with nothing awaited */
+  prefetched?: boolean;
 }
 
 export interface PlayKeyInfo {
@@ -594,6 +613,8 @@ export interface GameClient {
   authChallenge?(): Promise<AuthChallenge>;
   /** checks the signed challenge and holds the session for every later call and connect */
   authVerify?(proof: AuthProof): Promise<AuthSession>;
+  /** v1.11: a failed sign-in, for the operator's log (POST /api/auth/failed); the answer does not matter */
+  reportSignInFailure?(f: AuthFailure): Promise<void>;
   /** a stored session token: the session again, or null when it expired or was revoked */
   resumeSession?(token: string): Promise<AuthSession | null>;
   signOut?(): Promise<void>;

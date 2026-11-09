@@ -291,6 +291,36 @@ try {
   await sleep(20);
   const si = root.textContent;
   ok(/Sign in with a NEAR wallet/.test(si) && /no transaction, no gas/.test(si) && /Get a wallet/.test(si), 'sign-in panel: the button, free to play, get a wallet: ' + si.slice(0, 90));
+  // a tap before the challenge came: "Preparing…" on the button (off), Cancel next to it
+  const prc = new MockGameClient({ wallet: true, storageKey: null, timeScale: 0.02 });
+  (prc as { authChallenge: unknown }).authChallenge = () => new Promise(() => {});
+  const prs = createStore(prc, new MockWallet(prc, { accountId: 'sam.testnet', delayMs: 2 }));
+  await prs.actions.loadConfig();
+  void prs.actions.walletSignIn();
+  render(h(WalletSignInPanel, { key: 'preparing', store: prs }), root as unknown as Element);
+  await sleep(20);
+  const prep = findButton(root as never, /Preparing…/);
+  ok(!!prep && disabled(prep) && !findButton(root as never, /Sign in with a NEAR wallet/) && !!findButton(root as never, /^Cancel$/), 'preparing: "Preparing…" on the button, off, and Cancel');
+  render(null, root as unknown as Element);
+  prc.dispose();
+  // the wallet closed: the reason as before, and "Try again" runs the same sign-in
+  const ec = new MockGameClient({ wallet: true, storageKey: null, timeScale: 0.02 });
+  const ew = new MockWallet(ec, { accountId: 'sam.testnet', delayMs: 2, reject: 'signIn' });
+  const es = createStore(ec, ew);
+  await es.actions.loadConfig();
+  await es.actions.walletSignIn();
+  render(h(WalletSignInPanel, { key: 'error', store: es }), root as unknown as Element);
+  await sleep(20);
+  const et = root.textContent;
+  const retry = findButton(root as never, /Try again/);
+  ok(/You closed the wallet without approving\./.test(et) && !!retry && !disabled(retry) && !findButton(root as never, /Sign in with a NEAR wallet/), 'a failed sign-in: the reason, and Try again in place of the button');
+  ew.o.reject = undefined;
+  click(retry);
+  for (let i = 0; i < 40 && !es.get().welcomed; i++) await sleep(25);
+  ok(!!es.get().session && es.get().welcomed && ew.calls.length === 2, 'Try again signs in');
+  render(null, root as unknown as Element);
+  es.actions.logout();
+  ec.dispose();
 
   // "Before you play" (Login.tsx), the one way in: the terms with one checkbox (compulsory), then the sign-in
   type El = { childNodes: unknown[]; nodeName?: string; textContent: string; attrs: Record<string, string>; listeners?: Record<string, unknown>; checked?: boolean };

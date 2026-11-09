@@ -296,9 +296,10 @@ The relay never holds a wallet player's key. Free play needs one signature and n
 ### Sign-in (NEP-413)
 
 1. `POST /api/auth/challenge` returns `AuthChallenge`: a 32-byte random nonce (base64; one use; 10 minutes), the message ("Sign in to Realsies at realsies.lol. This is a signature, not a transaction: it costs nothing and moves nothing." and the time) and the recipient (`AUTH_RECIPIENT`, default `realsies.lol`).
-2. The wallet signs it: NEAR Connect `connect({ signMessageParams: { message, recipient, nonce } })`, one approval. Wallets without `signInAndSignMessage` are not offered.
+2. The wallet signs it: NEAR Connect's wallet list (`selectWallet`, wallets with `signInAndSignMessage` only), then `connect({ walletId, signMessageParams: { message, recipient, nonce } })`, one approval. A phone opens a wallet (its window, or the switch to its app) only from the tap itself, so nothing is awaited between the tap and the wallet list: the web app fetches the challenge when "Before you play" opens (again every 30 s while it is open, once it is 5 minutes old) and loads NEAR Connect then too, and on mainnet as soon as the room is on screen and the browser is idle. A tap without a fresh challenge fetches one first, with "Preparing…" on the button. A failed sign-in shows its reason and "Try again" (the same sign-in; a challenge the relay never saw is used again).
 3. `POST /api/auth/verify` with `AuthProof` `{accountId, publicKey, signature, nonce}`. The relay spends the nonce on the first attempt, right or wrong; rebuilds the payload with its own message and recipient (borsh: `u32 2^31+413 | message | nonce[32] | recipient | callbackUrl?`); checks the ed25519 signature over its sha256; then calls `view_access_key` (finality final): the key must exist on the account and be `FullAccess`. Refusals: `nonce_unknown`, `nonce_used`, `nonce_expired`, `bad_signature` (also a signature for another recipient), `key_not_found`, `not_full_access` (a function-call key cannot sign in), `invalid_request`. 60 challenges per IP per 10 minutes.
 4. The answer is `AuthSession`: a random 32-byte token (only its sha256 is stored, table `sessions`), `SESSION_DAYS` (30) to live, and `me` with `kind: "wallet"`. The first sign-in creates the player (rating 1000).
+5. A sign-in that fails in the browser is reported (v1.11): `POST /api/auth/failed` with `AuthFailure {stage, walletId?, message, ua, ms?, prefetched?}`; `stage` is `connect` (NEAR Connect or its wallet list did not open, or the list was closed), `sign` (the chosen wallet did not sign) or `verify` (the relay refused the signature, or the session did not start); `message` is the wallet's or the relay's own words with the code, `ms` the time from the tap. The relay writes one WARN line per report (`sign-in failed at <stage> with <wallet> {...}`, with the IP), every field cut to one short line; 10 reports per IP and 300 in all per 10 minutes, then `rate_limited` (429) and nothing logged. A closed beta (`beta_closed`) is not a failure.
 
 The token goes in `Authorization: Bearer` on HTTP. The WebSocket takes a one-time ticket instead (`POST /api/session/ticket`, 30 s), so the token never sits in a URL or an access log. `GET /api/session` resumes a stored session after a reload; `DELETE /api/session` signs out and closes the session's sockets.
 
@@ -349,6 +350,7 @@ Only on a relay in test mode on testnet (`not_test_mode` otherwise; never on mai
 |---|---|---|
 | `POST /api/auth/challenge` | | `AuthChallenge` |
 | `POST /api/auth/verify` `AuthProof` | | `AuthSession` |
+| `POST /api/auth/failed` `AuthFailure` | | `{ok: true}`; one WARN line in the relay's log (v1.11) |
 | `GET /api/session` | Bearer | `AuthSession` (the same token) |
 | `DELETE /api/session` | Bearer | `{ok: true}`; the session's sockets close |
 | `POST /api/session/ticket` | Bearer | `{ticket, expiresAt}` for `/ws?ticket=` |

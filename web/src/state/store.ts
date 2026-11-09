@@ -2,13 +2,13 @@
 // Keeps the player's own transcript copy in localStorage as messages arrive (Verify drawer check).
 
 import type {
-  ActiveChat, AirdropStatus, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PublicConfig, RoundResults, RoundState,
-  RoundSummary, Seat, ServerMsg, TestUser, ThemeId, VerifyBundle, WalletInfo,
+  ActiveChat, AirdropStatus, AuthChallenge, AuthFailure, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PublicConfig,
+  RoundResults, RoundState, RoundSummary, Seat, ServerMsg, TestUser, ThemeId, VerifyBundle, WalletInfo,
 } from '../../../shared/protocol.ts';
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
 import { countdownFor, isCounting } from './countdown.ts';
 import { BOTS_NAPPING } from './notices.ts';
-import type { WalletApi } from '../wallet/types.ts';
+import type { WalletApi, WalletError, WalletSignIn } from '../wallet/types.ts';
 import { forgetPlayKey, loadPlayKey, newPlayKey, savePlayKey, type PlayKey } from '../wallet/keys.ts';
 import { addPlayKeyTx, depositTx, sendSteps, storageTx, withdrawTx, type Step } from '../wallet/batch.ts';
 import { parsePublicKey, signTransaction } from '../wallet/tx.ts';
@@ -27,9 +27,9 @@ export interface SessionView {
   playKey: PlayKeyInfo | null;
 }
 
-/** A wallet step on screen: waiting for the wallet, checking on chain, done or failed. */
+/** A wallet step on screen: getting ready (sign-in only), waiting for the wallet, checking on chain, done or failed. */
 export interface Flow {
-  phase: 'idle' | 'wallet' | 'checking' | 'done' | 'error';
+  phase: 'idle' | 'preparing' | 'wallet' | 'checking' | 'done' | 'error';
   error?: string;
   /** a friendly line under the step, e.g. why a second approval is needed */
   note?: string;
@@ -130,8 +130,14 @@ export interface StoreActions {
   listRounds(): Promise<RoundSummary[]>;
   leaderboard(): Promise<LeaderRow[]>;
   // ----- wallet sign-in (v1.3) -----
-  /** Sign in with a NEAR wallet: one approval, a signed message, no gas. */
+  /**
+   * Sign in with a NEAR wallet: one approval, a signed message, no gas. Call it straight from the tap: with a
+   * challenge in hand (prepareSignIn) the wallet opens in the tap's own turn; without one it is fetched first
+   * ("preparing"). A failure is reported to the relay (v1.11).
+   */
   walletSignIn(): Promise<boolean>;
+  /** The sign-in's challenge ahead of the tap: fetched when there is none or it is 5 minutes old (the prompt opens). */
+  prepareSignIn(): Promise<boolean>;
   /** A session stored in this browser, if the relay still knows it. */
   resumeSession(): Promise<boolean>;
   signOut(): Promise<void>;
@@ -160,6 +166,8 @@ export interface Store {
 }
 
 const SESSION_KEY = (network: string) => `realsies:session:${network}`;
+/** A sign-in challenge is used for a tap while under this age (the relay keeps one 10 minutes), then fetched again. */
+export const CHALLENGE_FRESH_MS = 5 * 60_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const IDLE: Flow = { phase: 'idle' };
 
@@ -181,7 +189,8 @@ function ls(): Storage | null {
   }
 }
 
-export function createStore(client: GameClient, wallet?: WalletApi): Store {
+export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?: () => number } = {}): Store {
+  const now = opts.now ?? Date.now;
   let state: AppState = { status: 'idle', level: 1, rooms: {}, resultsReady: [], welcomed: false, signIn: IDLE, keySetup: IDLE, walletTx: IDLE, airdrop: AIRDROP_IDLE };
   /** the coins the player chose at the last pick: a play to sign must be for exactly these */
   let pickedCoins: number | null = null;
@@ -559,6 +568,83 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
     return { s, cfg, w: wallet };
   };
 
+  // ----- the sign-in's challenge, ahead of the tap -----
+  // A phone opens a wallet (its window, or the switch to its app) only from the tap itself: anything awaited between
+  // the tap and NEAR Connect's wallet list loses that. So the challenge is fetched when the prompt opens and kept
+  // while under 5 minutes old; it is spent once it goes to the relay with a signature.
+  let prepared: { ch: AuthChallenge; at: number } | null = null;
+  let preparing: Promise<AuthChallenge> | null = null;
+  const freshChallenge = (): AuthChallenge | null => (prepared && now() - prepared.at < CHALLENGE_FRESH_MS ? prepared.ch : null);
+  const fetchChallenge = (): Promise<AuthChallenge> => {
+    if (preparing) return preparing;
+    const p = (async () => {
+      if (!state.config) await actions.loadConfig();
+      if (!wallet || !client.authChallenge || !client.authVerify) throw new Error('Wallet sign-in is not available here.');
+      const at = now();
+      const ch = await client.authChallenge();
+      prepared = { ch, at };
+      return ch;
+    })();
+    preparing = p;
+    const done = () => {
+      if (preparing === p) preparing = null;
+    };
+    p.then(done, done);
+    return p;
+  };
+  /** A failed sign-in for the operator's log (v1.11): where, which wallet, its own words, this browser; fire and forget. */
+  const reportSignIn = (e: unknown, stage: AuthFailure['stage'], t0: number, prefetched: boolean, walletId?: string) => {
+    if (!client.reportSignInFailure) return;
+    const w = e as Partial<WalletError> | null;
+    const words = w?.detail ?? errText(e);
+    const id = w?.walletId ?? walletId;
+    const ua = (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent ?? '';
+    const f: AuthFailure = {
+      stage, ...(id ? { walletId: id } : {}), message: (w?.code ? `${w.code}: ${words}` : words).slice(0, 300), ua: ua.slice(0, 240),
+      ms: Math.max(0, Math.round(now() - t0)), prefetched,
+    };
+    client.reportSignInFailure(f).catch(() => {});
+  };
+  /** The reason on screen (a closed beta is no failure), the report, and a challenge ready for "Try again". */
+  const signInFailed = (e: unknown, stage: AuthFailure['stage'], t0: number, prefetched: boolean, walletId?: string): false => {
+    if (errCode(e) === 'beta_closed') {
+      // the beta is over: no new sign-ins; the app says so and moves on
+      set({ signIn: IDLE, betaOver: { at: Date.now() } });
+      void actions.loadConfig().catch(() => undefined);
+      return false;
+    }
+    set({ signIn: { phase: 'error', error: errText(e) } });
+    reportSignIn(e, stage, t0, prefetched, walletId);
+    void actions.prepareSignIn();
+    return false;
+  };
+  /**
+   * The sign-in with a challenge in hand. Up to the wallet's own call it runs in the caller's turn, so a tap with
+   * the challenge ready reaches NEAR Connect with nothing awaited.
+   */
+  const signInWith = async (ch: AuthChallenge, t0: number, prefetched: boolean): Promise<boolean> => {
+    set({ signIn: { phase: 'wallet' } });
+    let signed: WalletSignIn;
+    try {
+      signed = await wallet!.signIn({ message: ch.message, recipient: ch.recipient, nonce: base64Decode(ch.nonce) });
+    } catch (e) {
+      // the relay never saw this challenge: it stays for "Try again" while it is fresh
+      return signInFailed(e, (e as Partial<WalletError> | null)?.stage ?? 'sign', t0, prefetched);
+    }
+    // the relay spends the nonce on this attempt, whatever its answer
+    if (prepared?.ch === ch) prepared = null;
+    try {
+      set({ signIn: { phase: 'checking' } });
+      const s = await client.authVerify!({ accountId: signed.accountId, publicKey: signed.publicKey, signature: signed.signature, nonce: ch.nonce });
+      adoptSession(s);
+      set({ signIn: IDLE });
+      await actions.selectUser(s.accountId);
+      return true;
+    } catch (e) {
+      return signInFailed(e, 'verify', t0, prefetched, signed.walletId);
+    }
+  };
+
   const actions: StoreActions = {
     async loadConfig() {
       const config = await client.getConfig();
@@ -690,30 +776,26 @@ export function createStore(client: GameClient, wallet?: WalletApi): Store {
     },
 
     // ----- wallet sign-in (v1.3) -----
-    async walletSignIn() {
-      if (state.signIn.phase === 'wallet' || state.signIn.phase === 'checking') return false;
-      set({ signIn: { phase: 'wallet' } });
-      try {
-        if (!state.config) await actions.loadConfig();
-        if (!wallet || !client.authChallenge || !client.authVerify) throw new Error('Wallet sign-in is not available here.');
-        const ch = await client.authChallenge();
-        const signed = await wallet.signIn({ message: ch.message, recipient: ch.recipient, nonce: base64Decode(ch.nonce) });
-        set({ signIn: { phase: 'checking' } });
-        const s = await client.authVerify({ accountId: signed.accountId, publicKey: signed.publicKey, signature: signed.signature, nonce: ch.nonce });
-        adoptSession(s);
-        set({ signIn: IDLE });
-        await actions.selectUser(s.accountId);
-        return true;
-      } catch (e) {
-        if (errCode(e) === 'beta_closed') {
-          // the beta is over: no new sign-ins; the app says so and moves on
-          set({ signIn: IDLE, betaOver: { at: Date.now() } });
-          void actions.loadConfig().catch(() => undefined);
-          return false;
-        }
-        set({ signIn: { phase: 'error', error: errText(e) } });
-        return false;
-      }
+    walletSignIn() {
+      const phase = state.signIn.phase;
+      if (phase === 'preparing' || phase === 'wallet' || phase === 'checking') return Promise.resolve(false);
+      const t0 = now();
+      const ready = freshChallenge();
+      // the challenge came ahead of the tap: the wallet opens in this very turn
+      if (ready) return signInWith(ready, t0, true);
+      // none yet, or it is 5 minutes old: fetched now, "Preparing…" on the button meanwhile (Cancel drops it)
+      set({ signIn: { phase: 'preparing' } });
+      return fetchChallenge().then(
+        (ch) => (state.signIn.phase === 'preparing' ? signInWith(ch, t0, false) : false),
+        (e) => (state.signIn.phase === 'preparing' ? signInFailed(e, 'connect', t0, false) : false),
+      );
+    },
+    prepareSignIn() {
+      if (freshChallenge()) return Promise.resolve(true);
+      return fetchChallenge().then(
+        () => true,
+        () => false,
+      );
     },
     async resumeSession() {
       const cfg = state.config ?? (await actions.loadConfig().catch(() => undefined));

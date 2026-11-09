@@ -28,13 +28,28 @@ export interface AddPlayKey {
   allowance: string;
 }
 
+/** Where a sign-in failed, for the failure report (protocol v1.11): opening the wallet list or the wallet, or signing. */
+export interface SignInFailure {
+  stage?: 'connect' | 'sign';
+  /** the wallet the player chose, once chosen */
+  walletId?: string;
+  /** the wallet's own words, before they became a line for the screen */
+  detail?: string;
+}
+
 /**
  * `rejected`: the player closed the wallet. `tx_failed`: a transaction was sent and failed on chain. `failed`:
  * the wallet itself could not do it (a wallet that refuses a batch, or an action): the game may try another way.
  */
 export class WalletError extends Error {
-  constructor(readonly code: 'rejected' | 'wrong_account' | 'unavailable' | 'failed' | 'tx_failed', message: string) {
+  stage?: SignInFailure['stage'];
+  walletId?: string;
+  detail?: string;
+  constructor(readonly code: 'rejected' | 'wrong_account' | 'unavailable' | 'failed' | 'tx_failed', message: string, at: SignInFailure = {}) {
     super(message);
+    this.stage = at.stage;
+    this.walletId = at.walletId;
+    this.detail = at.detail;
   }
 }
 
@@ -42,7 +57,11 @@ export interface WalletApi {
   readonly kind: 'near-connect' | 'mock';
   /** Load the wallet list ahead of the first click (optional). */
   warm?(): void;
-  /** Sign in and sign the NEP-413 message in one approval; no transaction, no gas. */
+  /**
+   * Sign in and sign the NEP-413 message in one approval; no transaction, no gas. Called straight from the tap:
+   * once warm, nothing is awaited before the wallet list opens (a phone blocks a wallet opened after an await).
+   * A failure is a WalletError with its stage and, once chosen, the wallet.
+   */
   signIn(msg: { message: string; recipient: string; nonce: Uint8Array }): Promise<WalletSignIn>;
   /**
    * The wallet adds the browser's play key. `via: 'sign-in'` asks for it the way NEAR Connect's sign-in

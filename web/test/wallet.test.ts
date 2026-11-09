@@ -19,8 +19,11 @@ const storage = new MemStorage();
 (globalThis as { localStorage?: unknown }).localStorage = storage;
 
 const { MockGameClient } = await import('../src/net/mock.ts');
-const { createStore } = await import('../src/state/store.ts');
+const { createStore, CHALLENGE_FRESH_MS } = await import('../src/state/store.ts');
 const { MockWallet } = await import('../src/wallet/mock.ts');
+const { WalletError } = await import('../src/wallet/types.ts');
+const { NearConnectWallet } = await import('../src/wallet/near-connect.ts');
+const { RealGameClient } = await import('../src/net/real.ts');
 const { loadPlayKey } = await import('../src/wallet/keys.ts');
 const { decodeSignedTransaction, verifySignedTransaction, publicKeyString } = await import('../src/wallet/tx.ts');
 const { base64Decode } = await import('../src/wallet/base58.ts');
@@ -69,13 +72,13 @@ function waitFor(store: Store, pred: (s: AppState) => boolean, label: string, ms
 }
 
 type MockOpts = ConstructorParameters<typeof MockGameClient>[0];
-function setup(o: MockOpts = {}, w: ConstructorParameters<typeof MockWallet>[1] = {}) {
+function setup(o: MockOpts = {}, w: ConstructorParameters<typeof MockWallet>[1] = {}, so: Parameters<typeof createStore>[2] = {}) {
   const client = new MockGameClient({
     wallet: true, chatSeconds: 1.2, callSeconds: 1, countdownSeconds: 0.1, roundMinutes: 3, timeScale: 0.02, searchMs: [20, 40],
     storageKey: null, noHuman: true, playFailChance: 0, loadEvidence: fsLoader, signTimeoutMs: 2000, buyUrl: 'https://meme.cooking', ...o,
   });
   const wallet = new MockWallet(client, { accountId: 'sam.testnet', delayMs: 5, ...w });
-  const store = createStore(client, wallet);
+  const store = createStore(client, wallet, so);
   return { client, wallet, store, done: () => { store.actions.logout(); client.dispose(); } };
 }
 
@@ -88,6 +91,7 @@ console.log('wallet sign-in');
     ok(cfg.testMode === false && cfg.wallet?.recipient === 'realsies.lol' && cfg.coinsOpen === true && cfg.buyUrl === 'https://meme.cooking', 'a relay without test mode: wallet config, coins open, Buy REAL link');
     ok((await client.listTestUsers()).length === 0, 'no test users');
     ok(store.get().signIn.phase === 'idle' && !store.get().session, 'starts signed out');
+    ok(await store.actions.prepareSignIn(), 'the prompt opens: the challenge is fetched ahead of the tap');
     const phases: string[] = [];
     const un = store.subscribe((s) => {
       if (phases[phases.length - 1] !== s.signIn.phase) phases.push(s.signIn.phase);
@@ -137,6 +141,191 @@ console.log('wallet sign-in');
   ok(store.get().signIn.phase === 'idle', 'cancel');
   done();
   storage.clear();
+}
+
+// ---------- 1b. the challenge ahead of the tap (a phone opens a wallet only from the tap itself) ----------
+console.log('the sign-in challenge ahead of the tap');
+{
+  // fresh: fetched when the prompt opens, the tap reaches the wallet in its own turn
+  let t = 1_000_000;
+  const { client, wallet, store, done } = setup({}, {}, { now: () => t });
+  await store.actions.loadConfig();
+  const [a, b] = await Promise.all([store.actions.prepareSignIn(), store.actions.prepareSignIn()]);
+  ok(a && b && client.challengeCount === 1, 'the prompt opens: one challenge fetched (two calls at once share it)');
+  t += CHALLENGE_FRESH_MS - 1000;
+  ok((await store.actions.prepareSignIn()) && client.challengeCount === 1, 'under 5 minutes old: kept, not fetched again');
+  const phases: string[] = [];
+  const un = store.subscribe((s) => {
+    if (phases[phases.length - 1] !== s.signIn.phase) phases.push(s.signIn.phase);
+  });
+  const signing = store.actions.walletSignIn();
+  ok(wallet.calls.join(',') === 'signIn' && store.get().signIn.phase === 'wallet', 'fresh: the wallet is asked in the same turn as the tap, nothing awaited before it');
+  ok(await signing, 'signed in');
+  un();
+  ok(phases.join(' ') === 'wallet checking idle' && client.challengeCount === 1, `fresh: no "Preparing…", the challenge fetched ahead was the one signed (${phases.join(' ')})`);
+  ok(client.signInFailures.length === 0, 'nothing reported');
+  done();
+  storage.clear();
+}
+{
+  // stale: 5 minutes old at the tap: fetched again first ("Preparing…"), then the wallet
+  let t = 1_000_000;
+  const { client, wallet, store, done } = setup({}, {}, { now: () => t });
+  await store.actions.loadConfig();
+  await store.actions.prepareSignIn();
+  t += CHALLENGE_FRESH_MS;
+  const phases: string[] = [];
+  const un = store.subscribe((s) => {
+    if (phases[phases.length - 1] !== s.signIn.phase) phases.push(s.signIn.phase);
+  });
+  const signing = store.actions.walletSignIn();
+  ok(store.get().signIn.phase === 'preparing' && wallet.calls.length === 0, 'stale: "Preparing…", the wallet not asked yet');
+  ok(!(await store.actions.walletSignIn()), 'a second tap while preparing does nothing');
+  ok(await signing, 'then signed in');
+  un();
+  ok(phases.join(' ') === 'preparing wallet checking idle' && client.challengeCount === 2 && wallet.calls.length === 1, `stale: a new challenge, then the wallet once (${phases.join(' ')})`);
+  done();
+  storage.clear();
+}
+{
+  // missing: a tap before any challenge came: fetched then, "Preparing…" meanwhile; Cancel drops it
+  const { client, wallet, store, done } = setup();
+  const signing = store.actions.walletSignIn();
+  ok(store.get().signIn.phase === 'preparing' && wallet.calls.length === 0, 'missing: "Preparing…" on the button, the wallet not asked yet');
+  ok(await signing, 'then signed in (the config and the challenge fetched first)');
+  ok(client.challengeCount === 1 && wallet.calls.join(',') === 'signIn', 'one challenge, one wallet approval');
+  done();
+  storage.clear();
+  const s2 = setup();
+  const cancelled = s2.store.actions.walletSignIn();
+  s2.store.actions.resetFlow('signIn');
+  ok(!(await cancelled) && s2.wallet.calls.length === 0 && s2.store.get().signIn.phase === 'idle', 'Cancel while preparing: the wallet is never asked');
+  s2.done();
+  storage.clear();
+}
+
+// ---------- 1c. a failed sign-in is reported (POST /api/auth/failed, v1.11), and "Try again" opens the wallet at once ----------
+console.log('sign-in failure reports');
+{
+  // sign: the player closes the wallet; the challenge was never sent, so "Try again" signs it at once
+  const { client, wallet, store, done } = setup({}, { reject: 'signIn' });
+  await store.actions.loadConfig();
+  await store.actions.prepareSignIn();
+  ok(!(await store.actions.walletSignIn()) && /closed the wallet/.test(store.get().signIn.error ?? ''), 'a closed wallet: the error as before');
+  await sleep(30);
+  const r = client.signInFailures[0];
+  ok(client.signInFailures.length === 1 && r.stage === 'sign' && r.walletId === 'mock-wallet' && r.message === 'rejected: User rejected', 'reported: stage sign, the wallet, its own words: ' + JSON.stringify(r));
+  ok(r.ua === navigator.userAgent && r.prefetched === true && typeof r.ms === 'number' && r.ms >= 0, 'with this browser, the time from the tap, and that the challenge came ahead');
+  wallet.o.reject = undefined;
+  const again = store.actions.walletSignIn();
+  ok(wallet.calls.length === 2 && store.get().signIn.phase === 'wallet', 'Try again: the wallet at once, nothing fetched first');
+  ok((await again) && client.challengeCount === 1, 'signed in with the same challenge (the relay never saw it)');
+  done();
+  storage.clear();
+}
+{
+  // verify: the relay refuses the signature; the nonce is spent, so a fresh one is fetched for "Try again"
+  const { client, wallet, store, done } = setup();
+  await store.actions.loadConfig();
+  await store.actions.prepareSignIn();
+  const verify = client.authVerify.bind(client);
+  (client as { authVerify: unknown }).authVerify = async () => {
+    throw Object.assign(new Error('This sign-in request was already used; sign in again.'), { code: 'nonce_used' });
+  };
+  ok(!(await store.actions.walletSignIn()) && store.get().signIn.error === 'This sign-in request was already used; sign in again.', 'refused by the relay: its words on screen');
+  await sleep(30);
+  const r = client.signInFailures[0];
+  ok(r?.stage === 'verify' && r.walletId === 'mock-wallet' && r.message === 'nonce_used: This sign-in request was already used; sign in again.' && r.prefetched === true, 'reported: stage verify, the wallet that signed, the code: ' + JSON.stringify(r));
+  ok(client.challengeCount === 2, 'a fresh challenge for "Try again" (the old one is spent)');
+  (client as { authVerify: unknown }).authVerify = verify;
+  const again = store.actions.walletSignIn();
+  ok(wallet.calls.length === 2, 'Try again: the wallet at once');
+  ok((await again) && client.challengeCount === 2, 'then signed in');
+  done();
+  storage.clear();
+}
+{
+  // connect: NEAR Connect itself did not load (a phone that lost the network, a page from before an update)
+  const { client, store, done } = setup();
+  const failing = {
+    kind: 'mock',
+    signIn: () => Promise.reject(new WalletError('unavailable', 'The wallet list did not load. Check your connection and try again; if it keeps failing, reload the page.', { stage: 'connect', detail: 'Importing a module script failed.' })),
+  } as never;
+  const s = createStore(client, failing);
+  await s.actions.loadConfig();
+  await s.actions.prepareSignIn();
+  ok(!(await s.actions.walletSignIn()) && /did not load/.test(s.get().signIn.error ?? ''), 'the wallet list did not load: said so');
+  await sleep(30);
+  const r = client.signInFailures[0];
+  ok(r?.stage === 'connect' && r.walletId === undefined && r.message === 'unavailable: Importing a module script failed.', 'reported: stage connect, no wallet chosen, the words of the browser: ' + JSON.stringify(r));
+  // the challenge itself does not come (a tap before it, the relay refusing): stage connect, not prefetched
+  const refusing = setup();
+  (refusing.client as { authChallenge: unknown }).authChallenge = async () => {
+    throw Object.assign(new Error('too many sign-ins from here; wait a few minutes'), { code: 'rate_limited' });
+  };
+  ok(!(await refusing.store.actions.walletSignIn()) && refusing.store.get().signIn.phase === 'error' && refusing.wallet.calls.length === 0, 'no challenge: the error, the wallet never asked');
+  await sleep(30);
+  const q = refusing.client.signInFailures[0];
+  ok(q?.stage === 'connect' && q.prefetched === false && q.message === 'rate_limited: too many sign-ins from here; wait a few minutes', 'reported: stage connect, not prefetched: ' + JSON.stringify(q));
+  refusing.done();
+  done();
+  storage.clear();
+}
+{
+  // the real client: POST /api/auth/failed, the report as JSON, sent so that it survives the page closing
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const rc = new RealGameClient({
+    base: 'http://relay',
+    fetchImpl: (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response('{"ok":true}', { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+  const f = { stage: 'sign' as const, walletId: 'intear-wallet', message: 'failed: Popup blocked', ua: 'Mozilla/5.0 (iPhone)', ms: 140, prefetched: true };
+  await rc.reportSignInFailure(f);
+  const c = calls[0];
+  ok(calls.length === 1 && c.url === 'http://relay/api/auth/failed' && c.init?.method === 'POST' && c.init.keepalive === true && c.init.body === JSON.stringify(f), 'the real client: POST /api/auth/failed with the report, keepalive');
+}
+{
+  // NEAR Connect, warm: the wallet list opens in the same turn as the tap; failures carry their stage and the wallet
+  const seen: string[] = [];
+  let fail: 'list' | 'wallet' | null = null;
+  let onSigned: ((e: unknown) => void) | null = null;
+  const connector = {
+    availableWallets: [{}, {}, {}],
+    selectWallet: async () => {
+      seen.push('list');
+      if (fail === 'list') throw new Error('User rejected');
+      return 'intear-wallet';
+    },
+    connect: async (o: { walletId?: string; signMessageParams?: { recipient: string } }) => {
+      seen.push(`connect ${o.walletId} for ${o.signMessageParams?.recipient}`);
+      if (fail === 'wallet') throw new Error('Popup blocked');
+      onSigned?.({ accounts: [{ accountId: 'sam.near', signedMessage: { publicKey: 'ed25519:KEY', signature: 'SIG' } }] });
+      return { manifest: { id: o.walletId } };
+    },
+    on: (_e: string, f: (e: unknown) => void) => {
+      onSigned = f;
+    },
+    off: () => {
+      onSigned = null;
+    },
+  };
+  const nc = new NearConnectWallet(() => 'mainnet');
+  (nc as unknown as { loaded: unknown }).loaded = connector;
+  const msg = { message: 'Sign in to Realsies', recipient: 'realsies.lol', nonce: new Uint8Array(32) };
+  const p = nc.signIn(msg);
+  ok(seen.join() === 'list', 'warm: the wallet list is asked for in the same turn as the tap');
+  const got = await p;
+  ok(got.accountId === 'sam.near' && got.walletId === 'intear-wallet' && seen[1] === 'connect intear-wallet for realsies.lol', 'then the chosen wallet signs in with the message');
+  fail = 'list';
+  const e1 = (await nc.signIn(msg).catch((e) => e)) as InstanceType<typeof WalletError>;
+  ok(e1.code === 'rejected' && e1.stage === 'connect' && e1.walletId === undefined && e1.detail === 'User rejected (3 wallets listed)' && /closed the wallet/.test(e1.message), 'the list closed: rejected at connect, no wallet, how many were listed');
+  fail = 'wallet';
+  const e2 = (await nc.signIn(msg).catch((e) => e)) as InstanceType<typeof WalletError>;
+  ok(e2.code === 'failed' && e2.stage === 'sign' && e2.walletId === 'intear-wallet' && e2.detail === 'Popup blocked' && e2.message === 'The wallet could not sign-in: Popup blocked', 'the wallet failed: at sign, with the wallet and its words');
+  const cold = (await new NearConnectWallet(() => undefined).signIn(msg).catch((e) => e)) as InstanceType<typeof WalletError>;
+  ok(cold.code === 'unavailable' && cold.stage === 'connect', 'no network known yet: unavailable at connect');
 }
 {
   // a wallet signing with a key that is not the account's full-access key: refused by the relay

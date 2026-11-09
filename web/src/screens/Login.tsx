@@ -31,7 +31,7 @@ export function LoginModal(p: {
   const cfg = s.config;
   const [step, setStep] = useState<'consent' | 'signin'>(() => (termsAccepted() && !p.consentOnly ? 'signin' : 'consent'));
   const [ticked, setTicked] = useState(!!p.ticked);
-  const busy = s.signIn.phase === 'wallet' || s.signIn.phase === 'checking' || s.status === 'connecting';
+  const busy = s.signIn.phase === 'preparing' || s.signIn.phase === 'wallet' || s.signIn.phase === 'checking' || s.status === 'connecting';
   const testMode = !!cfg?.testMode;
   const walletOn = !!cfg?.wallet && !!p.store.wallet && !!p.store.client.authChallenge;
   const close = () => {
@@ -41,8 +41,16 @@ export function LoginModal(p: {
   useEscape(close);
   useEffect(() => {
     if (step === 'signin' && testMode) void p.store.actions.loadTestUsers().catch(() => {});
-    if (step === 'signin') p.store.wallet?.warm?.();
   }, [step, testMode]);
+  // the wallet's sign-in ready before the tap, from the moment the prompt opens: NEAR Connect loaded and the challenge
+  // fetched (again once it is 5 minutes old), so the tap opens the wallet at once; a phone allows nothing later
+  useEffect(() => {
+    if (!walletOn || p.consentOnly) return;
+    p.store.wallet?.warm?.();
+    void p.store.actions.prepareSignIn();
+    const t = setInterval(() => void p.store.actions.prepareSignIn(), 30_000);
+    return () => clearInterval(t);
+  }, [walletOn, p.consentOnly]);
 
   if (step === 'consent') {
     const accept = () => {

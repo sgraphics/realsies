@@ -8,11 +8,13 @@ import { Button, Icon } from '../ui/kit.tsx';
 
 export const GET_A_WALLET_URL = 'https://wallet.near.org';
 
-/** The sign-in panel: one button, then "waiting for your wallet", "checking", or what went wrong. */
+/** The sign-in panel: one button, then "waiting for your wallet", "checking", or what went wrong and "Try again". */
 export function WalletSignInPanel(p: { store: Store; tight?: boolean }) {
   const s = useStore(p.store);
   const f = s.signIn;
-  const busy = f.phase === 'wallet' || f.phase === 'checking';
+  const busy = f.phase === 'preparing' || f.phase === 'wallet' || f.phase === 'checking';
+  // straight from the tap: with the challenge fetched ahead (the prompt's prepareSignIn) the wallet opens in this turn
+  const signIn = () => void p.store.actions.walletSignIn();
   return (
     <div class={'px-panel signin-panel sheet-enter' + (p.tight ? ' tight' : '')} role="group" aria-label="Sign in">
       {f.phase === 'wallet' ? (
@@ -25,12 +27,22 @@ export function WalletSignInPanel(p: { store: Store; tight?: boolean }) {
           <span class="flow-dots" aria-hidden="true"><i /><i /><i /></span>
           <span>Checking your signature on NEAR…</span>
         </div>
+      ) : f.phase === 'error' ? (
+        <>
+          <p class="px-sub px-bad flow-error" role="alert"><Icon name="cross" /> {f.error}</p>
+          <Button kind="primary" class="signin-btn" onClick={signIn}>
+            <Icon name="shield" /> Try again
+          </Button>
+        </>
+      ) : f.phase === 'preparing' ? (
+        <Button kind="primary" class="signin-btn" disabled>
+          <Icon name="clock" /> Preparing…
+        </Button>
       ) : (
-        <Button kind="primary" class="signin-btn" onClick={() => void p.store.actions.walletSignIn()}>
+        <Button kind="primary" class="signin-btn" onClick={signIn}>
           <Icon name="shield" /> Sign in with a NEAR wallet
         </Button>
       )}
-      {f.phase === 'error' && <p class="px-sub px-bad flow-error"><Icon name="cross" /> {f.error}</p>}
       <ul class="signin-points">
         <li><Icon name="check" /><span>Free to play. Signing in is a signature: no transaction, no gas.</span></li>
         <li><Icon name="coin" /><span>Coins later, with one wallet approval.</span></li>

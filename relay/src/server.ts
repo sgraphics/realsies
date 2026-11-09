@@ -14,6 +14,7 @@ import { errMsg } from './util.js';
 import { logger } from './log.js';
 import { CORS, bearerToken, clientIp, readBody, sendJson } from './http.js';
 import { AuctionView, memeIdOf } from './auction.js';
+import { signInFailure } from './auth/failure.js';
 
 const log = logger('http');
 
@@ -76,6 +77,9 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
   const auth = opts.auth;
   const signIns = new Window(60, 10 * 60_000);
+  // failed sign-ins reported by browsers (v1.11): a log line each, a few per IP and a cap for all, so nobody fills the log
+  const failReports = new Window(10, 10 * 60_000);
+  const failReportsAll = new Window(300, 10 * 60_000);
   // the test users' faucet (scripts and e2e) is open to anyone in test mode: a cap per IP keeps it from being drained
   const faucets = new Window(20, 10 * 60_000);
 
@@ -156,6 +160,14 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
     const { token, session } = await auth.verify(body);
     game.ensureWalletUser(session.account);
     return { token, accountId: session.account, expiresAt: session.expiresAt, playKey: null, me: await game.me(session.account) };
+  });
+  route('POST', /^\/api\/auth\/failed$/, async (_m, req) => {
+    if (!auth) throw new GameError('wallet_disabled', 'wallet sign-in is off on this relay', 404);
+    const ip = clientIp(req);
+    const f = signInFailure(await readBody(req), req.headers['user-agent']);
+    if (!failReports.allow(ip) || !failReportsAll.allow('all')) throw new GameError('rate_limited', 'too many reports from here; that is plenty', 429);
+    log.warn(`sign-in failed at ${f.stage}${f.walletId ? ` with ${f.walletId}` : ''}`, { ...f, ip });
+    return { ok: true };
   });
   route('GET', /^\/api\/session$/, async (_m, req) => {
     const s = requireSession(req);

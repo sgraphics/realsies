@@ -68,7 +68,13 @@ export class MockWallet implements WalletApi {
   }
 
   async signIn(msg: { message: string; recipient: string; nonce: Uint8Array }): Promise<WalletSignIn> {
-    await this.step('signIn');
+    try {
+      await this.step('signIn');
+    } catch (e) {
+      // like NEAR Connect: the stage and the wallet go with the failure (the report)
+      if (e instanceof WalletError) Object.assign(e, { stage: 'sign', walletId: 'mock-wallet', detail: 'User rejected' });
+      throw e;
+    }
     const sk = mockWalletSecret(this.account);
     const publicKey = publicKeyString(ed25519.getPublicKey(sk));
     this.ledger.ledgerAddKey(this.account, publicKey, 'FullAccess');
