@@ -14,5 +14,7 @@ export default defineConfig({
   },
   preview: { port: 5173 },
   oxc: { jsx: { runtime: 'automatic', importSource: 'preact' } },
-  build: { outDir: 'dist', emptyOutDir: true, target: 'es2022', chunkSizeWarningLimit: 900 },
+  // emptyOutDir false: old hashed chunks stay after a deploy, so tabs opened before it can still lazy-load
+  // (NEAR Connect, the agents pages); deploy/deploy.sh prunes assets older than a week.
+  build: { outDir: 'dist', emptyOutDir: false, target: 'es2022', chunkSizeWarningLimit: 900 },
 });

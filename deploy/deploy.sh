@@ -27,6 +27,8 @@ for pkg in art web relay; do
 done
 echo "== web: build"
 (cd web && npm run build --silent)
+# keep last week's hashed chunks for tabs opened before this deploy; drop older ones
+find web/dist/assets -type f -mtime +7 -delete 2>/dev/null || true
 echo "== relay: build"
 (cd relay && npm run build --silent)
 chown -R realsies:realsies "$APP"
