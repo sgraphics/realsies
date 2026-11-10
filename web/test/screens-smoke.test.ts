@@ -581,7 +581,7 @@ try {
   render(h(DepositDialog, { key: 'swap', store: sws, gate: false, onDone() {}, near: '0.25' }), root as unknown as Element);
   for (let i = 0; i < 60 && !/You get/.test(root.textContent); i++) await sleep(25);
   const sw1 = root.textContent;
-  ok(/Get coins/.test(sw1) && /You get 98 coins\./.test(sw1) && !disabled(findButton(root as never, /^\s*Get coins$/)), 'the coins screen with swap: 0.25 NEAR typed gives 98 coins, Get coins is on');
+  ok(/Get coins/.test(sw1) && /You get 98 coins for about 0\.\d+ NEAR\. The rest stays in your wallet\./.test(sw1) && !disabled(findButton(root as never, /^\s*Get coins$/)), 'the coins screen with swap: 0.25 NEAR typed gives 98 coins, Get coins is on');
   ok(['0.25', '0.5', '1', '2'].every((a) => !!findButton(root as never, new RegExp('^' + a.replace('.', '\\.') + '\\s*NEAR$'))), 'four quick amounts');
   ok(sw1.includes('Coins are $tREAL, bought and sold on Rhea at the current price. The price moves.') && sw1.includes('One wallet approval. After that, plays run without popups.'), 'the honest line and the one-approval line');
   ok(!/In your wallet/.test(sw1) && !findButton(root as never, /^Withdraw$/) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/) && !/Deposit$/.test(sw1), 'nothing held: no wallet line, no withdraw; on testnet the airdrop as before; no deposit row');

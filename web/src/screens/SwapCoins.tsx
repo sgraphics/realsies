@@ -118,7 +118,8 @@ export function SwapCoinsDialog(p: { store: Store; gate: boolean; onDone(): void
           ? buyQ.err
           : coinsOut < 1
             ? 'That is less than one coin.'
-            : `You get ${coinsOut.toLocaleString('en-US')} coin${coinsOut === 1 ? '' : 's'}.`;
+            : // a buy takes a little less than the NEAR offered (room for the price to move); say what it costs
+              `You get ${coinsOut.toLocaleString('en-US')} coin${coinsOut === 1 ? '' : 's'}${buyQ.q?.cost && buyQ.q.cost !== '0' ? ` for about ${fmtNear(BigInt(buyQ.q.cost), 3)} NEAR. The rest stays in your wallet` : ''}.`;
 
   // ----- withdraw as NEAR -----
   const wdN = Math.floor(Number(wd));
