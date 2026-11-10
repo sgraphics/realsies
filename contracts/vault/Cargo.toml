@@ -1,0 +1,25 @@
+[package]
+name = "realsies-vault"
+version = "0.1.0"
+edition = "2021"
+license-file = "../../LICENSE"
+publish = false
+description = "Realsies vesting vault: holds a token allocation and releases it to one beneficiary on a fixed cliff and linear schedule, with no owner"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "=5.29.1" }
+
+[dev-dependencies]
+near-sdk = { version = "=5.29.1", features = ["unit-testing"] }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+strip = "symbols"
