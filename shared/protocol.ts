@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.12 (2026-11-10: coins for NEAR and back on Rhea: PublicConfig.swap and nearPerCoin, GET /api/swap/quote and SwapQuote, WalletInfo.nearBalance, wrapRegistered, wnearBalance and wrapStorageDeposit; additive).
+// Realsies relay <-> web protocol, v1.13 (2026-11-10: PublicConfig.turingHour, the daily Turing Hour when real people are promised in the room; additive).
+// v1.12 (2026-11-10: coins for NEAR and back on Rhea: PublicConfig.swap and nearPerCoin, GET /api/swap/quote and SwapQuote, WalletInfo.nearBalance, wrapRegistered, wnearBalance and wrapStorageDeposit; additive).
 // v1.11 (2026-11-09: POST /api/auth/failed and AuthFailure, a browser's failed sign-in for the operator's log; additive).
 // v1.10 (2026-11-09: GET /api/auction and AuctionInfo, the REAL auction on meme.cooking for a deposit from realsies.lol; additive).
 // v1.9 (2026-11-08: PublicConfig.betaClosed, the testnet beta's end at its NEAR AI spend cap, and error beta_closed; BotmasterProfile.schedule, the builder slots; additive).
@@ -110,6 +111,13 @@ export interface PublicConfig {
   swap?: SwapConfig;
   /** the price of one coin in NEAR at the pool's current point, refreshed at most once a minute; only with `swap` */
   nearPerCoin?: number;
+  // ----- v1.13, optional -----
+  /**
+   * Turing Hour: every day from `startUtc` ("HH:MM", UTC) for `minutes`, real people are promised to be in the room.
+   * Sent when the relay has TURING_HOUR_UTC. The web shows one line from 6 hours before the start until the end
+   * (shared/turing.ts works out when), never while the launch banner shows.
+   */
+  turingHour?: { startUtc: string; minutes: number };
 }
 
 // ---------- coins for NEAR, on Rhea (v1.12) ----------

@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LaunchConfig } from '../../shared/protocol.js';
 import { swapFromEnv, type SwapSettings } from './swap.js';
+import { telegramFromEnv, type TelegramSettings } from './telegram.js';
+import { parseHm, TURING_MAX_MINUTES, type TuringHourSetting } from '../../shared/turing.js';
 
 function findRelayRoot(): string {
   // Works from src/ (tsx) and from dist/ (bundled): walk up to the folder holding personas/.
@@ -140,6 +142,14 @@ export interface Config {
    * are open, PublicConfig.swap and nearPerCoin, GET /api/swap/quote and the wallet's NEAR in WalletInfo. Unset: none.
    */
   swap?: SwapSettings;
+  // ---------- Telegram and Turing Hour (protocol v1.13) ----------
+  /**
+   * TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT, TELEGRAM_MIN_CHATS and TELEGRAM_MIN_PLAYERS (src/telegram.ts): round
+   * summaries and the end of Turing Hour posted to the channel; off unless both are set, and never in test mode.
+   */
+  telegram?: TelegramSettings;
+  /** TURING_HOUR_UTC ("HH:MM") and TURING_HOUR_MINUTES: PublicConfig.turingHour, the daily hour with real people. Unset: none. */
+  turingHour?: TuringHourSetting;
 }
 
 /** Every variable of the launch; setting any one of them turns it on. */
@@ -215,6 +225,22 @@ export function checkLaunch(l: LaunchConfig): void {
   if (l.telegramUrl !== undefined && !isTelegramUrl(l.telegramUrl)) throw new Error('LAUNCH_TELEGRAM_URL must be an https link on t.me or telegram.me');
 }
 
+/** TURING_HOUR_UTC and TURING_HOUR_MINUTES (undefined when the hour is not set); a value that cannot work throws. */
+export function turingHourFromEnv(env: NodeJS.ProcessEnv): TuringHourSetting | undefined {
+  const at = env.TURING_HOUR_UTC?.trim();
+  const mins = env.TURING_HOUR_MINUTES?.trim();
+  if (!at) {
+    if (mins) throw new Error('TURING_HOUR_MINUTES needs TURING_HOUR_UTC');
+    return undefined;
+  }
+  if (parseHm(at) === null) throw new Error(`TURING_HOUR_UTC must be a UTC time as HH:MM, for example 20:00 (got ${at})`);
+  const minutes = mins ? Number(mins) : 60;
+  if (!(Number.isInteger(minutes) && minutes >= 1 && minutes <= TURING_MAX_MINUTES)) {
+    throw new Error(`TURING_HOUR_MINUTES must be a whole number of minutes from 1 to ${TURING_MAX_MINUTES} (got ${mins})`);
+  }
+  return { startUtc: at, minutes };
+}
+
 function num(name: string, def: number): number {
   const v = process.env[name];
   if (v === undefined || v === '') return def;
@@ -281,6 +307,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     signTimeoutSeconds: num('SIGN_TIMEOUT_SECONDS', 20),
     ...('launch' in overrides ? {} : { launch: launchFromEnv(env) }),
     ...('swap' in overrides ? {} : { swap: swapFromEnv(env) }),
+    ...('telegram' in overrides ? {} : { telegram: telegramFromEnv(env) }),
+    ...('turingHour' in overrides ? {} : { turingHour: turingHourFromEnv(env) }),
     ...overrides,
   };
   if (!['auto', 'near', 'mock'].includes(cfg.chain)) throw new Error(`CHAIN must be auto, near or mock`);
@@ -303,5 +331,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (cfg.launch) checkLaunch(cfg.launch);
   else delete cfg.launch;
   if (!cfg.swap) delete cfg.swap;
+  if (!cfg.telegram) delete cfg.telegram;
+  if (!cfg.turingHour) delete cfg.turingHour;
   return cfg;
 }

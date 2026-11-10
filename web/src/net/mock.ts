@@ -91,6 +91,8 @@ export interface MockOptions {
   swap?: boolean;
   /** the price moves past every swap (E204 on chain): the pool contract gives everything back (QA: &moved=1) */
   priceMoves?: boolean;
+  /** Turing Hour (protocol v1.13, PublicConfig.turingHour) */
+  turingHour?: { startUtc: string; minutes: number };
 }
 
 /** The mock's Rhea: the testnet pool contract and pool of the coin, whatever the network says. */
@@ -120,7 +122,7 @@ function apiError(code: string, message: string, status = 400, data?: Record<str
 }
 
 /** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
-export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet' | 'betaClosed' | 'betaRedirect' | 'swap'> = {}): PublicConfig {
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet' | 'betaClosed' | 'betaRedirect' | 'swap' | 'turingHour'> = {}): PublicConfig {
   return {
     testMode: !opts.wallet,
     network: opts.mainnet ? 'mainnet' : 'testnet',
@@ -151,6 +153,7 @@ export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds'
     ...(opts.launch ? { launch: { ...opts.launch } } : {}),
     ...(opts.betaClosed ? { betaClosed: { redirect: opts.betaRedirect ?? '/?mock=1&launch=soon', reason: 'spend_cap' as const } } : {}),
     ...(opts.swap && opts.coinsOpen !== false ? { swap: { ...MOCK_SWAP }, nearPerCoin: 0.0025 } : {}),
+    ...(opts.turingHour ? { turingHour: { ...opts.turingHour } } : {}),
   };
 }
 

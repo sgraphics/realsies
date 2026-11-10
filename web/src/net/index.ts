@@ -17,6 +17,7 @@
 //   &swap=1                     coins for NEAR on Rhea (protocol v1.12, config.swap): the coins dialog buys with NEAR and
 //                               withdraws as NEAR; the mock plays wrap.testnet and the pool contract (400 coins per NEAR);
 //                               &moved=1 the price moves past every swap (nothing bought or sold, everything comes back)
+//   &turing=soon|on             Turing Hour (protocol v1.13): it starts 3 h 12 min from now, or it started 20 minutes ago
 
 import type { GameClient } from '../../../shared/protocol.ts';
 import { MockGameClient, type MockOptions, resetMockState } from './mock.ts';
@@ -25,6 +26,7 @@ import type { WalletApi } from '../wallet/types.ts';
 import { MockWallet, type MockWalletOptions } from '../wallet/mock.ts';
 import { NearConnectWallet } from '../wallet/near-connect.ts';
 import { mockLaunch, mockLaunchOf } from '../launch/phase.ts';
+import { mockTuringHour } from '../launch/turing.ts';
 
 export { MockGameClient, RealGameClient, resetMockState };
 export type { MockOptions };
@@ -49,6 +51,7 @@ export function createClient(search?: string): GameClient {
     const token = q.get('notoken') !== '1';
     // the video card (the launch tweet, the account, none) and the footer's Telegram and X
     const links = { tweet: q.get('tweet') !== '0', x: q.get('nox') !== '1', telegram: q.get('notg') !== '1' };
+    const turingHour = mockTuringHour(q.get('turing'));
     const client = new MockGameClient({
       longNames: q.get('longnames') === '1',
       ...(round > 1 ? { startRoundId: round } : {}),
@@ -61,6 +64,7 @@ export function createClient(search?: string): GameClient {
       ...(q.get('coins') === 'closed' ? { coinsOpen: false } : {}),
       ...(q.get('swap') === '1' ? { swap: true } : {}),
       ...(q.get('moved') === '1' ? { priceMoves: true } : {}),
+      ...(turingHour ? { turingHour } : {}),
       ...(launch
         ? {
             wallet: true, mainnet: true, coinsOpen: false, storageKey: 'realsies:mock:launch:v1', ...(token ? { buyUrl: MOCK_BUY_URL } : {}),

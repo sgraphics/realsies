@@ -35,6 +35,7 @@ import { defaultBrain } from '../bot/brain.js';
 import type { BotmasterHub } from '../bot/remote.js';
 import { buildBundle, lastSignedCompletion } from './bundle.js';
 import { computeResults } from './results.js';
+import { Telegram, roundStats, type RoundStats } from '../telegram.js';
 import type { AttestInfo, CharacterRec, ChatSide, RoundRec, Search, UserRec } from './types.js';
 import { coinsToUnits, errMsg, pick, randomId, sleep, uniform, unitsToCoins, utcDay } from '../util.js';
 import { logger } from '../log.js';
@@ -59,6 +60,8 @@ export interface GameExtras {
   credits?: CreditMonitor;
   byok?: ByokKeys;
   auth?: AuthService;
+  /** round summaries and the end of Turing Hour on Telegram; default: from TELEGRAM_* (tests pass one with a stub sender) */
+  telegram?: Telegram;
 }
 
 export interface Conn {
@@ -178,6 +181,8 @@ export class Game implements BotHost {
   /** NEAR per coin in PublicConfig.nearPerCoin, re-read every minute */
   private swapPrice: number | null = null;
   private swapTimer: NodeJS.Timeout | null = null;
+  /** posts to the game's Telegram channel, in the background; off without TELEGRAM_* and always in test mode */
+  readonly telegram: Telegram;
 
   constructor(
     readonly cfg: Config,
@@ -194,6 +199,7 @@ export class Game implements BotHost {
     this.agents = ext.agents;
     this.byok = ext.byok;
     this.auth = ext.auth;
+    this.telegram = ext.telegram ?? new Telegram(cfg.telegram, db, { testMode: cfg.testMode, turingHour: cfg.turingHour, siteUrl: `https://${cfg.authRecipient}` });
     this.credits = ext.credits ?? new CreditMonitor(db, { budgetUsd: cfg.nearAiBudgetUsd, recheckMs: cfg.nearAiRecheckSeconds * 1000 });
     // the beta's spend cap is rechecked every time the house key's spend is recorded
     this.credits.onSpend = (keyId) => {
@@ -229,6 +235,8 @@ export class Game implements BotHost {
     this.publicConfig = this.makePublicConfig();
     if (!this.chainCfg.coinsOpen) log.warn(`${this.chain.contractId} has no coin set yet: free play only, "Coins open when REAL launches" (re-checked every minute)`);
     this.logLaunch();
+    log.info(this.telegram.describe());
+    if (this.cfg.turingHour) log.info(`Turing Hour: every day at ${this.cfg.turingHour.startUtc} UTC for ${this.cfg.turingHour.minutes} min (PublicConfig.turingHour)`);
     this.loadUsers();
     const seen = Number(this.db.getKv('last_human_at') ?? '');
     this.lastHumanAt = Number.isFinite(seen) && seen > 0 ? seen : Date.now();
@@ -279,6 +287,7 @@ export class Game implements BotHost {
             ...(this.swapPrice !== null ? { nearPerCoin: this.swapPrice } : {}),
           }
         : {}),
+      ...(this.cfg.turingHour ? { turingHour: { ...this.cfg.turingHour } } : {}),
     };
   }
 
@@ -613,6 +622,8 @@ export class Game implements BotHost {
       for (const r of this.rounds.values()) if (r.status === 'settling' && !this.settling.has(r.id)) void this.settle(r);
       if (!this.current && !this.startingRound && !this.stopped && !this.isIdle() && !this.betaClosedNow) void this.startRound();
       void this.pruneSettled();
+      // the end of Turing Hour on Telegram, in the background (never throws)
+      void this.telegram.checkHour();
     } catch (e) {
       log.error('housekeeping', e);
     }
@@ -1167,7 +1178,8 @@ export class Game implements BotHost {
             log.info(`round ${r.id} settled ${res.hash}`);
           }
         }
-        if (!r.resultsDone) await this.computeAndStore(r);
+        let stats: RoundStats | undefined;
+        if (!r.resultsDone) stats = await this.computeAndStore(r);
         r.status = 'settled';
         r.settledAt = r.settledAt ?? Date.now();
         r.lastError = undefined;
@@ -1176,6 +1188,9 @@ export class Game implements BotHost {
         this.broadcast({ t: 'results_ready', roundId: r.id });
         for (const account of this.conns.keys()) void this.pushMe(account);
         log.info(`round ${r.id} results ready`);
+        // the round's summary on Telegram, in the background: never waited for, never throws. A round whose results
+        // were stored before a restart has no stats here, so it is never summed up twice
+        if (stats) void this.telegram.roundSettled(stats, !!this.current && this.current.id > r.id);
         // results, ratings and bundles are stored: the chain may now free the round's storage
         setTimeout(() => void this.pruneSettled(), this.cfg.pruneDelaySeconds * 1000 + 200).unref?.();
         return;
@@ -1267,7 +1282,8 @@ export class Game implements BotHost {
     }
   }
 
-  private async computeAndStore(r: RoundRec): Promise<void> {
+  /** Results, ratings and bundles in one transaction; returns the round's counts for its Telegram summary. */
+  private async computeAndStore(r: RoundRec): Promise<RoundStats> {
     const characters = [...(this.chars.get(r.id)?.values() ?? [])];
     const sides = this.roundSides(r.id);
     const chainPlays = r.startOk ? await this.chain.getRoundPlays(r.id) : [];
@@ -1313,6 +1329,7 @@ export class Game implements BotHost {
       throw e;
     }
     for (const [account, amt] of out.lockedBonusAdded) log.info(`round ${r.id}: ${account} earned a locked Turing bonus of ${unitsToCoins(amt, this.coinUnit)} coins (held by promo)`);
+    return roundStats(r.id, sides, characters, chainPlays, this.coinUnit);
   }
 
   /** Drop a settled round from memory; the DB keeps everything. */
@@ -1910,6 +1927,8 @@ export class Game implements BotHost {
       this.sendTo(s.viewer, { t: 'chat_started', chatId: s.chatId, startedAt, endsAt });
     }
     conv.endTimer = setTimeout(() => this.endConv(conv, 'time', this.cfg.callSeconds * 1000), endsAt - now);
+    // counted for the end of Turing Hour (only who played and how often: nothing about who was a bot)
+    this.telegram.chatStarted(ss.map((s) => s.viewer), now);
     if (conv.kind === 'bot') {
       const side = ss[0];
       const c = this.chars.get(side.roundId)?.get(side.characterId);

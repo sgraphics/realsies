@@ -21,6 +21,7 @@ import { setHudHeight } from './hudSize.ts';
 import { DevMenu } from '../screens/DevMenu.tsx';
 import { LaunchBanner } from './LaunchBanner.tsx';
 import { TestnetPanel } from './TestnetPanel.tsx';
+import { TuringBanner } from './TuringBanner.tsx';
 
 export type HudKind = 'lobby' | 'chat' | 'call' | 'who';
 
@@ -254,6 +255,8 @@ export function Hud(p: HudProps) {
     <header ref={ref} class={'hud hud-' + kind} role="banner">
       {/* REAL's auction (mainnet): measured with the HUD, so the world lays out under it */}
       <LaunchBanner store={store} chat={kind === 'chat'} onDeposit={p.onAuctionDeposit} />
+      {/* Turing Hour, in the room only, and never with the launch banner (the line checks it itself) */}
+      {kind === 'lobby' && <TuringBanner store={store} />}
       {/* the testnet demo, in the room while the player holds nothing: free test tokens in one tap */}
       <TestnetPanel store={store} kind={kind} />
       <div class="hud-bar">

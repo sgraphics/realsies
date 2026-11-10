@@ -93,6 +93,10 @@ html.kit .hud-title { padding: 2px calc(var(--upx) * 2 + 6px); }
 .hud-launch-x:hover { opacity: 1; }
 @media (min-width: 700px) { .hud-launch { font-size: 15px; gap: 10px; } .hud-launch-cta { font-size: 9px; } }
 @media (min-width: 1800px) { .hud-launch { min-height: 40px; font-size: 19px; } .hud-launch-cta { min-height: 32px; font-size: 12px; padding: 0 14px; } .hud-launch-dot { width: 14px; height: 14px; } .hud-launch-x { width: 32px; height: 32px; font-size: 16px; } }
+/* Turing Hour (protocol v1.13, TuringBanner.tsx): the same slim line; before the hour calm, during it lit */
+.hud-launch.turing-soon { background: #262b44; color: #ffffff; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.15); }
+.hud-launch.turing-on { background: #63c74d; color: #181425; }
+.hud-launch.turing-on .hud-launch-dot { border-color: #181425; }
 /* phones held sideways: the HUD is one short line; keep the banner as slim */
 @media (max-height: 520px) and (min-width: 700px) { .hud-launch { min-height: 24px; margin-bottom: 3px; font-size: 13px; } .hud-launch-cta { min-height: 20px; } .hud-launch-x { height: 20px; } }
 

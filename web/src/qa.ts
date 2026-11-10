@@ -38,6 +38,7 @@
 //                                  the batch at once (the coins wait in the wallet); &moved=1 the price moved past it
 //   &as=sam&qa=swap-sold&game=120  40 coins (&sell=) withdrawn as NEAR
 // The launch (?mock=1&launch=soon|auction|finalizing): the coming-soon page, then the game with its auction banner; see src/net/index.ts.
+// Turing Hour (protocol v1.13, &turing=soon|on): the line above the room 3 h 12 min before the hour, or during it.
 // Only active together with ?mock=1.
 
 import type { Level } from '../../shared/protocol.ts';

@@ -20,6 +20,7 @@ import { parseEncryptionKey } from './secretbox.js';
 import { Game } from './game/game.js';
 import { AuthService } from './auth/service.js';
 import { createServer } from './server.js';
+import type { Telegram } from './telegram.js';
 import { errMsg } from './util.js';
 import { logger, setLogLevel } from './log.js';
 
@@ -99,6 +100,8 @@ export interface AppDeps {
   ai?: NearAi;
   /** the raw NEAR AI client for a botmaster's own key (tests pass mocks; default: the real gateway when the relay's is real) */
   aiForKey?: (key: string) => NearAi;
+  /** the Telegram poster on the relay's DB (tests pass one with a stub sender; default: from TELEGRAM_*) */
+  telegram?: (cfg: Config, db: Db) => Telegram;
 }
 
 export async function createApp(overrides: Partial<Config> = {}, deps: AppDeps = {}): Promise<App> {
@@ -147,7 +150,7 @@ export async function createApp(overrides: Partial<Config> = {}, deps: AppDeps =
     }
   }
   const auth = new AuthService(db, chain, { recipient: cfg.authRecipient, sessionDays: cfg.sessionDays, contractId: chain.contractId });
-  const game = new Game(cfg, db, chain, ai, personas, hub, { agents, credits, byok, auth });
+  const game = new Game(cfg, db, chain, ai, personas, hub, { agents, credits, byok, auth, telegram: deps.telegram?.(cfg, db) });
   try {
     await game.start();
   } catch (e) {

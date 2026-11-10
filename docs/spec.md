@@ -170,6 +170,23 @@ HTTP API and WebSocket server (port 3960), round scheduler, matchmaking, chat se
 
 `PORT=3960`, `TEST_MODE=1`, `ROUND_MINUTES=10`, `CHAT_SECONDS=120`, `CALL_SECONDS=20`, `FREE_CHATS_PER_DAY=0` (0 = unlimited), `NEAR_AI_API_KEY`, `NEAR_AI_BASE=https://cloud-api.near.ai/v1`, `SECRETS=relay/.secrets/testnet.json`, `DB=relay/data/realsies.db`, `SKIN_SECRET` (random, persisted in DB on first boot if unset), `USD_PER_COIN=0.01`. Read the repo-root `.env`.
 
+Telegram and Turing Hour (v1.13; full table in `relay/README.md`): `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT` (both, or off; never in test mode), `TELEGRAM_MIN_CHATS=3`, `TELEGRAM_MIN_PLAYERS=2`, `TURING_HOUR_UTC` (`HH:MM`; unset = no Turing Hour), `TURING_HOUR_MINUTES=60` (1 to 360). A value that cannot work stops the relay at boot with the reason.
+
+### Telegram and Turing Hour (v1.13)
+
+No spamming, and only when real players played: a summary full of zeros reads as a dead game. When a round has settled and its results are stored, and it had at least `TELEGRAM_MIN_CHATS` started chats (a chat between two players counts once) by at least `TELEGRAM_MIN_PLAYERS` different players, the relay sends one plain-text message to `TELEGRAM_CHAT` with the Bot API (`sendMessage`, no Markdown or HTML, no link preview). Short lines, each only when its number is above zero; never a player's account or name; a bot's persona name only as the best fooler, since the persona cards are public once the round has settled:
+
+```
+Round 7 on Realsies is settled.
+12 chats by 5 players. 7 calls were right.
+Bots fooled 4 players. Best fooler: Paige.
+2 chats were between two real people.
+310 coins changed hands.
+The next round is open: https://realsies.lol
+```
+
+"Coins changed hands" is the locked coins of the wrong calls, which went to the right callers, the characters' payouts and the bot fund; "Best fooler" is the bot that fooled the most different players, named only when one fooled more than any other and it has a persona card; the last line says "Play at https://<AUTH_RECIPIENT>" when no newer round is open. Turing Hour (`PublicConfig.turingHour: {startUtc, minutes}`, the arithmetic in `shared/turing.ts`) is one hour a day when real people are promised to be in the room. The web shows one line in the launch banner's place, in the room only, from 6 hours before the start ("Turing Hour today at 22:00: real people in the room. Starts in 3 h 12 min.", the visitor's own time, a live countdown) and during it ("Turing Hour is on until 23:00: real people are here now."), never while the launch banner or the TESTNET panel shows, shorter on a phone, hidden per hour with its ×. When the hour ends the relay counts the chats started in it and their players (kept in the DB across a restart) and, above the same thresholds, posts "Turing Hour is over. 9 players, 31 chats in the last hour. Results come when the round settles.": nothing about right or wrong calls, since who was a bot is secret until the round settles. At most one message per round and one per day's hour, remembered in kv before the first try (also across restarts); a post never blocks or breaks the round: 10 s per try, one retry, then a WARN. The token is never in a log line or an error.
+
 ### Persistence
 
 `node:sqlite` (`DatabaseSync`), one file. No native modules. Suggested tables: rounds, characters, chats, plays (free and paid), messages, completions (request bytes, response bytes, completion id, signature JSON, local verification result), attestations, results, ratings, users, kv.

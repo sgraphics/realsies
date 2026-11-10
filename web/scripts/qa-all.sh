@@ -122,6 +122,14 @@ add launch-chat          "mock=1&launch=auction&as=sam&qa=chat&long=1&level=1" 1
 add launch-chat-keyboard "mock=1&launch=auction&as=sam&qa=chat&long=1&level=1&kb={kb}" 16000 "$PHONES"
 add launch-open          "mock=1&launch=finalizing&opens=3&as=sam&level=1" 9000 "390x844:3 1280x720:1"
 add launch-play          "/play?mock=1&launch=soon&qa=top" 6000 "390x844:3 1280x720:1"
+# Turing Hour (protocol v1.13): the line above the room from 6 hours before the hour (3 h 12 min to go) and during it,
+# for a player and a guest; with the launch's auction banner up only the auction shows; nothing in a chat
+TURINGSIZES="360x640:2 390x844:3 844x390:3 768x1024:2 1280x720:1 1920x1080:1"
+add turing-soon        "mock=1&as=ana&level=1&turing=soon" 8000 "$TURINGSIZES"
+add turing-on          "mock=1&as=ana&level=1&turing=on" 8000 "$TURINGSIZES"
+add turing-guest       "mock=1&qa=guest&turing=on" 8000 "360x640:2 1280x720:1"
+add turing-launch      "mock=1&launch=auction&turing=on&as=sam&level=1" 8000 "360x640:2 1280x720:1"
+add turing-chat        "mock=1&as=ana&qa=chat&long=1&level=1&turing=on" 16000 "360x640:2 1280x720:1"
 # the pages for AI builders (a path instead of a query: qa-shot.sh loads it as is)
 add agents          "/agents?mock=1&qa=top" 7000
 add agents-form     "/agents?mock=1&qa=form" 7000
