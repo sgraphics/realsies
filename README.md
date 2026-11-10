@@ -49,18 +49,19 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 - NEAR AI enclaves
 - Rust game contract
 - REAL coin, NEP-141
-- meme.cooking launch
+- Rhea pool, locked
 
-## Status, 2026-11-07
+## Status, 2026-11-10
 
 | Part | State |
 |---|---|
 | Game on testnet | Live at https://testnet.realsies.lol: test users or a testnet wallet, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 137 |
 | AI builders side | Live: `/agents` (pitch and access request), `/agents/dashboard` (scorecards, transcripts, export, own NEAR AI key, persona requests), botmaster API, `docs/agents.md` |
-| Mainnet game | `game.realsies.near` deployed with the testnet code and a mainnet relay running; realsies.lol shows a countdown (with Get $REAL and the trailer) until the auction opens on Monday Nov 9, 15:00 UTC, then the game with wallet sign-in and free play; the coin is set on the contract when the token finalizes and coins open by themselves |
-| REAL coin | Auction on meme.cooking (https://meme.cooking/meme/2313) from Monday Nov 9, 15:00 UTC, 24 hours, one price for everyone, 100 NEAR soft cap; mainnet rounds with coins open when it finalizes |
-| Wallet sign-in | NEAR Connect: one NEP-413 signature to sign in, a browser function-call key for plays and calls without popups, deposit and withdraw through the wallet; live on testnet |
-| Buy coins | Get $REAL links to the meme.cooking auction, then to Rhea once the token is live; NEAR Intents later |
+| Mainnet game | Live at https://realsies.lol: `game.realsies.near`, wallet sign-in, free play every day, and coins (REAL) since Nov 10. Turing Hour every day at 20:00 UTC, when real people are in the room |
+| REAL coin | `real.realsies.near`: a fixed supply of 1,000,000,000, no minting, and the token account has no keys. 800,000,000 sit in one Rhea pool position that started with no NEAR and whose account has no keys, so the liquidity cannot be taken out. 200,000,000 are the team's share in `vault.realsies.near` (`contracts/vault`, no owner): nothing before Nov 17, everything by Dec 8. Launched on Nov 10 at 15:00 UTC with `scripts/launch-real.mjs` after a full rehearsal on testnet: [token](https://nearblocks.io/address/real.realsies.near), [vault](https://nearblocks.io/address/vault.realsies.near), [liquidity account](https://nearblocks.io/address/liquidity.realsies.near), pool `real.realsies.near|wrap.near|2000` on `dclv2.ref-labs.near` |
+| Free try | One practice chat without a wallet, on mainnet and testnet: always one of the house bots, the reveal right after the call, kept outside the rounds so it can never tell who is a bot in a running round (`relay/src/game/practice.ts`) |
+| Wallet sign-in | NEAR Connect: one NEP-413 signature to sign in, a browser function-call key for plays and calls without popups; live on mainnet and testnet |
+| Coins for NEAR | Inside the game: pay NEAR and the coins are in the game after one wallet approval (wrap, swap on Rhea, deposit); withdraw coins as plain NEAR the same way. Players never visit an exchange (`web/src/wallet/swap.ts`, `relay/src/swap.ts`) |
 
 ## The problem
 
@@ -77,7 +78,8 @@ Realsies adds all three, inside a game people play for fun: coins on every call,
 5. To meet a human instead of a bot, open a second browser window as another test user and tap a character in both windows within a few seconds.
 6. Rounds last 10 minutes on testnet. To skip ahead, open the menu at the top right and choose End round now. See Results: who was who, the persona card of every bot you met, your score and rating, coins won, and a Verify button on every bot chat.
 7. Tap Verify. See every check run in your browser: the on-chain commitment, your handle and chat tag, every enclave signature recovered to the attested signer, the persona prompt hash, your own messages matched byte for byte inside the signed request, and links to each transaction on testnet.nearblocks.io.
-8. Open https://testnet.realsies.lol/agents. See the pitch for AI builders, a worked Turing bonus example and the access request form. Open https://testnet.realsies.lol/agents/dashboard?mock=1 and tap "Use the demo token": see a sample builder's scorecard by persona and round, transcripts and setup.
+8. With a testnet wallet that holds test NEAR: tap your coins, choose 0.25 NEAR and approve once. See about 98 coins in the game: the NEAR was wrapped, swapped on Rhea's testnet pool and deposited in that one approval. Type a number of coins next to Withdraw and approve once: see plain NEAR back in the wallet.
+9. Open https://testnet.realsies.lol/agents. See the pitch for AI builders, a worked Turing bonus example and the access request form. Open https://testnet.realsies.lol/agents/dashboard?mock=1 and tap "Use the demo token": see a sample builder's scorecard by persona and round, transcripts and setup.
 
 Run it locally instead:
 
@@ -87,7 +89,7 @@ cd ../art && npm install
 cd ../relay && npm install && npm run build && npm start   # http://localhost:3960
 ```
 
-The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (103 tests) and `web` (four suites), `cargo test` in `contracts/game` (16), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
+The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (132 tests) and `web` (nine suites), `cargo test` in `contracts/game` (16) and `contracts/vault` (19), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
 
 The trust chain also runs on its own, without the game:
 
@@ -157,13 +159,13 @@ Evidence from 2026-11-04: model z-ai/glm-5.3-flash, attested signer 0x3b753b4406
 
 | Partner | Role | State |
 |---|---|---|
-| meme.cooking | Raises REAL in a fair auction (same price for everyone), creates the NEP-141 token and locks liquidity on Rhea; the 20% team allocation vests on chain | Auction from Monday Nov 9, 15:00 UTC |
-| Rhea Finance | REAL/NEAR liquidity for buying coins | At launch |
+| Rhea Finance | REAL trades in a Rhea concentrated-liquidity pool; the game buys and sells coins there inside the player's one wallet approval | Live since Nov 10 |
+| meme.cooking | The first launch attempt: a 24-hour auction on Nov 9 that ended below its soft cap. We found and reported the bug that kept first-time wallets out; fixed upstream (below) | Ended |
 | NEAR Connect | Wallet sign-in (NEP-413) and a limited-access key for plays and calls | In use (`web/src/wallet/`, `relay/src/auth/`) |
-| NEAR Intents | Buy coins with any token | After launch |
+| NEAR Intents | Get coins with any token | Later |
 | FastNEAR, NearBlocks | RPC for the relay and the CLI; transaction links in the Verify panel | In use |
 
-In one line each: NEAR AI makes a bot provable; NEAR makes the proof a contract call instead of a promise; meme.cooking and Rhea give the game a fair-launch coin with liquidity from day one. Serious cryptography, wrapped in a game anyone can play in a browser.
+In one line each: NEAR AI makes a bot provable; NEAR makes the proof a contract call instead of a promise; Rhea gives the game a coin anyone gets with NEAR in one approval, with liquidity nobody can take out. Serious cryptography, wrapped in a game anyone can play in a browser.
 
 **Given back to the ecosystem.** During our launch we found a bug on meme.cooking that stopped every first-time wallet from depositing into any auction: the deposit button read "this account is not registered yet" as "still loading" and did nothing. We reported the exact line and the cause, and the meme.cooking team fixed it the next morning: [Shitzu-Apes/app@24c72f9](https://github.com/Shitzu-Apes/app/commit/24c72f9dc9c87d5455d1a7168595107932cfc813), "fix: unblock first-time wallets in meme.cooking deposit".
 
@@ -182,7 +184,7 @@ Docs: `docs/agents.md` (apply, enter, scorecard, API) and `docs/bot-api.md` (the
 
 ## Economy
 
-Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every depositor, half the supply plus all deposited NEAR locked as Rhea liquidity for 69 years, a 20% team allocation with a 7-day cliff and 21-day vesting. One coin is a fixed number of REAL chosen at launch so that a coin is about one cent. Presets run from 5 coins at Level 1 to 500 at Level 3. Coins are held in the game contract per account; deposit and withdraw are one call each. The game earns its 10%; the bot fund's 5% buys inference; builders earn only by fooling people.
+Coins are REAL, a NEP-141 token with a fixed supply of 1,000,000,000 (`real.realsies.near`). Nothing was sold ahead of the launch. 80% of the supply went into a Rhea pool as a single position that began with no NEAR, at 4,000,000 REAL per NEAR: buyers bring the NEAR and the price follows what people do. The account that owns the position has no keys, so the liquidity cannot be taken out. The other 20% is the team's share, held by a vault contract with no owner (`contracts/vault`): nothing for 7 days, then released evenly over 21 days. One coin is 10,000 REAL, about 0.0025 NEAR at the start. Presets run from 5 coins at Level 1 to 500 at Level 3. Coins are held in the game contract per account; a player gets them with NEAR and turns them back into NEAR with one wallet approval each. The game earns its 10%; the bot fund's 5% buys inference; builders earn only by fooling people.
 
 ## Design choices
 
@@ -202,7 +204,9 @@ Coins are REAL, a NEP-141 token raised on meme.cooking: same price for every dep
 | Art pipeline | Palette, rig template, part strips, the REAL coin image | `art` |
 | Shared protocol | Relay and web message types, steering notes, names | `shared` |
 | Experiments | TEE verification script and evidence, test token notes | `experiments` |
-| Test token | tREAL at `real.realsies.testnet` | `contracts/test-token` |
+| Test token | tREAL at `real.realsies.testnet`; the same token code is REAL on mainnet | `contracts/test-token` |
+| Vault | The team's share of REAL: a cliff, then a linear release to one account; no owner, no keys | `contracts/vault` |
+| Launch script | Token, pool, vault and the final lock, each step checked on chain; rehearsed end to end on testnet | `scripts/launch-real.mjs` |
 
 Specs: `docs/spec.md` (protocol and rules), `docs/bot-api.md` (brains), `docs/agents.md` (AI builders).
 

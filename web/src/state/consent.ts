@@ -1,7 +1,7 @@
 // One-time "I'm 18 or older, I play at my own risk and I accept the terms" on first entry, remembered in localStorage.
 // Deliberately light: no geo checks, no account binding, no re-asking unless the terms version changes.
 
-const KEY = 'realsies:terms:v2'; // v2 (2026-11-08): beta, entertainment only, tokens can be lost, own responsibility
+const KEY = 'realsies:terms:v3'; // v3 (2026-11-10): coins are bought and sold on Rhea, a third party, at a price that moves; v2 (2026-11-08): beta, entertainment only, tokens can be lost, own responsibility
 
 function ls(): Storage | null {
   try {
