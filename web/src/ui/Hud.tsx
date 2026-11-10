@@ -35,6 +35,8 @@ export interface HudProps {
   /** wallet players: sign out (the session ends, this browser forgets its play key) */
   onSignOut?(): void;
   onTerms?(): void;
+  /** the call screen once the call is locked: the menu's way back to the room, where coins, past rounds and sign-out are */
+  onBack?(): void;
   /** a guest watching the room: "Sign in" instead of the player's coins, rating and results; in a practice chat (v1.14) no coins, rating or test tools */
   guest?: boolean;
   onSignIn?(): void;
@@ -282,6 +284,11 @@ export function Hud(p: HudProps) {
                   <Icon name="clock" /> Past rounds
                 </button>
               </>
+            )}
+            {kind === 'call' && p.onBack && (
+              <button type="button" class="px-btn small primary hud-menu-item" onClick={() => { setMenu(false); p.onBack?.(); }}>
+                <Icon name="user" /> Back to room
+              </button>
             )}
             <button type="button" class="px-btn small hud-menu-item" onClick={() => { setMenu(false); p.onTerms?.(); }}>
               <Icon name="shield" /> Terms

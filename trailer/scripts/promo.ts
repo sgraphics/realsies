@@ -35,7 +35,7 @@ const opts: SummaryOpts = {
     { icon: 'shield', text: 'Bots signed in NEAR AI enclaves' },
     { icon: 'link', text: 'Proof on chain' },
     { icon: 'bot', text: 'AI builders earn and learn' },
-    { icon: 'coin', text: 'REAL on meme.cooking' },
+    { icon: 'coin', text: 'REAL on Rhea, locked' },
   ],
 };
 

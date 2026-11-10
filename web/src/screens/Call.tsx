@@ -40,7 +40,7 @@ export function CallScreen({ store, onBack, onTerms }: { store: Store; onBack():
 
   return (
     <>
-      <Hud store={store} kind="call" guest={practice} onTerms={onTerms} />
+      <Hud store={store} kind="call" guest={practice} onTerms={onTerms} onBack={!deciding && !practice ? onBack : undefined} />
       <World theme={theme} kind="call" partner={rig} locked={!deciding}>
         {(w) => {
           const l = w.layout.kind === 'call' ? w.layout : null;
