@@ -35,7 +35,7 @@ export interface HudProps {
   /** wallet players: sign out (the session ends, this browser forgets its play key) */
   onSignOut?(): void;
   onTerms?(): void;
-  /** a guest watching the room: "Sign in" instead of the player's coins, rating and results */
+  /** a guest watching the room: "Sign in" instead of the player's coins, rating and results; in a practice chat (v1.14) no coins, rating or test tools */
   guest?: boolean;
   onSignIn?(): void;
   /** the auction banner's Get $REAL: the deposit dialog (mainnet, while REAL's auction runs) */
@@ -225,6 +225,7 @@ export function Hud(p: HudProps) {
       </>
     );
   } else if (kind === 'call') {
+    // a guest's practice chat (v1.14) has no coins and no rating
     cells = (
       <>
         {brand}
@@ -233,8 +234,8 @@ export function Hud(p: HudProps) {
           <span class="hud-theme">{THEME_NAMES[theme]}</span>
         </div>
         {clock}
-        {coins}
-        {rating}
+        {!p.guest && coins}
+        {!p.guest && rating}
         {menuBtn}
       </>
     );

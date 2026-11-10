@@ -2,13 +2,17 @@
 // the short terms with one checkbox, "I'm 18 or older, I play at my own risk and I accept the terms", and Continue,
 // compulsory (no close, no click outside, Esc does nothing); then the sign-in: a NEAR wallet (NEAR Connect), and on
 // testnet the six test players too. Once signed in the prompt goes and the tapped character's seat opens (app.tsx).
+// Where the relay offers the practice chat (protocol v1.14), the sign-in step has two choices: "Try one chat free"
+// (one chat with a house bot, the reveal right after the call) and the wallet. When this browser or its network had
+// its try today, or every free chat of the day is gone, the try gives way to one plain line saying why.
 // A signed-in player whose accepted terms are older than the current version (state/consent.ts) gets the first step
 // alone. Accepting is remembered in this browser until the terms version changes.
 
 import { useEffect, useState } from 'preact/hooks';
-import type { Store } from '../state/store.ts';
+import type { PracticeAnswer, Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
 import { acceptTerms, termsAccepted } from '../state/consent.ts';
+import { TRY_FREE, practiceOn, refusalLine } from '../state/practice.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 import { useEscape } from '../ui/hooks.ts';
 import { TermsList } from './Terms.tsx';
@@ -26,6 +30,10 @@ export function LoginModal(p: {
   onConsent(): void;
   /** the guest closed the sign-in step: back to watching */
   onClose(): void;
+  /** v1.14: "Try one chat free" (a guest, where the relay offers it); the app closes the prompt once it starts */
+  onPractice?(): Promise<PracticeAnswer>;
+  /** opened from the reveal of a practice chat: the guest knows the try is used, so no line says it */
+  afterPractice?: boolean;
 }) {
   const s = useStore(p.store);
   const cfg = s.config;
@@ -34,8 +42,36 @@ export function LoginModal(p: {
   const busy = s.signIn.phase === 'preparing' || s.signIn.phase === 'wallet' || s.signIn.phase === 'checking' || s.status === 'connecting';
   const testMode = !!cfg?.testMode;
   const walletOn = !!cfg?.wallet && !!p.store.wallet && !!p.store.client.authChallenge;
+  // the free try: asked as the prompt opens, so the answer is in by the time the terms are read (null: asking)
+  const tryOn = !p.consentOnly && !!p.onPractice && practiceOn(cfg);
+  const [offer, setOffer] = useState<PracticeAnswer | null>(null);
+  const [starting, setStarting] = useState(false);
+  // a tap that could not start it for another reason (the relay unreachable): said in its own words
+  const [tapError, setTapError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!tryOn) return;
+    let live = true;
+    void p.store.actions.practiceStatus().then((a) => live && setOffer(a));
+    return () => {
+      live = false;
+    };
+  }, [tryOn]);
+  const offerTry = tryOn && (offer === null || offer.ok);
+  // (a status that could not be read just leaves the try out: the sign-in is still there)
+  const why = tryOn && !p.afterPractice && offer && !offer.ok ? refusalLine(offer.reason) ?? tapError : null;
+  const tryIt = async () => {
+    if (!p.onPractice || starting) return;
+    setStarting(true);
+    const a = await p.onPractice();
+    // started: the app has closed the prompt; refused: the plain line in place of the try
+    if (!a.ok) {
+      setTapError(a.error ?? null);
+      setOffer(a);
+      setStarting(false);
+    }
+  };
   const close = () => {
-    if (step === 'signin' && !busy) p.onClose();
+    if (step === 'signin' && !busy && !starting) p.onClose();
   };
   // Esc and a click outside close the sign-in step only; the terms step is not optional
   useEscape(close);
@@ -90,10 +126,16 @@ export function LoginModal(p: {
     <div class="scrim" onClick={(e) => e.target === e.currentTarget && close()}>
       <div class="modal narrow px-panel sheet-enter login-modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
         <div class="px-row px-head">
-          <h2 id="login-title" class="px-title">Sign in to play</h2>
-          <Button small kind="ghost" disabled={busy} onClick={close}>Back</Button>
+          <h2 id="login-title" class="px-title">{offerTry ? 'Ready to play?' : 'Sign in to play'}</h2>
+          <Button small kind="ghost" disabled={busy || starting} onClick={close}>Back</Button>
         </div>
-        {walletOn && <WalletSignInPanel store={p.store} tight />}
+        {why && <p class="px-sub login-why" role="status">{why}</p>}
+        {offerTry && (
+          <Button kind="primary" class="login-try" disabled={offer === null || starting || busy} onClick={() => void tryIt()}>
+            <Icon name="chat" /> {starting ? 'Starting…' : TRY_FREE}
+          </Button>
+        )}
+        {walletOn && <WalletSignInPanel store={p.store} tight secondary={offerTry} />}
         {testMode && (
           <div class="login-players-box">
             <p class="px-sub">{walletOn ? 'Or play as a test player:' : 'Play as a test player:'}</p>

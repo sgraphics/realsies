@@ -10,6 +10,7 @@ import {
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
   type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo, type LaunchConfig,
   type AirdropResult, type AirdropStatus, AIRDROP, type AuctionInfo, type AuthFailure, type SwapConfig, type SwapQuestion, type SwapQuote,
+  type PracticeRequest, type PracticeStatus,
 } from '../../../shared/protocol.ts';
 import type { AuctionViews } from '../launch/auction.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -93,6 +94,10 @@ export interface MockOptions {
   priceMoves?: boolean;
   /** Turing Hour (protocol v1.13, PublicConfig.turingHour) */
   turingHour?: { startUtc: string; minutes: number };
+  /** the practice chat (protocol v1.14, PublicConfig.practice): tries a day per device; default 1, 0 = off */
+  practicePerDay?: number;
+  /** every guest's practice chats for today are gone: a try is refused with practice_cap (QA: &practicecap=1) */
+  practiceCap?: boolean;
 }
 
 /** The mock's Rhea: the testnet pool contract and pool of the coin, whatever the network says. */
@@ -122,7 +127,8 @@ function apiError(code: string, message: string, status = 400, data?: Record<str
 }
 
 /** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
-export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet' | 'betaClosed' | 'betaRedirect' | 'swap' | 'turingHour'> = {}): PublicConfig {
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet' | 'betaClosed' | 'betaRedirect' | 'swap' | 'turingHour' | 'practicePerDay'> = {}): PublicConfig {
+  const practicePerDay = opts.practicePerDay ?? 1;
   return {
     testMode: !opts.wallet,
     network: opts.mainnet ? 'mainnet' : 'testnet',
@@ -154,6 +160,7 @@ export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds'
     ...(opts.betaClosed ? { betaClosed: { redirect: opts.betaRedirect ?? '/?mock=1&launch=soon', reason: 'spend_cap' as const } } : {}),
     ...(opts.swap && opts.coinsOpen !== false ? { swap: { ...MOCK_SWAP }, nearPerCoin: 0.0025 } : {}),
     ...(opts.turingHour ? { turingHour: { ...opts.turingHour } } : {}),
+    ...(practicePerDay > 0 ? { practice: { perDay: practicePerDay } } : {}),
   };
 }
 
@@ -357,6 +364,9 @@ export class MockGameClient implements GameClient, MockLedger {
   private brains = new Map<string, Brain>();
   private search: SearchRec | null = null;
   private lastSay = new Map<string, number>();
+  /** v1.14: a guest's practice chat (in no round, never stored) and the tries per device today */
+  private practiceChat: ChatRec | null = null;
+  private practiceTries = new Map<string, { day: string; n: number }>();
   private disposed = false;
 
   constructor(opts: MockOptions = {}) {
@@ -1435,6 +1445,8 @@ export class MockGameClient implements GameClient, MockLedger {
   }
 
   disconnect(): void {
+    if (this.practiceChat) this.clearChatTimers(this.practiceChat.chatId);
+    this.practiceChat = null;
     this.account = null;
     this.inbox = [];
     this.outbox = [];
@@ -1467,6 +1479,9 @@ export class MockGameClient implements GameClient, MockLedger {
   // ======================= message handling =======================
 
   private handle(viewer: string, m: ClientMsg): void {
+    // a guest's practice socket takes messages and one call, nothing of the round (like the relay)
+    if (this.practiceChat?.viewer === viewer && m.t !== 'ping' && m.t !== 'say' && m.t !== 'typing' && m.t !== 'call')
+      return this.err('not_in_practice', 'A free chat takes messages and one call, nothing else. Sign in to play the rounds.', viewer);
     switch (m.t) {
       case 'ping':
         this.emit({ t: 'pong' }, viewer);
@@ -1497,7 +1512,7 @@ export class MockGameClient implements GameClient, MockLedger {
         return this.call(viewer, m.chatId, m.human);
       case 'dev_end_chat': {
         if (this.o.wallet) return this.err('not_test_mode', 'Test tools are off.', viewer);
-        const c = this.st.chats.find((x) => x.chatId === m.chatId && x.viewer === viewer);
+        const c = this.allChats().find((x) => x.chatId === m.chatId && x.viewer === viewer);
         if (!c) return this.err('no_chat', 'No such chat.', viewer);
         this.endChat(c.chatId, 'dev');
         return;
@@ -1689,7 +1704,7 @@ export class MockGameClient implements GameClient, MockLedger {
   }
 
   private say(viewer: string, chatId: string, raw: string): void {
-    const c = this.st.chats.find((x) => x.chatId === chatId && x.viewer === viewer);
+    const c = this.allChats().find((x) => x.chatId === chatId && x.viewer === viewer);
     if (!c || c.phase !== 'chatting') return this.err('not_chatting', 'This chat is not running.', viewer);
     const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
     if (!text) return;
@@ -1822,7 +1837,7 @@ export class MockGameClient implements GameClient, MockLedger {
    */
   qaScript(lines: { from: 'me' | 'them'; text: string }[]): void {
     const viewer = this.account;
-    const c = viewer ? this.st.chats.find((x) => x.viewer === viewer && x.phase === 'chatting') : undefined;
+    const c = viewer ? this.allChats().find((x) => x.viewer === viewer && x.phase === 'chatting') : undefined;
     if (!c || !viewer) return;
     let t = this.now() - lines.length * 4000;
     for (const l of lines) {
@@ -1835,7 +1850,7 @@ export class MockGameClient implements GameClient, MockLedger {
   }
 
   private endChat(chatId: string, reason: 'time' | 'partner_left' | 'dev' | 'round_end', windowMs?: number): void {
-    const c = this.st.chats.find((x) => x.chatId === chatId);
+    const c = this.allChats().find((x) => x.chatId === chatId);
     if (!c || !(c.phase === 'chatting' || c.phase === 'placing' || c.phase === 'searching')) return;
     this.clearChatTimers(chatId);
     const b = this.brains.get(chatId);
@@ -1861,18 +1876,19 @@ export class MockGameClient implements GameClient, MockLedger {
   }
 
   private missCall(chatId: string): void {
-    const c = this.st.chats.find((x) => x.chatId === chatId);
+    const c = this.allChats().find((x) => x.chatId === chatId);
     if (!c || c.phase !== 'calling') return;
     this.clearChatTimers(chatId);
     c.phase = 'missed';
     c.myCall = null;
     this.emit({ t: 'call_missed', chatId }, c.viewer);
+    if (c === this.practiceChat) return this.revealPractice(c);
     if (c.roundId === this.st.current) this.emitSeat(c.viewer, c.level, c.seatIndex);
     this.save();
   }
 
   private call(viewer: string, chatId: string, human: boolean): void {
-    const c = this.st.chats.find((x) => x.chatId === chatId && x.viewer === viewer);
+    const c = this.allChats().find((x) => x.chatId === chatId && x.viewer === viewer);
     if (!c) return this.err('no_chat', 'No such chat.', viewer);
     if (c.phase === 'called') return this.err('already_called', 'You already made your call.', viewer);
     if (c.phase !== 'calling' || this.now() > (c.callDeadline ?? 0) + 1000) return this.err('call_closed', 'The call window is closed.', viewer);
@@ -1893,7 +1909,83 @@ export class MockGameClient implements GameClient, MockLedger {
     }
     if (c.played > 0) c.callTx = fakeTx(this.r);
     this.emit({ t: 'call_recorded', chatId, human: c.myCall, tx: c.callTx }, viewer);
+    if (c === this.practiceChat) return this.revealPractice(c);
     this.save();
+  }
+
+  // ======================= the practice chat (protocol v1.14) =======================
+
+  /** Why a guest may not have a practice chat now, like the relay: its own try first, then the day's cap. */
+  private practiceRefusal(device: string): { code: string; message: string; status: number } | null {
+    const per = this.o.practicePerDay ?? 1;
+    if (per <= 0) return { code: 'practice_off', message: 'There are no free chats on this relay.', status: 404 };
+    if (this.config.betaClosed) return { code: 'beta_closed', message: BETA_CLOSED, status: 403 };
+    if (this.botsNapping()) return { code: 'bots_unavailable', message: BOTS_UNAVAILABLE, status: 503 };
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    const had = this.practiceTries.get(device);
+    if (had && had.day === day && had.n >= per) return { code: 'practice_used', message: 'This device or this network had its free chat today. Sign in to play the rounds.', status: 429 };
+    if (this.o.practiceCap) return { code: 'practice_cap', message: 'The free chats for today are all gone. Sign in to play the rounds.', status: 429 };
+    return null;
+  }
+
+  practiceStatus(device: string): Promise<PracticeStatus> {
+    return this.tick(() => {
+      const why = this.practiceRefusal(device);
+      return why ? { ok: false, reason: why.code as PracticeStatus['reason'] } : { ok: true };
+    });
+  }
+
+  /**
+   * A guest's practice chat: one of the canned bots on the cheapest model, wearing the look the guest tapped, in no
+   * round; the same countdown, typing and call as any chat, then practice_result with the persona card.
+   */
+  startPractice(req: PracticeRequest): Promise<void> {
+    return this.tick(() => {
+      const why = this.practiceRefusal(req.device);
+      if (why) throw apiError(why.code, why.message, why.status);
+      const day = new Date(this.now()).toISOString().slice(0, 10);
+      const had = this.practiceTries.get(req.device);
+      this.practiceTries.set(req.device, { day, n: had && had.day === day ? had.n + 1 : 1 });
+      this.disconnect();
+      const viewer = `practice:${randHex(this.r, 8)}`;
+      this.account = viewer;
+      this.setStatus('open');
+      const cheap = PERSONAS.filter((p) => p.model === EVIDENCE_MODEL);
+      const p = this.r.pick(cheap.length ? cheap : PERSONAS);
+      const c: ChatRec = {
+        chatId: 'p' + randHex(this.r, 15), roundId: 0, level: req.level, seatIndex: 0, theme: themeFor(req.level, this.st.current),
+        partner: { seed: req.seed, name: gamertag(req.seed) }, viewer, mode: 'free', coins: 0, played: 0, locked: 0, kind: 'bot', personaId: p.id,
+        characterId: 'practice', salt: '', handle: randHex(this.r, 64), phase: 'placing', messages: [], completions: [], transcript: [], history: [], pendingUser: [],
+      };
+      this.practiceChat = c;
+      this.emit({ t: 'matched', chat: this.chatInfo(c) }, viewer);
+      this.chatLater(c.chatId, this.d(400), () => this.startChat(c));
+    });
+  }
+
+  private revealPractice(c: ChatRec): void {
+    const p = personaById(c.personaId!)!;
+    const called = c.phase === 'called' && typeof c.myCall === 'boolean';
+    this.emit({
+      t: 'practice_result',
+      result: { chatId: c.chatId, truth: 'bot', myCall: called ? !!c.myCall : null, right: called ? c.myCall === false : null, model: p.model, persona: personaCard(p) },
+    }, c.viewer);
+  }
+
+  /**
+   * QA only: a practice chat at its call, with a short conversation and a long call window, so the reveal can be
+   * screenshotted without waiting out two minutes.
+   */
+  qaPracticeToCall(lines: { from: 'me' | 'them'; text: string }[]): void {
+    const c = this.practiceChat;
+    if (!c || c.phase !== 'chatting') return;
+    this.qaScript(lines);
+    this.endChat(c.chatId, 'time', 600_000);
+  }
+
+  /** Every chat this mock runs: the rounds', and a guest's practice chat, which is in no round. */
+  private allChats(): ChatRec[] {
+    return this.practiceChat ? [...this.st.chats, this.practiceChat] : this.st.chats;
   }
 
   // ======================= rounds and settlement =======================

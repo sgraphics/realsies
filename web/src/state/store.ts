@@ -2,8 +2,9 @@
 // Keeps the player's own transcript copy in localStorage as messages arrive (Verify drawer check).
 
 import type {
-  ActiveChat, AirdropStatus, AuthChallenge, AuthFailure, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PublicConfig,
-  RoundResults, RoundState, RoundSummary, Seat, ServerMsg, SwapQuestion, SwapQuote, TestUser, ThemeId, VerifyBundle, WalletInfo,
+  ActiveChat, AirdropStatus, AuthChallenge, AuthFailure, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PracticeRefusal,
+  PracticeResult, PublicConfig, RoundResults, RoundState, RoundSummary, Seat, ServerMsg, Skin, SwapQuestion, SwapQuote, TestUser, ThemeId, VerifyBundle,
+  WalletInfo,
 } from '../../../shared/protocol.ts';
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
 import { countdownFor, isCounting } from './countdown.ts';
@@ -18,6 +19,7 @@ import { base58Decode, base64Decode, base64Encode } from '../wallet/base58.ts';
 import { depositCheck, emptyWalletText, shortWalletText, symbolOf } from './walletFunds.ts';
 import { AIRDROP_IDLE, airdropErrorText, airdropOn, landedNote, type AirdropView } from './airdrop.ts';
 import { guestRooms } from './guest.ts';
+import { REFUSALS, deviceId, markTried, practiceOn, triedToday } from './practice.ts';
 
 export type ConnStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
@@ -64,6 +66,26 @@ export interface ChatView extends ActiveChat {
   draft?: { text: string; n: number };
 }
 
+/**
+ * v1.14: a guest's practice chat, one free try outside the rounds: the character tapped, then the chat itself (in
+ * AppState.chat, as any chat), then the reveal right after the call.
+ */
+export interface PracticeView {
+  /** starting: the relay was asked; on: the chat runs; over: the reveal is in */
+  phase: 'starting' | 'on' | 'over';
+  /** the look of the character tapped: the partner wears it */
+  skin: Skin;
+  level: Level;
+  result?: PracticeResult;
+}
+
+/** Whether a guest may have the free try now; `error`: it could not be asked (a network trouble), in its own words. */
+export interface PracticeAnswer {
+  ok: boolean;
+  reason?: PracticeRefusal;
+  error?: string;
+}
+
 export interface SearchView {
   level: Level;
   seatIndex: number;
@@ -108,6 +130,8 @@ export interface AppState {
   keyNeeded?: { code: string; at: number; pick?: { level: Level; seatIndex: number; coins: number } };
   // ----- the testnet airdrop (v1.6) -----
   airdrop: AirdropView;
+  // ----- the practice chat (v1.14) -----
+  practice?: PracticeView;
 }
 
 export interface StoreActions {
@@ -169,6 +193,13 @@ export interface StoreActions {
   refreshAirdrop(): Promise<AirdropStatus | null>;
   /** 100 test tokens in one tap: into a wallet player's wallet, into a test player's game balance. */
   airdrop(): Promise<boolean>;
+  // ----- the practice chat (v1.14) -----
+  /** May this browser have its free practice chat now: its own record of today first, then the relay. */
+  practiceStatus(): Promise<PracticeAnswer>;
+  /** The free practice chat, with the character tapped (its look, and its level for the room); why not when refused. */
+  startPractice(seat: { level: Level; skin: Skin }): Promise<PracticeAnswer>;
+  /** Out of the practice (after the reveal, or before it): the room as a guest again. */
+  endPractice(): void;
 }
 
 export interface Store {
@@ -439,6 +470,20 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
         return;
       }
       case 'error': {
+        if (state.practice && state.practice.phase !== 'over' && !state.accountId && (REFUSALS as readonly string[]).concat('practice_over').includes(m.code)) {
+          // a practice that could not start (the bots ran out since the tap, the beta closed), or whose relay forgot it:
+          // back to the room, with the same calm words as everywhere
+          client.disconnect();
+          set({
+            practice: undefined, chat: undefined,
+            ...(m.code === 'bots_unavailable'
+              ? { notice: { code: m.code, message: BOTS_NAPPING, at: Date.now() } }
+              : m.code === 'beta_closed'
+                ? { betaOver: { at: Date.now() } }
+                : { lastError: { code: m.code, message: m.message, at: Date.now() } }),
+          });
+          return;
+        }
         if (m.code === 'session_expired') {
           // the relay no longer knows this browser's session: back to sign-in
           clearSession();
@@ -497,6 +542,11 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
         }));
         return;
       }
+      case 'practice_result':
+        // the reveal is the practice socket's last word
+        if (state.practice) set({ practice: { ...state.practice, phase: 'over', result: m.result } });
+        client.disconnect();
+        return;
       case 'pong':
         return;
     }
@@ -632,6 +682,8 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
   // the tap and NEAR Connect's wallet list loses that. So the challenge is fetched when the prompt opens and kept
   // while under 5 minutes old; it is spent once it goes to the relay with a signature.
   let prepared: { ch: AuthChallenge; at: number } | null = null;
+  /** v1.14: the relay's last answer about the practice chat, kept 30 s */
+  let practiceAsked: { at: number; answer: PracticeAnswer } | null = null;
   let preparing: Promise<AuthChallenge> | null = null;
   const freshChallenge = (): AuthChallenge | null => (prepared && now() - prepared.at < CHALLENGE_FRESH_MS ? prepared.ch : null);
   const fetchChallenge = (): Promise<AuthChallenge> => {
@@ -727,7 +779,7 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
     },
     selectUser(accountId) {
       if (state.accountId && state.accountId !== accountId) actions.logout();
-      set({ accountId, status: 'connecting', welcomed: false, rooms: {}, chat: undefined, search: undefined, me: undefined, resultsReady: loadResultsReady(accountId), airdrop: AIRDROP_IDLE });
+      set({ accountId, status: 'connecting', welcomed: false, rooms: {}, chat: undefined, search: undefined, me: undefined, resultsReady: loadResultsReady(accountId), airdrop: AIRDROP_IDLE, practice: undefined });
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           welcomeWaiters = welcomeWaiters.filter((w) => w.timer !== timer);
@@ -746,7 +798,7 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
       welcomeWaiters = [];
       if (countdownTimer) clearTimeout(countdownTimer);
       countdownTimer = null;
-      set({ accountId: undefined, me: undefined, round: undefined, rooms: {}, chat: undefined, search: undefined, status: 'idle', welcomed: false, resultsReady: [], lastError: undefined, notice: undefined, airdrop: AIRDROP_IDLE });
+      set({ accountId: undefined, me: undefined, round: undefined, rooms: {}, chat: undefined, search: undefined, status: 'idle', welcomed: false, resultsReady: [], lastError: undefined, notice: undefined, airdrop: AIRDROP_IDLE, practice: undefined });
     },
     enterRoom(level) {
       set({ level });
@@ -1289,6 +1341,53 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
         set((x) => ({ airdrop: { ...x.airdrop, phase: 'error', error: { code, text: airdropErrorText(code, e, x.airdrop.status, symbol) } } }));
         return false;
       }
+    },
+
+    // ----- the practice chat (v1.14) -----
+    async practiceStatus() {
+      const cfg = state.config ?? (await actions.loadConfig().catch(() => undefined));
+      if (!practiceOn(cfg) || !client.practiceStatus || !client.startPractice) return { ok: false, reason: cfg?.betaClosed ? 'beta_closed' : 'practice_off' };
+      // this browser had it today: no need to ask
+      if (triedToday(cfg!.practice!.perDay)) return { ok: false, reason: 'practice_used' };
+      // a guest tapping one character after another asks once every 30 s at most (the relay caps asking per IP)
+      if (practiceAsked && now() - practiceAsked.at < 30_000) return practiceAsked.answer;
+      try {
+        const answer = await client.practiceStatus(deviceId());
+        practiceAsked = { at: now(), answer };
+        return answer;
+      } catch (e) {
+        const code = errCode(e) as PracticeRefusal | undefined;
+        return code && REFUSALS.includes(code) ? { ok: false, reason: code } : { ok: false, error: errText(e) };
+      }
+    },
+    async startPractice(seat) {
+      const cfg = state.config;
+      if (state.accountId || !client.startPractice || !practiceOn(cfg)) return { ok: false, reason: 'practice_off' };
+      // a second tap while it starts, or runs: nothing new
+      if (state.practice && state.practice.phase !== 'over') return { ok: true };
+      set({ practice: { phase: 'starting', skin: seat.skin, level: seat.level }, chat: undefined, search: undefined, level: seat.level, lastError: undefined, notice: undefined });
+      practiceAsked = null;
+      try {
+        await client.startPractice({ device: deviceId(), seed: seat.skin.seed, level: seat.level });
+        // the try counts from the relay's reservation
+        markTried();
+        // (read again: the socket's first messages may have come in meanwhile)
+        const p = state.practice as PracticeView | undefined;
+        if (p?.phase === 'starting') set({ practice: { ...p, phase: 'on' } });
+        return { ok: true };
+      } catch (e) {
+        set({ practice: undefined });
+        const code = errCode(e) as PracticeRefusal | undefined;
+        // the relay knows better than this browser: this device or this network had it today
+        if (code === 'practice_used') markTried(Date.now(), true, cfg!.practice!.perDay);
+        if (code === 'beta_closed') set({ betaOver: { at: Date.now() } });
+        return code && REFUSALS.includes(code) ? { ok: false, reason: code } : { ok: false, error: errText(e) };
+      }
+    },
+    endPractice() {
+      if (!state.practice) return;
+      if (!state.accountId) client.disconnect();
+      set({ practice: undefined, chat: undefined, search: undefined });
     },
   };
 

@@ -31,6 +31,17 @@ add consent-ticked "mock=1&qa=consent&tick=1" 8000
 add guest-tap      "mock=1&qa=guest-tap" 8000
 add guest-tap-mainnet "mock=1&wallet=1&qa=guest-tap" 8000
 add guest-seat     "mock=1&qa=guest-seat" 9000
+# the practice chat (protocol v1.14), a guest's one free try: the sign-in step with its two choices (testnet and a
+# mainnet-like relay), the try used today, every free chat of the day gone; the chat; the reveal after a human call
+# ("It fooled you") and after a bot call ("You spotted it")
+PRACTICESIZES="360x640:2 390x844:3 844x390:3 768x1024:2 1280x720:1 1920x1080:1"
+add practice-choice  "mock=1&qa=guest-tap" 8000 "$PRACTICESIZES"
+add practice-choice-mainnet "mock=1&wallet=1&net=mainnet&qa=guest-tap" 8000 "$PRACTICESIZES"
+add practice-used    "mock=1&wallet=1&net=mainnet&qa=guest-tap&tried=1" 8000 "$PRACTICESIZES"
+add practice-cap     "mock=1&wallet=1&net=mainnet&qa=guest-tap&practicecap=1" 8000 "$PRACTICESIZES"
+add practice-chat    "mock=1&qa=practice-chat&level=2" 14000 "$PRACTICESIZES"
+add practice-fooled  "mock=1&qa=practice&call=human" 14000 "$PRACTICESIZES"
+add practice-spotted "mock=1&qa=practice&call=bot&level=3" 14000 "$PRACTICESIZES"
 add lobby-jungle   "mock=1&as=ana&level=1" 8000
 add lobby-desert   "mock=1&as=ana&level=2" 8000
 add lobby-cave     "mock=1&as=ana&level=3" 8000

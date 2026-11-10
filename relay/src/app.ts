@@ -18,6 +18,7 @@ import { createAgentApi } from './agents/api.js';
 import type { AdminContext } from './agents/admin.js';
 import { parseEncryptionKey } from './secretbox.js';
 import { Game } from './game/game.js';
+import { Practice } from './game/practice.js';
 import { AuthService } from './auth/service.js';
 import { createServer } from './server.js';
 import type { Telegram } from './telegram.js';
@@ -92,6 +93,8 @@ export interface App {
   agents: AgentStore;
   credits: CreditMonitor;
   byok: ByokKeys;
+  /** v1.14: guests' practice chats */
+  practice: Practice;
   close(): Promise<void>;
 }
 
@@ -164,7 +167,9 @@ export async function createApp(overrides: Partial<Config> = {}, deps: AppDeps =
   }
   const admin: AdminContext = { store: agents, fileBotmasters: () => fileBotmasters.map((b) => b.name), kick: (n, c, m) => hub.kick(n, c, m) };
   const agentApi = createAgentApi({ cfg, store: agents, game, hub, credits, byok, admin, models: cachedModels(ai) });
-  const srv = createServer(game, { webDist: cfg.webDist, testMode: cfg.testMode, hub, agents: agentApi, auth });
+  // a visitor without a wallet: one practice chat with a house bot, outside the rounds (protocol v1.14)
+  const practice = new Practice(game);
+  const srv = createServer(game, { webDist: cfg.webDist, testMode: cfg.testMode, hub, agents: agentApi, auth, practice });
   const port = await srv.listen(cfg.port);
   log.info(
     `relay on http://localhost:${port} (chain ${chain.kind} ${chain.contractId}, ai ${ai.kind}, ${personas.length} personas, ` +
@@ -173,8 +178,9 @@ export async function createApp(overrides: Partial<Config> = {}, deps: AppDeps =
       `${game.chainCfg.coinsOpen ? 'coins open' : 'no coin yet: free play only'})`,
   );
   return {
-    cfg, db, chain, ai, game, port, hub, agents, credits, byok, auth,
+    cfg, db, chain, ai, game, port, hub, agents, credits, byok, auth, practice,
     async close() {
+      practice.stop();
       await game.stop();
       hub.close();
       await srv.close();

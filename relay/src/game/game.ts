@@ -288,6 +288,8 @@ export class Game implements BotHost {
           }
         : {}),
       ...(this.cfg.turingHour ? { turingHour: { ...this.cfg.turingHour } } : {}),
+      // v1.14: a visitor without a wallet may try a practice chat (src/game/practice.ts)
+      ...(this.cfg.guestChatsPerDay > 0 && this.cfg.guestChatsDailyCap > 0 ? { practice: { perDay: this.cfg.guestChatsPerDay } } : {}),
     };
   }
 

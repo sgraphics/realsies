@@ -1,12 +1,14 @@
 // App root: picks the screen from store state (the room as a guest -> the room as a player -> searching/chat ->
 // call -> locked) and layers the dialogs (sign-in, seat, deposit, results, verify, past rounds) on top. A guest
 // watches the room without a session; tapping a character (or "Sign in") opens "Before you play" (Login.tsx): the
-// terms with one checkbox, then the sign-in; once signed in, the tapped character's seat opens.
+// terms with one checkbox, then the sign-in; once signed in, the tapped character's seat opens. Where the relay offers
+// it, a guest may instead try one practice chat (protocol v1.14): the chat and call screens as in a round, then the
+// reveal (PracticeResult.tsx) with the way to sign in.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Level, Seat, ThemeId } from '../../shared/protocol.ts';
 import { themeFor } from '../../shared/protocol.ts';
-import type { Store } from './state/store.ts';
+import type { PracticeAnswer, Store } from './state/store.ts';
 import { useStore } from './state/hooks.ts';
 import { LobbyScreen } from './screens/Lobby.tsx';
 import { LoginModal } from './screens/Login.tsx';
@@ -18,6 +20,7 @@ import { ChatScreen } from './screens/Chat.tsx';
 import { CallScreen } from './screens/Call.tsx';
 import { ResultsScreen } from './screens/Results.tsx';
 import { VerifyDrawer } from './screens/Verify.tsx';
+import { PracticeResultDialog } from './screens/PracticeResult.tsx';
 import { PastRounds } from './screens/PastRounds.tsx';
 import { TermsScreen } from './screens/Terms.tsx';
 import { KeySetupDialog } from './screens/KeySetup.tsx';
@@ -52,8 +55,9 @@ export function App({ store }: { store: Store }) {
     qaConsent(location.search);
     return termsAccepted();
   });
-  // "Before you play" for a guest, with the seat that was tapped (or none: the HUD's Sign in)
-  const [login, setLogin] = useState<{ seat?: PendingSeat } | null>(null);
+  // "Before you play" for a guest, with the seat that was tapped (or none: the HUD's Sign in); afterPractice: opened
+  // from a practice chat's reveal
+  const [login, setLogin] = useState<{ seat?: PendingSeat; afterPractice?: boolean } | null>(null);
   // the tapped seat, waiting for the player's own room after sign-in
   const pending = useRef<PendingSeat | null>(null);
   // the REAL auction's deposit dialog (Get $REAL on the banner); a guest signs in first, then it opens
@@ -212,6 +216,17 @@ export function App({ store }: { store: Store }) {
   const testnet = !!(s.config?.testMode || s.config?.network === 'testnet');
   const openTerms = () => setTerms(true);
   const openLogin = (seat?: PendingSeat) => setLogin({ seat });
+  // "Try one chat free" (v1.14): the character tapped (or, from the HUD's Sign in, one of the room's) is the partner's look
+  const tryPractice = async (): Promise<PracticeAnswer> => {
+    const want = login?.seat;
+    const lv = want?.level ?? s.level;
+    const seats = s.rooms[lv]?.seats ?? [];
+    const seat = want ? seats[want.index] : seats[Math.floor(Math.random() * seats.length)];
+    if (!seat) return { ok: false, error: 'The room is still loading. Try again in a moment.' };
+    const a = await store.actions.startPractice({ level: lv, skin: seat.skin });
+    if (a.ok) setLogin(null);
+    return a;
+  };
   // Get $REAL: the deposit dialog for a wallet player; a guest signs in first (mainnet, while the auction runs)
   const openAuction = auctionDepositOn(s.config, Date.now())
     ? () => {
@@ -224,8 +239,10 @@ export function App({ store }: { store: Store }) {
     : undefined;
   // a signed-in player whose accepted terms are older than the current version: the terms again, first
   const reconsent = !!s.accountId && !consented;
+  // a guest's practice chat (v1.14): from the tap until the reveal is closed
+  const practicing = !s.accountId && !!s.practice;
   let screen;
-  if (!s.accountId)
+  if (!s.accountId && !practicing)
     screen = (
       <LobbyScreen
         store={store}
@@ -242,8 +259,9 @@ export function App({ store }: { store: Store }) {
       />
     );
   else if (s.search && !s.chat) screen = <ChatScreen store={store} onTerms={openTerms} />;
+  else if (practicing && !s.chat) screen = <ChatScreen store={store} onTerms={openTerms} />;
   else if (s.chat && (s.chat.phase === 'searching' || s.chat.phase === 'placing' || s.chat.phase === 'chatting')) screen = <ChatScreen store={store} onTerms={openTerms} />;
-  else if (s.chat) screen = <CallScreen store={store} onBack={() => store.actions.clearChat()} onTerms={openTerms} />;
+  else if (s.chat) screen = <CallScreen store={store} onBack={() => (practicing ? store.actions.endPractice() : store.actions.clearChat())} onTerms={openTerms} />;
   else
     screen = (
       <LobbyScreen
@@ -287,6 +305,18 @@ export function App({ store }: { store: Store }) {
             pendingAuction.current = false;
             setLogin(null);
           }}
+          onPractice={reconsent ? undefined : tryPractice}
+          afterPractice={!!login?.afterPractice}
+        />
+      )}
+      {practicing && s.practice?.result && (
+        <PracticeResultDialog
+          store={store}
+          onSignIn={() => {
+            store.actions.endPractice();
+            setLogin({ afterPractice: true });
+          }}
+          onBack={() => store.actions.endPractice()}
         />
       )}
       {auction && s.session && !modal && <AuctionDepositDialog store={store} onClose={() => setAuction(false)} amount={qaAmount(location.search)} />}

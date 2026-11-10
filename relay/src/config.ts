@@ -150,6 +150,14 @@ export interface Config {
   telegram?: TelegramSettings;
   /** TURING_HOUR_UTC ("HH:MM") and TURING_HOUR_MINUTES: PublicConfig.turingHour, the daily hour with real people. Unset: none. */
   turingHour?: TuringHourSetting;
+  // ---------- the practice chat (protocol v1.14, src/game/practice.ts) ----------
+  /**
+   * GUEST_CHATS_PER_DAY: practice chats a visitor without a wallet may have a day, counted per device (an id the
+   * browser keeps) and per IP, whichever is reached first. 0 = no practice chats (PublicConfig.practice absent).
+   */
+  guestChatsPerDay: number;
+  /** GUEST_CHATS_DAILY_CAP: practice chats a day for every guest together, so NEAR AI credits stay safe; 0 = none */
+  guestChatsDailyCap: number;
 }
 
 /** Every variable of the launch; setting any one of them turns it on. */
@@ -305,6 +313,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     playKeyAllowanceNear: num('PLAY_KEY_ALLOWANCE_NEAR', 0.25),
     playGasTgas: num('PLAY_GAS_TGAS', 30),
     signTimeoutSeconds: num('SIGN_TIMEOUT_SECONDS', 20),
+    guestChatsPerDay: num('GUEST_CHATS_PER_DAY', 1),
+    guestChatsDailyCap: num('GUEST_CHATS_DAILY_CAP', 300),
     ...('launch' in overrides ? {} : { launch: launchFromEnv(env) }),
     ...('swap' in overrides ? {} : { swap: swapFromEnv(env) }),
     ...('telegram' in overrides ? {} : { telegram: telegramFromEnv(env) }),
@@ -328,6 +338,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (!(cfg.playKeyAllowanceNear > 0 && cfg.playKeyAllowanceNear <= 5)) throw new Error('PLAY_KEY_ALLOWANCE_NEAR must be more than 0 and at most 5');
   if (!(cfg.playGasTgas >= 5 && cfg.playGasTgas <= 100)) throw new Error('PLAY_GAS_TGAS must be from 5 to 100');
   if (!(cfg.signTimeoutSeconds >= 3 && cfg.signTimeoutSeconds <= 120)) throw new Error('SIGN_TIMEOUT_SECONDS must be from 3 to 120');
+  if (!(Number.isInteger(cfg.guestChatsPerDay) && cfg.guestChatsPerDay >= 0 && cfg.guestChatsPerDay <= 100)) throw new Error('GUEST_CHATS_PER_DAY must be a whole number from 0 to 100 (0 = no practice chats)');
+  if (!(Number.isInteger(cfg.guestChatsDailyCap) && cfg.guestChatsDailyCap >= 0 && cfg.guestChatsDailyCap <= 100_000)) throw new Error('GUEST_CHATS_DAILY_CAP must be a whole number from 0 to 100000');
   if (cfg.launch) checkLaunch(cfg.launch);
   else delete cfg.launch;
   if (!cfg.swap) delete cfg.swap;

@@ -18,6 +18,8 @@
 //                               withdraws as NEAR; the mock plays wrap.testnet and the pool contract (400 coins per NEAR);
 //                               &moved=1 the price moves past every swap (nothing bought or sold, everything comes back)
 //   &turing=soon|on             Turing Hour (protocol v1.13): it starts 3 h 12 min from now, or it started 20 minutes ago
+//   &practice=0                 no practice chat for guests (protocol v1.14; on by default, one a day, like the relay)
+//   &practicecap=1              every guest's practice chats for today are gone: a try is refused (practice_cap)
 
 import type { GameClient } from '../../../shared/protocol.ts';
 import { MockGameClient, type MockOptions, resetMockState } from './mock.ts';
@@ -65,6 +67,8 @@ export function createClient(search?: string): GameClient {
       ...(q.get('swap') === '1' ? { swap: true } : {}),
       ...(q.get('moved') === '1' ? { priceMoves: true } : {}),
       ...(turingHour ? { turingHour } : {}),
+      ...(q.get('practice') === '0' ? { practicePerDay: 0 } : {}), // no practice chat for guests (v1.14)
+      ...(q.get('practicecap') === '1' ? { practiceCap: true } : {}), // every guest's practice chats for today are gone
       ...(launch
         ? {
             wallet: true, mainnet: true, coinsOpen: false, storageKey: 'realsies:mock:launch:v1', ...(token ? { buyUrl: MOCK_BUY_URL } : {}),

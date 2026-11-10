@@ -1,5 +1,7 @@
 // Call: "Real human?" with the countdown in one panel, the partner big on a glowing pedestal with
-// its gamertag beneath, big YES / NO, then "Locked until the round ends" with the round clock.
+// its gamertag beneath, big YES / NO, then "Locked until the round ends" with the round clock. A guest's practice
+// chat (protocol v1.14) is in no round: the same question, then the reveal at once (PracticeResult.tsx) instead of
+// the lock.
 
 import { useEffect } from 'preact/hooks';
 import type { Store } from '../state/store.ts';
@@ -23,6 +25,7 @@ export function CallScreen({ store, onBack, onTerms }: { store: Store; onBack():
   const left = chat.callDeadline ? Math.max(0, chat.callDeadline - now) : 0;
   const round = s.round;
   const roundLeft = round ? Math.max(0, round.endsAt - now) : 0;
+  const practice = !!s.practice && !s.accountId;
 
   useEffect(() => {
     if (!rig) return;
@@ -37,7 +40,7 @@ export function CallScreen({ store, onBack, onTerms }: { store: Store; onBack():
 
   return (
     <>
-      <Hud store={store} kind="call" onTerms={onTerms} />
+      <Hud store={store} kind="call" guest={practice} onTerms={onTerms} />
       <World theme={theme} kind="call" partner={rig} locked={!deciding}>
         {(w) => {
           const l = w.layout.kind === 'call' ? w.layout : null;
@@ -62,7 +65,8 @@ export function CallScreen({ store, onBack, onTerms }: { store: Store; onBack():
                     <Button kind="danger" class="huge" disabled={!!chat.callPending} onClick={() => call(false)}><Icon name="bot" /> No</Button>
                   </div>
                 </>
-              ) : (
+              ) : practice && s.practice?.result ? null : (
+                // (a practice's reveal covers the screen: nothing of the call peeks out beside it)
                 <div class="call-locked-slot" style={w.box(l.locked)}>
                   <div class="px-panel px-center sheet-enter call-locked">
                     {chat.phase === 'called' ? (
@@ -76,8 +80,12 @@ export function CallScreen({ store, onBack, onTerms }: { store: Store; onBack():
                         <p class="px-sub px-dim">{chat.mode === 'paid' ? 'No call: your coins count as a wrong call.' : 'No call this time.'}</p>
                       </>
                     )}
-                    <p class="px-sub call-lock-line"><Icon name="lock" /> Locked until the round ends</p>
-                    <p class="px-title"><Icon name="clock" /> {fmtClock(roundLeft)}</p>
+                    {!practice && (
+                      <>
+                        <p class="px-sub call-lock-line"><Icon name="lock" /> Locked until the round ends</p>
+                        <p class="px-title"><Icon name="clock" /> {fmtClock(roundLeft)}</p>
+                      </>
+                    )}
                     {chat.callTx && (
                       <p class="px-sub"><a class="px-link" href={txUrl(cfg, chat.callTx)} target="_blank" rel="noreferrer">Call on chain <Icon name="link" /></a></p>
                     )}

@@ -33,7 +33,9 @@ export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }
   const cfg = s.config;
   const level = chat?.level ?? search?.level ?? s.level;
   const seatSkin = search ? s.rooms[search.level]?.seats[search.seatIndex]?.skin : undefined;
-  const partner = chat?.partner ?? seatSkin;
+  // a guest's practice chat (v1.14): the character tapped, from the tap until the relay's match
+  const practice = !!s.practice && !s.accountId;
+  const partner = chat?.partner ?? seatSkin ?? (practice ? s.practice?.skin : undefined);
   const theme = chat?.theme ?? (s.round ? s.round.themes[level] ?? themeFor(level, s.round.roundId) : 'castle');
   const rig = useRig(partner?.seed);
   const [text, setText] = useState('');
@@ -148,6 +150,12 @@ export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }
         <Button small onClick={() => store.actions.cancelSearch()}>Cancel</Button>
       </div>
     );
+  } else if (practice && !chat) {
+    status = (
+      <div class="px-panel tight status-panel sheet-enter">
+        <p class="px-sub">Getting ready…</p>
+      </div>
+    );
   } else if (chat && (chat.phase === 'placing' || chat.phase === 'searching')) {
     status = (
       <div class="px-panel tight status-panel sheet-enter">
@@ -158,7 +166,7 @@ export function ChatScreen({ store, onTerms }: { store: Store; onTerms(): void }
 
   return (
     <>
-      <Hud store={store} kind="chat" onTerms={onTerms} />
+      <Hud store={store} kind="chat" guest={practice} onTerms={onTerms} />
       <World theme={theme} kind="chat" partner={rig} fuse={fuse}>
         {(w) => {
           const l = w.layout.kind === 'chat' ? w.layout : null;

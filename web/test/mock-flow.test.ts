@@ -483,4 +483,6 @@ const launch = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'launc
 const beta = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'beta.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
 // ---------- 10. coins for NEAR on Rhea (own process) ----------
 const swap = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'swap.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
-process.exit(failures || smoke.status !== 0 || agents.status !== 0 || wallet.status !== 0 || launch.status !== 0 || beta.status !== 0 || swap.status !== 0 ? 1 : 0);
+// ---------- 11. the practice chat, a guest's one free try (own process) ----------
+const practice = spawnSync(process.execPath, ['--import', 'tsx', join(here, 'practice.test.ts')], { stdio: 'inherit', cwd: join(here, '..') });
+process.exit(failures || smoke.status !== 0 || agents.status !== 0 || wallet.status !== 0 || launch.status !== 0 || beta.status !== 0 || swap.status !== 0 || practice.status !== 0 ? 1 : 0);

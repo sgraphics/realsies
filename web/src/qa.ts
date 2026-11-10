@@ -18,6 +18,12 @@
 //   &qa=guest-tap                  the tap of a visitor who accepted them before: the sign-in step
 //   &qa=guest-seat                 then signed in (a test player, or the mock wallet with &wallet=): the seat opens
 //   &longnames=1                   every seat gets an 11-character gamertag
+// The practice chat (protocol v1.14), a guest's one free try, the character on seat 2 (&seat=N):
+//   &qa=guest-tap                  the sign-in step offers "Try one chat free" next to the wallet
+//   &tried=1                       this browser had its free chat today: the try gives way to one line (&practicecap=1:
+//                                  every free chat of the day is gone)
+//   &qa=practice-chat              the practice chat running, a few lines in
+//   &qa=practice&call=human|bot    the call made: the reveal ("It fooled you" for human, "You spotted it" for bot)
 //   &nobots=1                      the bots are napping: every pick gets bots_unavailable (no new chats)
 // Wallet sign-in (protocol v1.3), with &wallet=1 (a relay without test mode: no test users):
 //   &qa=signin-wait&hold=signIn    the sign-in step waiting for the wallet
@@ -44,6 +50,7 @@
 import type { Level } from '../../shared/protocol.ts';
 import type { Store, AppState } from './state/store.ts';
 import { acceptTerms, forgetTerms } from './state/consent.ts';
+import { markTried } from './state/practice.ts';
 import { isCounting } from './state/countdown.ts';
 import { EVIDENCE_CHAT_ID } from './net/mock/evidence.ts';
 import { mockLaunchOf } from './launch/phase.ts';
@@ -112,6 +119,8 @@ export function qaConsent(search: string): void {
   const step = q.get('qa');
   if (step === 'consent') forgetTerms();
   else if (q.get('as') || q.get('consent') === '1' || q.get('deposit') === '1' || step) acceptTerms();
+  // the practice chat (v1.14): this browser had its free chat today
+  if (q.get('tried') === '1') markTried();
 }
 
 /** QA: the amount typed in the auction's deposit dialog (&near=0.1). */
@@ -144,11 +153,26 @@ export async function runQa(store: Store, search: string, open: (what: string, a
   if (q.get('mock') === '1' && !q.get('as')) {
     // a guest: the room, then "Before you play" after a tap on a character, then signed in
     const step = q.get('qa') ?? '';
-    if (!['consent', 'guest-tap', 'guest-seat', 'signin-wait', 'signin-error'].includes(step)) return;
+    if (!['consent', 'guest-tap', 'guest-seat', 'signin-wait', 'signin-error', 'practice', 'practice-chat'].includes(step)) return;
     await store.actions.loadConfig();
     const level = Math.min(3, Math.max(1, Number(q.get('level') ?? 1))) as Level;
     if (level !== 1) store.actions.enterRoom(level);
     await until(store, (s) => !!s.rooms[level]);
+    if (step === 'practice' || step === 'practice-chat') {
+      // the free try with the character on that seat, a few lines, then (practice) the call and the reveal
+      const seat = store.get().rooms[level]!.seats[Number(q.get('seat') ?? 2)] ?? store.get().rooms[level]!.seats[0];
+      await store.actions.startPractice({ level, skin: seat.skin });
+      await until(store, (x) => x.chat?.phase === 'chatting' && !isCounting(x.chat));
+      const mock = store.client as unknown as { qaScript?: (l: typeof LONG_CHAT) => void; qaPracticeToCall?: (l: typeof LONG_CHAT) => void };
+      if (step === 'practice-chat') {
+        mock.qaScript?.(LONG_CHAT.slice(0, 7));
+        return;
+      }
+      mock.qaPracticeToCall?.(LONG_CHAT.slice(0, 7));
+      await until(store, (x) => x.chat?.phase === 'calling');
+      store.actions.call(q.get('call') !== 'bot');
+      return;
+    }
     open('login', { level, index: Number(q.get('seat') ?? 2) });
     if (step === 'signin-wait' || step === 'signin-error') void store.actions.walletSignIn();
     if (step === 'guest-seat') {

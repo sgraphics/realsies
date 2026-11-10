@@ -54,6 +54,11 @@ export class WsClient {
     return WsClient.connectQuery(base, `ticket=${encodeURIComponent(ticket)}`, account);
   }
 
+  /** A guest's practice chat (v1.14): `/ws?practice=` with the one-time ticket from POST /api/practice. */
+  static connectPractice(base: string, ticket: string): Promise<WsClient> {
+    return WsClient.connectQuery(base, `practice=${encodeURIComponent(ticket)}`, 'guest');
+  }
+
   private static connectQuery(base: string, query: string, account: string): Promise<WsClient> {
     const url = base.replace(/^http/, 'ws') + `/ws?${query}`;
     return new Promise((resolve, reject) => {

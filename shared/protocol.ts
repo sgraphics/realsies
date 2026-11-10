@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.13 (2026-11-10: PublicConfig.turingHour, the daily Turing Hour when real people are promised in the room; additive).
+// Realsies relay <-> web protocol, v1.14 (2026-11-10: the practice chat, one free try for a visitor without a wallet: PublicConfig.practice, GET and POST /api/practice, /ws?practice=, ServerMsg practice_result; additive).
+// v1.13 (2026-11-10: PublicConfig.turingHour, the daily Turing Hour when real people are promised in the room; additive).
 // v1.12 (2026-11-10: coins for NEAR and back on Rhea: PublicConfig.swap and nearPerCoin, GET /api/swap/quote and SwapQuote, WalletInfo.nearBalance, wrapRegistered, wnearBalance and wrapStorageDeposit; additive).
 // v1.11 (2026-11-09: POST /api/auth/failed and AuthFailure, a browser's failed sign-in for the operator's log; additive).
 // v1.10 (2026-11-09: GET /api/auction and AuctionInfo, the REAL auction on meme.cooking for a deposit from realsies.lol; additive).
@@ -118,6 +119,65 @@ export interface PublicConfig {
    * (shared/turing.ts works out when), never while the launch banner shows.
    */
   turingHour?: { startUtc: string; minutes: number };
+  // ----- v1.14, optional -----
+  /**
+   * The practice chat: a visitor without a wallet may try `perDay` chats a day (per device and per IP) with a house
+   * bot, outside the rounds. Sent while GUEST_CHATS_PER_DAY and GUEST_CHATS_DAILY_CAP are above 0; absent = off.
+   */
+  practice?: { perDay: number };
+}
+
+// ---------- the practice chat (v1.14) ----------
+// One free try for a visitor without a wallet, so the game can be felt before any sign-in. The partner is always one
+// of the house bots (the same bot engine, models, typing, countdown, two minutes and call as in a round), never a
+// character of the running round, and nothing of the round reaches the guest. No coins, no rating, nothing on chain,
+// no round record: the relay keeps the transcript in its own table, flagged as practice, never public.
+//   GET  /api/practice?device=<id>         may this browser have one now (PracticeStatus)
+//   POST /api/practice {device, seed, level}  reserves it (the try counts from here) and returns a PracticeTicket
+//   POST /api/practice {guest}             a new ticket for the same practice from the same IP (a reconnect)
+//   /ws?practice=<ticket>                  one-time, bound to the IP that got it. The chat runs over it as any other
+//                                          (matched, chat_started, message, typing, chat_ended, call_recorded or
+//                                          call_missed); the guest may send say, typing, call and ping only (anything
+//                                          else: error not_in_practice). Right after the call, or the missed call:
+//                                          practice_result, the reveal.
+// `device` is a random id the browser keeps (16 to 64 of A-Z a-z 0-9 _ -). Refusals (PracticeStatus.reason, and the
+// code of a refused POST): practice_used (this device or this IP had its tries today, 429), practice_cap (every guest's
+// tries for today are gone, 429), practice_off (404), bots_unavailable (503), beta_closed (403).
+
+export type PracticeRefusal = 'practice_used' | 'practice_cap' | 'practice_off' | 'bots_unavailable' | 'beta_closed';
+
+/** GET /api/practice?device= */
+export interface PracticeStatus {
+  ok: boolean;
+  reason?: PracticeRefusal;
+}
+
+/** POST /api/practice: the character tapped (its look, and the level for the room's theme) */
+export interface PracticeRequest {
+  device: string;
+  /** the skin seed of the character the guest tapped (64 hex): the partner looks like it */
+  seed: string;
+  level: Level;
+}
+
+export interface PracticeTicket {
+  /** this practice's id: POST /api/practice {guest} from the same IP gets a new ticket while the chat runs */
+  guest: string;
+  /** one use, for /ws?practice= */
+  ticket: string;
+  expiresAt: number;
+}
+
+/** The reveal, right after the call: a practice partner is always a bot. */
+export interface PracticeResult {
+  chatId: string;
+  truth: 'bot';
+  /** true = called human, false = called bot, null = no call in time */
+  myCall: boolean | null;
+  right: boolean | null;
+  model: string;
+  /** who the bot was playing: the same card a round shows after it settles */
+  persona?: PersonaCard;
 }
 
 // ---------- coins for NEAR, on Rhea (v1.12) ----------
@@ -650,7 +710,9 @@ export type ServerMsg =
   // v1.3: sign this play or call with the browser's play key (wallet accounts); answer signed_tx before expiresAt
   | { t: 'sign_tx'; reqId: string; chatId: string; purpose: 'play' | 'call'; tx: SignRequestTx; expiresAt: number }
   // v1.3: the public config changed (for example the coin was set on the contract)
-  | { t: 'config'; config: PublicConfig };
+  | { t: 'config'; config: PublicConfig }
+  // v1.14: a practice chat's reveal, right after the call (or the missed call); the socket has nothing more to say
+  | { t: 'practice_result'; result: PracticeResult };
 
 // ---------- client interface used by the web app ----------
 
@@ -700,4 +762,13 @@ export interface GameClient {
   airdropStatus?(accountId: string): Promise<AirdropStatus>;
   /** 100 test tokens; refused with airdrop_too_soon (one per 10 minutes) or airdrop_enough (50 or more held) */
   airdrop?(accountId: string): Promise<AirdropResult>;
+
+  // ---------- v1.14 the practice chat, optional (a client without it offers the sign-in only) ----------
+  /** may this browser have its free practice chat now (GET /api/practice) */
+  practiceStatus?(device: string): Promise<PracticeStatus>;
+  /**
+   * Reserves the try and opens its socket (POST /api/practice, then /ws?practice=): the chat arrives as usual messages,
+   * then practice_result. Refused with the PracticeRefusal as the error's code. disconnect() or connect() ends it.
+   */
+  startPractice?(req: PracticeRequest): Promise<void>;
 }

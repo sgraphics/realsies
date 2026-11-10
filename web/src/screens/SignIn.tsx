@@ -8,10 +8,14 @@ import { Button, Icon } from '../ui/kit.tsx';
 
 export const GET_A_WALLET_URL = 'https://wallet.near.org';
 
-/** The sign-in panel: one button, then "waiting for your wallet", "checking", or what went wrong and "Try again". */
-export function WalletSignInPanel(p: { store: Store; tight?: boolean }) {
+/**
+ * The sign-in panel: one button, then "waiting for your wallet", "checking", or what went wrong and "Try again".
+ * `secondary`: next to the free practice chat (protocol v1.14), which is the green choice, so its button is the plain one.
+ */
+export function WalletSignInPanel(p: { store: Store; tight?: boolean; secondary?: boolean }) {
   const s = useStore(p.store);
   const f = s.signIn;
+  const kind = p.secondary ? 'default' : 'primary';
   const busy = f.phase === 'preparing' || f.phase === 'wallet' || f.phase === 'checking';
   // straight from the tap: with the challenge fetched ahead (the prompt's prepareSignIn) the wallet opens in this turn
   const signIn = () => void p.store.actions.walletSignIn();
@@ -30,16 +34,16 @@ export function WalletSignInPanel(p: { store: Store; tight?: boolean }) {
       ) : f.phase === 'error' ? (
         <>
           <p class="px-sub px-bad flow-error" role="alert"><Icon name="cross" /> {f.error}</p>
-          <Button kind="primary" class="signin-btn" onClick={signIn}>
+          <Button kind={kind} class="signin-btn" onClick={signIn}>
             <Icon name="shield" /> Try again
           </Button>
         </>
       ) : f.phase === 'preparing' ? (
-        <Button kind="primary" class="signin-btn" disabled>
+        <Button kind={kind} class="signin-btn" disabled>
           <Icon name="clock" /> Preparing…
         </Button>
       ) : (
-        <Button kind="primary" class="signin-btn" onClick={signIn}>
+        <Button kind={kind} class="signin-btn" onClick={signIn}>
           <Icon name="shield" /> Sign in with a NEAR wallet
         </Button>
       )}

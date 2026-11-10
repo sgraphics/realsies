@@ -143,6 +143,9 @@ const { mockLaunch } = await import('../src/launch/phase.ts');
 const { LaunchBanner } = await import('../src/ui/LaunchBanner.tsx');
 const { TestnetPanel } = await import('../src/ui/TestnetPanel.tsx');
 const { AuctionDepositDialog, AUCTION_WARNING } = await import('../src/launch/AuctionDeposit.tsx');
+const { PracticeResultDialog } = await import('../src/screens/PracticeResult.tsx');
+const practiceWords = await import('../src/state/practice.ts');
+const { BOTS_NAPPING } = await import('../src/state/notices.ts');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EV = join(here, '..', '..', 'experiments', 'near-ai', 'evidence', '2026-11-04');
@@ -398,6 +401,101 @@ try {
   render(null, root as unknown as Element);
   gs.actions.logout();
   gc.dispose();
+
+  // the practice chat (protocol v1.14): after the terms a guest has two choices, the free try (green) and the wallet;
+  // then the chat, the call, and the reveal at once; once had, or once the day is full, one plain line instead of the try
+  const newVisitor = () => {
+    localStorage.removeItem('realsies:device');
+    practiceWords.forgetPractice();
+  };
+  const runToReveal = async (st: typeof gs, human: boolean) => {
+    for (let i = 0; i < 200 && !(st.get().chat?.phase === 'chatting' && !isCounting(st.get().chat)); i++) await sleep(10);
+    st.actions.say('hey, where are you from?');
+    for (let i = 0; i < 300 && st.get().chat?.phase !== 'calling'; i++) await sleep(10);
+    st.actions.call(human);
+    for (let i = 0; i < 200 && st.get().practice?.phase !== 'over'; i++) await sleep(10);
+  };
+  newVisitor();
+  const prOpts = { wallet: true, storageKey: null, timeScale: 0.02, chatSeconds: 1, callSeconds: 0.6, countdownSeconds: 0.1 } as const;
+  const prClient = new MockGameClient(prOpts);
+  const prStore = createStore(prClient, new MockWallet(prClient, { accountId: 'pat.testnet', delayMs: 2 }));
+  await prStore.actions.loadConfig();
+  await prStore.actions.loadGuest();
+  let tries = 0;
+  const onPractice = async () => {
+    tries++;
+    return prStore.actions.startPractice({ level: 1, skin: prStore.get().rooms[1]!.seats[2].skin });
+  };
+  render(h(LoginModal, { key: 'try', store: prStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
+  for (let i = 0; i < 40 && disabled(findButton(root as never, /Try one chat free/)); i++) await sleep(25);
+  const prText = root.textContent;
+  const tryBtn = findButton(root as never, /Try one chat free/);
+  ok(/Ready to play\?/.test(prText) && !!tryBtn && !disabled(tryBtn) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'first visit: two choices, "Try one chat free" and the wallet');
+  ok(!prText.includes(practiceWords.PRACTICE_USED) && !prText.includes(practiceWords.PRACTICE_CAP), 'no line on a first visit');
+  click(tryBtn);
+  for (let i = 0; i < 40 && !prStore.get().practice; i++) await sleep(10);
+  ok(tries === 1 && !!prStore.get().practice && !prStore.get().accountId, 'the free try starts, still a guest');
+  render(null, root as unknown as Element);
+  await runToReveal(prStore, true);
+  let signIns2 = 0;
+  let backs = 0;
+  render(h(PracticeResultDialog, { store: prStore, onSignIn: () => signIns2++, onBack: () => backs++ }), root as unknown as Element);
+  await sleep(20);
+  const revealText = root.textContent;
+  ok(/That was a bot/.test(revealText) && /It fooled you/.test(revealText) && /BOT/.test(revealText) && revealText.includes(prStore.get().chat!.partner.name), 'the reveal: a bot, it fooled you, the character by name: ' + revealText.slice(0, 90).replace(/\s+/g, ' '));
+  ok(/Was playing/.test(revealText) && revealText.includes(practiceWords.INVITE), 'the persona card, then the way to the real rounds');
+  ok(!!findButton(root as never, /^\s*Sign in$/) && !!findButton(root as never, /^Back to room$/) && !/might|maybe|could have been/i.test(revealText), 'two buttons; no word that it might have been human');
+  click(findButton(root as never, /^\s*Sign in$/));
+  click(findButton(root as never, /^Back to room$/));
+  ok(signIns2 === 1 && backs === 1, 'Sign in and Back to room do what they say');
+  render(null, root as unknown as Element);
+  prStore.actions.endPractice();
+  // the try used: the line, the wallet only (and none when the prompt opens from the reveal itself)
+  render(h(LoginModal, { key: 'used', store: prStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
+  for (let i = 0; i < 40 && !root.textContent.includes(practiceWords.PRACTICE_USED); i++) await sleep(25);
+  const usedText = root.textContent;
+  ok(usedText.includes(practiceWords.PRACTICE_USED) && practiceWords.PRACTICE_USED === "You've had your free chat today." && !findButton(root as never, /Try one chat free/), 'the try used: one plain line, no try');
+  ok(/Sign in to play/.test(usedText) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'and the sign-in as before');
+  render(h(LoginModal, { key: 'after', store: prStore, onConsent() {}, onClose() {}, onPractice, afterPractice: true }), root as unknown as Element);
+  await sleep(80);
+  ok(!root.textContent.includes(practiceWords.PRACTICE_USED) && !findButton(root as never, /Try one chat free/) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'from the reveal: the sign-in, no line');
+  render(null, root as unknown as Element);
+  prClient.dispose();
+  // called bot: "You spotted it"
+  newVisitor();
+  const spClient = new MockGameClient(prOpts);
+  const spStore = createStore(spClient);
+  await spStore.actions.loadConfig();
+  await spStore.actions.loadGuest();
+  await spStore.actions.startPractice({ level: 1, skin: spStore.get().rooms[1]!.seats[4].skin });
+  await runToReveal(spStore, false);
+  render(h(PracticeResultDialog, { store: spStore, onSignIn() {}, onBack() {} }), root as unknown as Element);
+  await sleep(20);
+  ok(/You spotted it/.test(root.textContent) && !/It fooled you/.test(root.textContent), 'called bot: "You spotted it"');
+  render(null, root as unknown as Element);
+  spClient.dispose();
+  // the day's free chats are all gone; the bots are napping: one line each, no try
+  for (const [o, line, label] of [[{ practiceCap: true }, practiceWords.PRACTICE_CAP, 'the day is full'], [{ noBots: true }, BOTS_NAPPING, 'the bots are napping']] as const) {
+    newVisitor();
+    const capClient = new MockGameClient({ ...prOpts, ...o });
+    const capStore = createStore(capClient, new MockWallet(capClient, { accountId: 'pat.testnet', delayMs: 2 }));
+    await capStore.actions.loadConfig();
+    render(h(LoginModal, { key: label, store: capStore, onConsent() {}, onClose() {}, onPractice: async () => ({ ok: false }) }), root as unknown as Element);
+    for (let i = 0; i < 40 && !root.textContent.includes(line); i++) await sleep(25);
+    ok(root.textContent.includes(line) && !findButton(root as never, /Try one chat free/) && !!findButton(root as never, /Sign in with a NEAR wallet/), label + ': "' + line.slice(0, 40) + '...", no try, the wallet');
+    render(null, root as unknown as Element);
+    capClient.dispose();
+  }
+  // off at this relay: the sign-in exactly as before
+  newVisitor();
+  const offClient = new MockGameClient({ ...prOpts, practicePerDay: 0 });
+  const offStore = createStore(offClient, new MockWallet(offClient, { accountId: 'pat.testnet', delayMs: 2 }));
+  await offStore.actions.loadConfig();
+  render(h(LoginModal, { key: 'off', store: offStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
+  await sleep(80);
+  ok(/Sign in to play/.test(root.textContent) && !findButton(root as never, /Try one chat free/) && !root.textContent.includes(practiceWords.PRACTICE_USED), 'off: no try, no line');
+  render(null, root as unknown as Element);
+  offClient.dispose();
   await ws.actions.walletSignIn();
   render(h(KeySetupDialog, { store: ws, onDone() {} }), root as unknown as Element);
   await sleep(20);
@@ -702,7 +800,7 @@ try {
 }
 ok(errors.length === 0, 'no uncaught errors' + (errors.length ? ': ' + String(errors[0]) : ''));
 const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
-for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Login.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx', 'SwapCoins.tsx']) {
+for (const f of ['PracticeResult.tsx', 'Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Login.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx', 'SwapCoins.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }

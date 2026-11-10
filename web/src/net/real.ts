@@ -13,6 +13,9 @@ import type {
   LeaderRow,
   Me,
   PlayKeyInfo,
+  PracticeRequest,
+  PracticeStatus,
+  PracticeTicket,
   PublicConfig,
   RoundResults,
   RoundState,
@@ -57,6 +60,8 @@ export class RealGameClient implements GameClient {
   private status: Status = 'closed';
   /** wallet session (v1.3): sent as Bearer on every request, traded for a one-time ticket per WebSocket */
   private session: { token: string; accountId: string } | null = null;
+  /** v1.14: a guest's practice chat: its id (a new ticket for each socket) and the first ticket, not used yet */
+  private practiceRun: { guest: string; ticket?: string } | null = null;
 
   constructor(o: RealClientOptions = {}) {
     this.base = o.base ?? '';
@@ -199,6 +204,50 @@ export class RealGameClient implements GameClient {
     return this.http('POST', `/api/airdrop/${enc(accountId)}`, {});
   }
 
+  // ---------- the practice chat (v1.14): no session, a socket of its own ----------
+
+  practiceStatus(device: string): Promise<PracticeStatus> {
+    return this.http('GET', `/api/practice?device=${enc(device)}`);
+  }
+  /** Reserves the try (refused with its PracticeRefusal as the code) and opens its socket; disconnect() ends it. */
+  async startPractice(req: PracticeRequest): Promise<void> {
+    this.disconnect();
+    const t = await this.http<PracticeTicket>('POST', '/api/practice', req);
+    this.practiceRun = { guest: t.guest, ticket: t.ticket };
+    this.account = null;
+    this.want = true;
+    this.retry = 0;
+    this.open();
+  }
+
+  /** A practice socket: the first ticket, then a new one per reconnect; once the relay says it is over, stop and say so. */
+  private openPractice(run: { guest: string; ticket?: string }): void {
+    this.setStatus('connecting');
+    if (run.ticket) {
+      const t = run.ticket;
+      run.ticket = undefined;
+      this.openSocket(`practice=${enc(t)}`);
+      return;
+    }
+    this.http<PracticeTicket>('POST', '/api/practice', { guest: run.guest }).then(
+      (t) => {
+        if (!this.want || this.practiceRun !== run || this.ws) return;
+        this.openSocket(`practice=${enc(t.ticket)}`);
+      },
+      (e: { status?: number; code?: string; message?: string }) => {
+        if (!this.want || this.practiceRun !== run) return;
+        if (e?.status && e.status >= 400 && e.status < 500 && e.status !== 429) {
+          this.want = false;
+          this.practiceRun = null;
+          this.setStatus('closed');
+          for (const h of [...this.handlers]) h({ t: 'error', code: e.code ?? 'practice_over', message: e.message ?? 'That free chat is over.' });
+          return;
+        }
+        this.scheduleReconnect();
+      },
+    );
+  }
+
   // ---------- WebSocket ----------
 
   private wsUrl(query: string): string {
@@ -230,6 +279,7 @@ export class RealGameClient implements GameClient {
   }
 
   private open(): void {
+    if (this.want && this.practiceRun) return this.openPractice(this.practiceRun);
     if (!this.want || !this.account) return;
     this.setStatus('connecting');
     const account = this.account;
@@ -331,6 +381,7 @@ export class RealGameClient implements GameClient {
 
   disconnect(): void {
     this.want = false;
+    this.practiceRun = null;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.stopPing();

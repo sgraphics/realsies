@@ -15,6 +15,7 @@ import { logger } from './log.js';
 import { CORS, bearerToken, clientIp, readBody, sendJson } from './http.js';
 import { AuctionView, memeIdOf } from './auction.js';
 import { signInFailure } from './auth/failure.js';
+import type { Practice } from './game/practice.js';
 
 const log = logger('http');
 
@@ -72,7 +73,14 @@ function seg(s: string): string {
   }
 }
 
-export function createServer(game: Game, opts: { webDist: string; testMode: boolean; hub?: BotmasterHub; agents?: ApiMount; auth?: AuthService }) {
+/** What a socket's messages go to: the game (players), or one guest's practice chat. */
+interface SocketHandler {
+  connect(conn: Conn): void;
+  message(conn: Conn, msg: unknown): void;
+  disconnect(conn: Conn): void;
+}
+
+export function createServer(game: Game, opts: { webDist: string; testMode: boolean; hub?: BotmasterHub; agents?: ApiMount; auth?: AuthService; practice?: Practice }) {
   const routes: { method: string; re: RegExp; fn: Handler }[] = [];
   const route = (method: string, re: RegExp, fn: Handler) => routes.push({ method, re, fn });
   const auth = opts.auth;
@@ -140,6 +148,23 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   route('GET', /^\/api\/swap\/quote$/, (_m, req, url) => {
     if (!quotes.allow(clientIp(req))) throw new GameError('rate_limited', 'too many quotes from here; wait a minute', 429);
     return game.swapQuote(url.searchParams);
+  });
+  // v1.14: the practice chat of a visitor without a wallet (src/game/practice.ts): may one start, and starting it. A cap
+  // per IP over both, so nobody has the relay count and reserve all day
+  const practiceHits = new Window(30, 10 * 60_000);
+  const practiceFor = (req: http.IncomingMessage): { p: Practice; ip: string } => {
+    if (!opts.practice) throw new GameError('practice_off', 'There are no free chats on this relay.', 404);
+    const ip = clientIp(req);
+    if (!practiceHits.allow(ip)) throw new GameError('rate_limited', 'too many tries from here; wait a few minutes', 429);
+    return { p: opts.practice, ip };
+  };
+  route('GET', /^\/api\/practice$/, (_m, req, url) => {
+    const { p, ip } = practiceFor(req);
+    return p.status(url.searchParams.get('device'), ip);
+  });
+  route('POST', /^\/api\/practice$/, async (_m, req) => {
+    const { p, ip } = practiceFor(req);
+    return p.start(await readBody(req), ip);
   });
   route('GET', /^\/api\/rounds\/(\d+)\/results\/([^/]+)$/, (m, req) => {
     const account = seg(m[2]);
@@ -310,6 +335,21 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
       socket.destroy();
       return;
     }
+    // a guest's practice chat (v1.14): a one-time ticket from POST /api/practice, from the IP that got it. The socket
+    // reaches that one chat and nothing else: it never joins the game's connections, rooms or broadcasts
+    const practiceTicket = url.searchParams.get('practice');
+    if (practiceTicket !== null) {
+      const p = opts.practice;
+      const run = p?.redeem(practiceTicket, clientIp(req));
+      if (!p || !run) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nunknown or used ticket\r\n');
+        socket.destroy();
+        return;
+      }
+      const handler: SocketHandler = { connect: (c) => p.connect(c, run), message: (c, m) => p.onMessage(c, run, m), disconnect: (c) => p.disconnect(c, run) };
+      wss.handleUpgrade(req, socket, head, (ws) => onSocket(ws, `practice:${run.chatId}`, undefined, handler));
+      return;
+    }
     // a wallet session: a one-time ticket from POST /api/session/ticket (the token itself never goes in a URL)
     const ticket = url.searchParams.get('ticket');
     if (ticket !== null) {
@@ -332,7 +372,13 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
     wss.handleUpgrade(req, socket, head, (ws) => onSocket(ws, account));
   });
 
-  function onSocket(ws: WebSocket, account: string, sessionId?: string): void {
+  const gameHandler: SocketHandler = {
+    connect: (c) => void game.connect(c),
+    message: (c, m) => void game.onMessage(c, m),
+    disconnect: (c) => game.disconnect(c),
+  };
+
+  function onSocket(ws: WebSocket, account: string, sessionId?: string, h: SocketHandler = gameHandler): void {
     let alive = true;
     const conn: Conn = {
       account,
@@ -364,14 +410,14 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
         conn.send({ t: 'error', code: 'bad_json', message: 'messages are JSON' });
         return;
       }
-      void game.onMessage(conn, msg);
+      h.message(conn, msg);
     });
     ws.on('close', () => {
       clearInterval(beat);
-      game.disconnect(conn);
+      h.disconnect(conn);
     });
     ws.on('error', (e) => log.debug(`ws ${account}: ${errMsg(e)}`));
-    void game.connect(conn);
+    h.connect(conn);
   }
 
   return {
