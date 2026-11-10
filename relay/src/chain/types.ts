@@ -191,4 +191,10 @@ export interface ChainAdapter {
   tokenStorage(accountId: string): Promise<{ registered: boolean; minDeposit: string }>;
   /** ft_balance_of on the coin: what the wallet itself holds, base units (0 when not registered or no coin yet). */
   tokenBalance(accountId: string): Promise<bigint>;
+
+  // coins for NEAR on Rhea (v1.12, src/swap.ts): read-only
+  /** A view call on any contract (the pool contract, the wrap contract): the parsed JSON, null when it returns nothing. */
+  view<T = unknown>(contractId: string, method: string, args: Record<string, unknown>): Promise<T>;
+  /** NEAR the account can spend, yocto: its balance less what its own storage holds; 0 when it does not exist. */
+  nearBalance(accountId: string): Promise<bigint>;
 }

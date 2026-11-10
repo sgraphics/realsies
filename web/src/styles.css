@@ -225,7 +225,7 @@ canvas.pixel { image-rendering: pixelated; image-rendering: crisp-edges; }
 .preset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 0.55fr); gap: calc(var(--b) * 2.5); }
 .preset.other { justify-content: center; letter-spacing: 2px; }
 .preset { display: flex; flex-direction: column; gap: 4px; padding: 10px 6px; }
-.preset .usd { font-family: var(--font-body); font-size: 13px; text-transform: none; opacity: 0.85; }
+.preset .usd { font-family: var(--font-body); font-size: 13px; text-transform: none; opacity: 0.85; white-space: normal; line-height: 1.15; }
 .custom-row { display: flex; gap: 8px; align-items: stretch; }
 .custom-row .px-input { width: 7.5em; flex: none; }
 

@@ -59,24 +59,9 @@ export function nearNeeded(amount: bigint, a: Pick<AuctionAccount, 'memeRegister
   return (a.memeRegistered ? 0n : MEME_STORAGE) + (a.wrapRegistered ? 0n : WRAP_STORAGE) + (a.wnear < amount ? amount : 0n) + GAS_RESERVE;
 }
 
-/** "1.25" -> yocto; null when it is not an amount. */
-export function parseNear(s: string): bigint | null {
-  const t = s.trim().replace(',', '.');
-  if (!/^\d+(\.\d{0,24})?$/.test(t) && !/^\.\d{1,24}$/.test(t)) return null;
-  const [w, f = ''] = t.split('.');
-  return BigInt(w || '0') * ONE_NEAR + BigInt((f + '0'.repeat(24)).slice(0, 24));
-}
-
-/** yocto -> "1.2345" (at most `digits` decimals, trailing zeros dropped). */
-export function fmtNear(yocto: bigint, digits = 4): string {
-  const neg = yocto < 0n;
-  const v = neg ? -yocto : yocto;
-  const scale = 10n ** BigInt(24 - digits);
-  const r = (v + scale / 2n) / scale;
-  const whole = r / 10n ** BigInt(digits);
-  const frac = (r % 10n ** BigInt(digits)).toString().padStart(digits, '0').replace(/0+$/, '');
-  return (neg ? '-' : '') + whole.toLocaleString('en-US') + (frac ? '.' + frac : '');
-}
+// "1.25" -> yocto and yocto -> "1.2345": shared with the coins dialog's buy with NEAR (state/near.ts)
+import { fmtNear, parseNear } from '../state/near.ts';
+export { fmtNear, parseNear };
 
 /** "Auction: 37.5 of 100 NEAR soft cap, 21 h left" */
 export function auctionLine(a: AuctionInfo, now: number): string {

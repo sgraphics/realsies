@@ -148,7 +148,17 @@ export async function createApp(overrides: Partial<Config> = {}, deps: AppDeps =
   }
   const auth = new AuthService(db, chain, { recipient: cfg.authRecipient, sessionDays: cfg.sessionDays, contractId: chain.contractId });
   const game = new Game(cfg, db, chain, ai, personas, hub, { agents, credits, byok, auth });
-  await game.start();
+  try {
+    await game.start();
+  } catch (e) {
+    // a setting the relay cannot run with (a wrong SWAP_POOL, say): nothing left running, the reason goes up
+    await game.stop().catch(() => {});
+    hub.close();
+    credits.stop();
+    auth.close();
+    db.close();
+    throw e;
+  }
   const admin: AdminContext = { store: agents, fileBotmasters: () => fileBotmasters.map((b) => b.name), kick: (n, c, m) => hub.kick(n, c, m) };
   const agentApi = createAgentApi({ cfg, store: agents, game, hub, credits, byok, admin, models: cachedModels(ai) });
   const srv = createServer(game, { webDist: cfg.webDist, testMode: cfg.testMode, hub, agents: agentApi, auth });

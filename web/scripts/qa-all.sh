@@ -90,6 +90,21 @@ add coins-testnet         "mock=1&wallet=test&as=sam&qa=deposit&wcoins=0" 9000
 add coins-mainnet         "mock=1&wallet=1&net=mainnet&as=sam&qa=deposit&wcoins=0" 9000
 add coins-airdropped      "mock=1&wallet=test&as=sam&qa=deposit&wcoins=100&dep=100" 9000
 add coins-keyed           "mock=1&wallet=test&as=sam&qa=coins&wcoins=100" 10000
+# coins for NEAR on Rhea (protocol v1.12, &swap=1): 0.5 NEAR typed and its quote (nothing held: the airdrop stays on
+# testnet); a buy done; coins in the game with 40 typed to withdraw as NEAR and 30 in the wallet itself; a buy whose
+# deposit did not follow (a wallet that sends the batch at once: the coins wait in the wallet); the price moved past a
+# buy; a withdrawal as NEAR done; the mainnet look
+SWAPSIZES="360x640:2 390x844:3 430x932:3 844x390:3 768x1024:2 1280x720:1 1920x1080:1"
+add swap-quote    "mock=1&wallet=test&swap=1&as=sam&qa=swap&near=0.5" 9000 "$SWAPSIZES"
+add swap-done     "mock=1&wallet=test&swap=1&as=sam&qa=swap-done" 12000 "$SWAPSIZES"
+add swap-withdraw "mock=1&wallet=test&swap=1&as=sam&qa=swap&game=120&wcoins=30&withdraw=40" 11000 "$SWAPSIZES"
+add swap-left     "mock=1&wallet=test&swap=1&as=sam&qa=swap-done&nowait=1&game=45" 13000 "$SWAPSIZES"
+add swap-moved    "mock=1&wallet=test&swap=1&as=sam&qa=swap-done&moved=1" 12000 "$SWAPSIZES"
+add swap-sold     "mock=1&wallet=test&swap=1&as=sam&qa=swap-sold&game=120" 13000 "$SWAPSIZES"
+add swap-mainnet  "mock=1&wallet=1&net=mainnet&swap=1&as=sam&qa=swap&near=1&game=200&withdraw=50" 11000 "$SWAPSIZES"
+# with the coin on Rhea (config.nearPerCoin) coin values read in NEAR: the seat's presets, the round's results
+add swap-seat     "mock=1&swap=1&as=ana&qa=seat&level=1" 8000 "$SWAPSIZES"
+add swap-results  "mock=1&swap=1&as=ana&qa=results" 10000 "$SWAPSIZES"
 # the launch (protocol v1.4), a mainnet-like mock (wallet sign-in, no coin yet): the coming-soon page until REAL's
 # (its video card opens the launch tweet; -account: no tweet yet, the account; -nox: no X link, no card)
 # auction and the game open (Get REAL, or the time without a token page), the moment it goes live (CHAT!, then the

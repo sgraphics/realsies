@@ -571,6 +571,33 @@ try {
   cs.actions.logout();
   closedClient.dispose();
 
+  // coins for NEAR on Rhea (protocol v1.12): the dialog buys with NEAR and withdraws as NEAR; the honest line; the
+  // wallet's own coins with their two buttons only while it holds some; the testnet airdrop as before
+  const swc = new MockGameClient({ swap: true, storageKey: null, timeScale: 0.02, buyUrl: 'https://meme.cooking' });
+  const sws = createStore(swc, new MockWallet(swc, { accountId: 'sam.testnet', delayMs: 2 }));
+  await sws.actions.loadConfig();
+  await sws.actions.walletSignIn();
+  await sws.actions.refreshWalletInfo();
+  render(h(DepositDialog, { key: 'swap', store: sws, gate: false, onDone() {}, near: '0.25' }), root as unknown as Element);
+  for (let i = 0; i < 60 && !/You get/.test(root.textContent); i++) await sleep(25);
+  const sw1 = root.textContent;
+  ok(/Get coins/.test(sw1) && /You get 98 coins\./.test(sw1) && !disabled(findButton(root as never, /^\s*Get coins$/)), 'the coins screen with swap: 0.25 NEAR typed gives 98 coins, Get coins is on');
+  ok(['0.25', '0.5', '1', '2'].every((a) => !!findButton(root as never, new RegExp('^' + a.replace('.', '\\.') + '\\s*NEAR$'))), 'four quick amounts');
+  ok(sw1.includes('Coins are $tREAL, bought and sold on Rhea at the current price. The price moves.') && sw1.includes('One wallet approval. After that, plays run without popups.'), 'the honest line and the one-approval line');
+  ok(!/In your wallet/.test(sw1) && !findButton(root as never, /^Withdraw$/) && !!findButton(root as never, /Airdrop 100 tREAL test tokens/) && !/Deposit$/.test(sw1), 'nothing held: no wallet line, no withdraw; on testnet the airdrop as before; no deposit row');
+  ok(await sws.actions.swapBuy(10n ** 24n / 4n), 'a buy from the store');
+  await swc.faucetToWallet(30);
+  await sws.actions.refreshWalletInfo();
+  render(h(DepositDialog, { key: 'swap2', store: sws, gate: false, onDone() {}, withdraw: '40' }), root as unknown as Element);
+  for (let i = 0; i < 60 && !/About 0\.\d+ NEAR\./.test(root.textContent); i++) await sleep(25);
+  const sw2 = root.textContent;
+  ok(/Your coins/.test(sw2) && /In the game: 98 coins \(about 0\.24 NEAR\)/.test(sw2) && /About 0\.0998 NEAR\./.test(sw2) && !!findButton(root as never, /^Withdraw$/), 'coins in the game: their value in NEAR, 40 typed to withdraw: about 0.0998 NEAR');
+  ok(/In your wallet: 30 tREAL/.test(sw2) && !!findButton(root as never, /^Put in the game$/) && !!findButton(root as never, /^Swap to NEAR$/), 'coins in the wallet itself: one line, Put in the game and Swap to NEAR');
+  ok(!sw2.includes('One wallet approval'), 'the play key came with the buy: no approval line');
+  render(null, root as unknown as Element);
+  sws.actions.logout();
+  swc.dispose();
+
   // the launch (protocol v1.4): the coming-soon page, minimal; the time instead of Get REAL without a token page;
   // the moment it goes live (CHAT!, then the game in place); then the banner in the game, phase by phase
   const soonClient = new MockGameClient({ wallet: true, coinsOpen: false, launch: mockLaunch('soon'), buyUrl: 'https://meme.cooking', storageKey: null, timeScale: 0.02 });
@@ -675,7 +702,7 @@ try {
 }
 ok(errors.length === 0, 'no uncaught errors' + (errors.length ? ': ' + String(errors[0]) : ''));
 const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
-for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Login.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx']) {
+for (const f of ['Countdown.tsx', 'Results.tsx', 'Verify.tsx', 'PastRounds.tsx', 'DevMenu.tsx', 'Terms.tsx', 'Login.tsx', 'Lobby.tsx', 'Chat.tsx', 'Call.tsx', 'SeatDialog.tsx', 'Deposit.tsx', 'SignIn.tsx', 'KeySetup.tsx', 'WalletCoins.tsx', 'SwapCoins.tsx']) {
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }

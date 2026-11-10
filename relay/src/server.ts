@@ -134,6 +134,13 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   // v1.10: the REAL auction at a glance for the deposit dialog (meme.cooking's API has no CORS for us), cached 15 s
   const auction = new AuctionView(() => memeIdOf(game.publicConfig.launch?.tokenUrl ?? process.env.LAUNCH_TOKEN_URL));
   route('GET', /^\/api\/auction$/, () => auction.get());
+  // v1.12: coins for NEAR on Rhea, the quote the browser builds a buy or a sale from; public (prices are), the same
+  // question answered from a cache for a few seconds, and a cap per IP so nobody runs the relay's RPC hot
+  const quotes = new Window(120, 60_000);
+  route('GET', /^\/api\/swap\/quote$/, (_m, req, url) => {
+    if (!quotes.allow(clientIp(req))) throw new GameError('rate_limited', 'too many quotes from here; wait a minute', 429);
+    return game.swapQuote(url.searchParams);
+  });
   route('GET', /^\/api\/rounds\/(\d+)\/results\/([^/]+)$/, (m, req) => {
     const account = seg(m[2]);
     actAs(req, account);

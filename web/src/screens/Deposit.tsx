@@ -11,13 +11,18 @@ import { Button, Icon } from '../ui/kit.tsx';
 import { useEscape } from '../ui/hooks.ts';
 import { fmtCoins, txUrl } from '../state/format.ts';
 import { WalletCoinsDialog } from './WalletCoins.tsx';
+import { SwapCoinsDialog } from './SwapCoins.tsx';
+import { coinValue } from '../state/near.ts';
 import { airdropOn, holdsEnough } from '../state/airdrop.ts';
 import { AirdropButton } from '../ui/TestnetPanel.tsx';
 
-export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void; prefill?: string }) {
+export function DepositDialog(p: { store: Store; gate: boolean; onDone(): void; prefill?: string; near?: string; withdraw?: string }) {
   const s = useStore(p.store);
+  const own = !!s.session && s.session.accountId === s.accountId;
+  // a wallet player whose relay buys and sells coins on Rhea (v1.12): NEAR in, NEAR out
+  if (own && s.config?.swap && s.config.coinsOpen !== false) return <SwapCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} prefill={p.prefill} near={p.near} withdraw={p.withdraw} />;
   // a wallet player's own coins screen (the session is this very account), or no coin yet
-  if ((s.session && s.session.accountId === s.accountId) || s.config?.coinsOpen === false) return <WalletCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} prefill={p.prefill} />;
+  if (own || s.config?.coinsOpen === false) return <WalletCoinsDialog store={p.store} gate={p.gate} onDone={p.onDone} prefill={p.prefill} />;
   return <TestCoinsDialog {...p} />;
 }
 
@@ -34,7 +39,6 @@ function TestCoinsDialog(p: { store: Store; gate: boolean; onDone(): void }) {
     void p.store.actions.refreshAirdrop();
   }, [p.store]);
   const balance = me?.balanceCoins ?? 0;
-  const usd = cfg?.usdPerCoin ?? 0.01;
   const drop = s.airdrop;
   // a test player has no wallet: the airdrop stands in for a deposit while the game holds nothing
   const airdrop = airdropOn(cfg) && balance === 0 && !holdsEnough(drop.status);
@@ -60,7 +64,7 @@ function TestCoinsDialog(p: { store: Store; gate: boolean; onDone(): void }) {
         <div class="px-col">
           <h2 class="px-title"><Icon name="coin" /> {balance > 0 ? 'Your coins' : 'Deposit to earn'}</h2>
           <p class="px-sub wallet-hold">
-            In the game: <b>{fmtCoins(balance)} coins</b>{balance > 0 ? <> (about ${(balance * usd).toFixed(2)})</> : null}{me?.lockedCoins ? <>, {fmtCoins(me.lockedCoins)} on the table</> : null}
+            In the game: <b>{fmtCoins(balance)} coins</b>{balance > 0 ? <> (about {coinValue(cfg, balance)})</> : null}{me?.lockedCoins ? <>, {fmtCoins(me.lockedCoins)} on the table</> : null}
           </p>
           {!!me?.lockedBonusCoins && <p class="px-sub wallet-hold"><Icon name="lock" /> {fmtCoins(me.lockedBonusCoins)} bonus coins unlock with your next deposit.</p>}
           {airdrop && <AirdropButton store={p.store} onLanded={() => p.gate && setTimeout(p.onDone, 900)} />}

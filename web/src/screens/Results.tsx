@@ -96,7 +96,6 @@ export function ResultsScreen(p: ResultsProps) {
   }, [p.roundId, p.store]);
 
   const cfg = st.config;
-  const usd = cfg?.usdPerCoin;
   const levels = res ? [...new Set(res.chats.map((c) => c.level))] : [];
   const presetLow = cfg ? Math.min(...(levels.length ? levels : [1 as Level]).map((l) => cfg.presets[l][0])) : 5;
   const free = res ? res.chats.filter((c) => c.mode === 'free' && c.right !== null) : [];
@@ -133,7 +132,7 @@ export function ResultsScreen(p: ResultsProps) {
             </div>
             {paid.length > 0 && (
               <div class="px-stat">
-                <span class="px-dim">Coins</span> <Coins n={coins2(res.coinsDelta)} signed usdPerCoin={usd} />
+                <span class="px-dim">Coins</span> <Coins n={coins2(res.coinsDelta)} signed value={cfg} />
               </div>
             )}
             {res.turingBonusCoins > 0 && (

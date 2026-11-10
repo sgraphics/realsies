@@ -4,6 +4,8 @@
 import type { ComponentChildren, CSSProperties } from 'preact';
 import { icon } from '../../../art/src/ui/icons.ts';
 import { toDataURL } from '../../../art/src/browser/index.ts';
+import type { PublicConfig } from '../../../shared/protocol.ts';
+import { coinValue } from '../state/near.ts';
 
 export function Panel(p: { children?: ComponentChildren; class?: string; style?: CSSProperties }) {
   return <div class={'px-panel ' + (p.class ?? '')} style={p.style}>{p.children}</div>;
@@ -46,9 +48,12 @@ export function iconUrl(name: IconName): string {
   return u;
 }
 
-/** "12 coins" with the coin icon; optional dollar label from usdPerCoin. */
-export function Coins(p: { n: number; usdPerCoin?: number; signed?: boolean; class?: string }) {
+/**
+ * "12 coins" with the coin icon; optional value label: from `value` (the public config) in NEAR at the current price
+ * when the coin trades on Rhea, else in dollars (state/near.ts coinValue); or from a bare usdPerCoin.
+ */
+export function Coins(p: { n: number; usdPerCoin?: number; value?: Pick<PublicConfig, 'nearPerCoin' | 'usdPerCoin'>; signed?: boolean; class?: string }) {
   const s = p.signed && p.n > 0 ? '+' : '';
-  const usd = p.usdPerCoin ? ` ($${(Math.abs(p.n) * p.usdPerCoin).toFixed(2)})` : '';
+  const usd = p.value ? ` (${coinValue(p.value, p.n)})` : p.usdPerCoin ? ` ($${(Math.abs(p.n) * p.usdPerCoin).toFixed(2)})` : '';
   return <span class={'px-coins ' + (p.class ?? '')}><Icon name="coin" /> {s}{p.n.toLocaleString('en-US')}{usd}</span>;
 }

@@ -8,6 +8,7 @@ import { useStore } from '../state/hooks.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 import { Portrait } from '../ui/Portrait.tsx';
 import { useEscape, useRig } from '../ui/hooks.ts';
+import { coinValue } from '../state/near.ts';
 
 export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: ThemeId; onClose(): void; onDeposit(): void; onNeedKey?(coins: number): void }) {
   const s = useStore(p.store);
@@ -17,14 +18,14 @@ export function SeatDialog(p: { store: Store; level: Level; seat: Seat; theme: T
   useEscape(p.onClose);
   const presets = cfg?.presets[p.level] ?? [5, 10, 25];
   const min = cfg?.minCoins ?? 5, max = cfg?.maxCoins ?? 500;
-  const usd = cfg?.usdPerCoin ?? 0.01;
   const balance = me?.balanceCoins ?? 0;
   const [custom, setCustom] = useState('');
   const [other, setOther] = useState(false); // the "..." button opens the custom amount row
   const customN = Math.floor(Number(custom));
   const customOk = custom !== '' && Number.isFinite(customN) && customN >= min && customN <= max && customN <= balance;
   const freeLeft = me?.freeChatsLeft;
-  const dollars = (n: number) => '$' + (n * usd).toFixed(n * usd < 1 ? 2 : 2);
+  // what the coins are worth: NEAR at the current price when the coin trades on Rhea, dollars otherwise
+  const dollars = (n: number) => coinValue(cfg, n);
   // a wallet player's first paid chat in a browser no wallet transaction gave a play key: the one approval, then the pick
   const needsKey = !!s.session && !p.store.actions.coinsEnabled();
   const closed = cfg?.coinsOpen === false;

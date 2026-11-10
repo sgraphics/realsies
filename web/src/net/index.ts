@@ -14,6 +14,9 @@
 //                               (and no X in the footer); the footer links Telegram, X and Terms, &notg=1 no Telegram
 //   &betaclosed=1               the testnet beta is over (config.betaClosed): the game's note, then after 5 s the mock
 //                               launch page with ?beta=over (also: ?mock=1&launch=soon&beta=over for that page alone)
+//   &swap=1                     coins for NEAR on Rhea (protocol v1.12, config.swap): the coins dialog buys with NEAR and
+//                               withdraws as NEAR; the mock plays wrap.testnet and the pool contract (400 coins per NEAR);
+//                               &moved=1 the price moves past every swap (nothing bought or sold, everything comes back)
 
 import type { GameClient } from '../../../shared/protocol.ts';
 import { MockGameClient, type MockOptions, resetMockState } from './mock.ts';
@@ -56,6 +59,8 @@ export function createClient(search?: string): GameClient {
       ...(q.get('wallet') === '1' && q.get('net') === 'mainnet' ? { mainnet: true, storageKey: 'realsies:mock:wallet-main:v1' } : {}),
       ...(q.get('wallet') === 'test' ? { buyUrl: MOCK_BUY_URL, storageKey: 'realsies:mock:wallet-test:v1' } : {}),
       ...(q.get('coins') === 'closed' ? { coinsOpen: false } : {}),
+      ...(q.get('swap') === '1' ? { swap: true } : {}),
+      ...(q.get('moved') === '1' ? { priceMoves: true } : {}),
       ...(launch
         ? {
             wallet: true, mainnet: true, coinsOpen: false, storageKey: 'realsies:mock:launch:v1', ...(token ? { buyUrl: MOCK_BUY_URL } : {}),
@@ -80,6 +85,8 @@ export function createWallet(client: GameClient, network: () => 'mainnet' | 'tes
       ...(as && (q.get('wallet') === '1' || q.get('wallet') === 'test' || mockLaunchOf(q.toString())) ? { accountId: as.includes('.') ? as : `${as}.testnet` } : {}),
       hold: step(q.get('hold')),
       reject: step(q.get('reject')),
+      // &nowait=1: a wallet that sends a batch all at once (the deposit of bought coins fails: they wait in the wallet)
+      ...(q.get('nowait') === '1' ? { noWait: true } : {}),
     });
     (globalThis as { realsiesWallet?: MockWallet }).realsiesWallet = wallet;
     return wallet;

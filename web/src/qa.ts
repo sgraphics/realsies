@@ -31,6 +31,12 @@
 // The testnet airdrop (protocol v1.6; the TESTNET panel above the room while a player holds nothing at all):
 //   &qa=airdrop                    it landed: the panel is gone, a note says where the tokens are
 //   &qa=airdrop-wait               the account had one 3 minutes ago: the panel says when the next one opens
+// Coins for NEAR on Rhea (protocol v1.12), with &wallet=test&swap=1 (or &wallet=1&net=mainnet&swap=1):
+//   &as=sam&qa=swap&near=0.5       the coins dialog, 0.5 NEAR typed and its quote (&game=120&withdraw=40: coins in the
+//                                  game and 40 typed to withdraw as NEAR; &wcoins=98: coins in the wallet itself)
+//   &as=sam&qa=swap-done           a buy of 0.25 NEAR (&buy=) in the open dialog: done; &nowait=1 a wallet that sends
+//                                  the batch at once (the coins wait in the wallet); &moved=1 the price moved past it
+//   &as=sam&qa=swap-sold&game=120  40 coins (&sell=) withdrawn as NEAR
 // The launch (?mock=1&launch=soon|auction|finalizing): the coming-soon page, then the game with its auction banner; see src/net/index.ts.
 // Only active together with ?mock=1.
 
@@ -40,6 +46,7 @@ import { acceptTerms, forgetTerms } from './state/consent.ts';
 import { isCounting } from './state/countdown.ts';
 import { EVIDENCE_CHAT_ID } from './net/mock/evidence.ts';
 import { mockLaunchOf } from './launch/phase.ts';
+import { parseNear } from './state/near.ts';
 
 export interface QaPlan {
   step: string;
@@ -164,6 +171,25 @@ export async function runQa(store: Store, search: string, open: (what: string, a
   if (walletMode && plan.step === 'key') {
     open('key');
     if (q.get('hold') === 'key') void store.actions.enableCoins();
+    return;
+  }
+  if (walletMode && plan.step.startsWith('swap') && store.get().config?.swap) {
+    // coins for NEAR on Rhea (&swap=1, protocol v1.12): &wcoins=N coins in the wallet itself, &game=N coins deposited
+    // into the game first; the dialog opens with &near= and &withdraw= typed; swap-done buys &buy= NEAR (0.25) in the
+    // open dialog, swap-sold withdraws &sell= coins (40) as NEAR
+    const wcoins = Number(q.get('wcoins') ?? 0);
+    const game = Number(q.get('game') ?? 0);
+    if (game > 0) {
+      await store.client.faucetToWallet?.(game);
+      await store.actions.walletDeposit(game);
+    }
+    if (wcoins > 0) await store.client.faucetToWallet?.(wcoins);
+    await store.actions.refreshWalletInfo();
+    store.actions.resetFlow('walletTx');
+    open('deposit', { near: q.get('near') ?? undefined, withdraw: q.get('withdraw') ?? undefined, prefill: q.get('dep') ?? undefined });
+    await new Promise((r) => setTimeout(r, 400));
+    if (plan.step === 'swap-done') await store.actions.swapBuy(parseNear(q.get('buy') ?? '0.25') ?? 0n);
+    if (plan.step === 'swap-sold') await store.actions.swapSell(Number(q.get('sell') ?? 40));
     return;
   }
   if (walletMode && (plan.step === 'deposit' || plan.step === 'coins') && store.get().config?.coinsOpen !== false) {

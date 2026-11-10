@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.11 (2026-11-09: POST /api/auth/failed and AuthFailure, a browser's failed sign-in for the operator's log; additive).
+// Realsies relay <-> web protocol, v1.12 (2026-11-10: coins for NEAR and back on Rhea: PublicConfig.swap and nearPerCoin, GET /api/swap/quote and SwapQuote, WalletInfo.nearBalance, wrapRegistered, wnearBalance and wrapStorageDeposit; additive).
+// v1.11 (2026-11-09: POST /api/auth/failed and AuthFailure, a browser's failed sign-in for the operator's log; additive).
 // v1.10 (2026-11-09: GET /api/auction and AuctionInfo, the REAL auction on meme.cooking for a deposit from realsies.lol; additive).
 // v1.9 (2026-11-08: PublicConfig.betaClosed, the testnet beta's end at its NEAR AI spend cap, and error beta_closed; BotmasterProfile.schedule, the builder slots; additive).
 // v1.8 (2026-11-08): LaunchConfig.telegramUrl, the Telegram link in the coming-soon page's footer; additive.
@@ -104,6 +105,60 @@ export interface PublicConfig {
    * beta test is over" and, after 5 s and once no chat is running, goes to `redirect` with ?beta=over.
    */
   betaClosed?: { redirect: string; reason: 'spend_cap' };
+  // ----- v1.12, optional -----
+  /** coins for NEAR and back on Rhea: sent when the relay has SWAP_DEX and SWAP_POOL and coins are open */
+  swap?: SwapConfig;
+  /** the price of one coin in NEAR at the pool's current point, refreshed at most once a minute; only with `swap` */
+  nearPerCoin?: number;
+}
+
+// ---------- coins for NEAR, on Rhea (v1.12) ----------
+// The coin trades in a Rhea (formerly Ref Finance) concentrated-liquidity pool against wrapped NEAR. A wallet player
+// pays NEAR and gets coins in the game, or withdraws coins as NEAR, each in one wallet approval: the browser builds the
+// transactions from the relay's quote (web/src/wallet/swap.ts) and the wallet sends them. The relay only reads.
+// A buy is one transaction to the wrap contract (storage_deposit if needed, near_deposit for what the wallet's wNEAR
+// does not cover, then ft_transfer_call to the pool contract with {"SwapByOutput": ...}: exactly `coins` whole coins,
+// at most the NEAR offered, the rest back as wNEAR), then the usual deposit of those coins into the game. A sale is
+// `withdraw` on the game, then ft_transfer_call of the coin to the pool contract with {"Swap": ...} and
+// skip_unwrap_near false: plain NEAR arrives.
+
+/** What GET /api/swap/quote is asked: amounts as decimal strings of base units (yoctoNEAR, coin units) */
+export type SwapQuestion = { side: 'buy'; near: string } | { side: 'buy'; coins: number } | { side: 'sell'; units: string };
+
+export interface SwapConfig {
+  /** the pool contract: dclv2.ref-labs.near on mainnet, dclv2.ref-dev.testnet on testnet */
+  dex: string;
+  /** "<token>|<token>|<fee>": the coin and the wrap contract, sorted as strings, e.g. "real.realsies.testnet|wrap.testnet|2000" */
+  poolId: string;
+  /** wrapped NEAR: wrap.near, wrap.testnet */
+  wrapId: string;
+  /** room for the price to move between the quote and the swap, in basis points (100 = 1%) */
+  slippageBps: number;
+}
+
+/**
+ * GET /api/swap/quote, public, the same question answered from a cache for a few seconds:
+ *   ?side=buy&near=<yoctoNEAR>   what that NEAR buys
+ *   ?side=buy&coins=<n>          the NEAR that surely buys n coins (amountIn), and what it buys
+ *   ?side=sell&units=<base units> what those coins sell for
+ * Refused with invalid_request (400) for a nonsense amount, swap_off (404) without swap settings, swap_unavailable
+ * (502) when the pool contract does not answer.
+ */
+export interface SwapQuote {
+  side: 'buy' | 'sell';
+  /** buy: yoctoNEAR offered, the most the swap may take; sell: coin base units sold */
+  amountIn: string;
+  /** what amountIn gives at the current price: coin base units for a buy, yoctoNEAR for a sale */
+  amountOut: string;
+  /** amountOut less the slippage allowance: a sale's min_output_amount */
+  minOut: string;
+  /** buy: the whole coins amountIn surely covers, even after the price moves by the allowance: what is bought, exactly */
+  coins?: number;
+  /** buy: those coins in base units (the swap's output_amount) */
+  coinUnits?: string;
+  /** buy: what those coins cost at the current price, yoctoNEAR; the rest of amountIn comes back as wNEAR */
+  cost?: string;
+  slippageBps: number;
 }
 
 // ---------- the launch (v1.4) ----------
@@ -217,6 +272,11 @@ export interface WalletInfo {
   tokenRegistered: boolean; // NEP-145: the account can receive the coin (withdrawals need it)
   storageDeposit: string; // yoctoNEAR to register on the coin, if needed
   walletBalance?: string; // v1.5: the coin held by the wallet itself (ft_balance_of), base units; absent if unreadable
+  // v1.12, only with PublicConfig.swap (a buy with NEAR is built from them); each absent if unreadable
+  nearBalance?: string; // yoctoNEAR the account can spend: its balance less what its own storage holds
+  wrapRegistered?: boolean; // NEP-145 on the wrap contract (near_deposit needs it)
+  wnearBalance?: string; // wNEAR the wallet holds (left from an earlier buy), yocto
+  wrapStorageDeposit?: string; // yoctoNEAR to register on the wrap contract, if needed
 }
 
 /**
@@ -592,6 +652,8 @@ export interface GameClient {
   currentRound?(): Promise<RoundState | null>;
   /** v1.10: the REAL auction on meme.cooking at a glance, public (GET /api/auction, cached 15 s by the relay) */
   auctionInfo?(): Promise<AuctionInfo>;
+  /** v1.12: a quote for buying coins with NEAR or selling them for NEAR on Rhea, public (GET /api/swap/quote) */
+  swapQuote?(q: SwapQuestion): Promise<SwapQuote>;
   listTestUsers(): Promise<TestUser[]>;
   faucet(accountId: string, coins?: number): Promise<{ tx: string; me: Me }>;
   withdraw(accountId: string, coins: number): Promise<{ tx: string; me: Me }>;

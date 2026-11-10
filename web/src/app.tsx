@@ -31,7 +31,7 @@ import { BETA_OVER, BETA_OVER_LANDING, BETA_REDIRECT_MS, betaEndOf, betaOverUrl,
 
 type Overlay =
   | { kind: 'seat'; level: Level; seat: Seat }
-  | { kind: 'deposit'; gate: boolean; then?: Overlay | null; prefill?: string }
+  | { kind: 'deposit'; gate: boolean; then?: Overlay | null; prefill?: string; near?: string; withdraw?: string }
   | { kind: 'results'; roundId: number }
   | { kind: 'rounds' }
   // the one approval for the browser's play key, opened by a paid pick without one; `pick` goes on once it is on
@@ -81,7 +81,7 @@ export function App({ store }: { store: Store }) {
     // mock-mode screenshot hooks (?mock=1&as=ana&qa=chat ...)
     runQa(store, location.search, (what, arg) => {
       if (what === 'seat') setOverlay({ kind: 'seat', ...(arg as { level: Level; seat: Seat }) });
-      if (what === 'deposit') setOverlay({ kind: 'deposit', gate: false, prefill: (arg as { prefill?: string } | undefined)?.prefill });
+      if (what === 'deposit') setOverlay({ kind: 'deposit', gate: false, ...(arg as { prefill?: string; near?: string; withdraw?: string } | undefined) });
       if (what === 'key') setOverlay({ kind: 'key' });
       if (what === 'rounds') setOverlay({ kind: 'rounds' });
       if (what === 'results') setOverlay({ kind: 'results', roundId: arg as number });
@@ -306,6 +306,8 @@ export function App({ store }: { store: Store }) {
           store={store}
           gate={overlay.gate}
           prefill={overlay.prefill}
+          near={overlay.near}
+          withdraw={overlay.withdraw}
           onDone={() => setOverlay(overlay.then ?? null)}
         />
       )}

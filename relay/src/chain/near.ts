@@ -278,6 +278,19 @@ export class NearChain implements ChainAdapter {
     return BigInt(v ?? '0');
   }
 
+  async nearBalance(accountId: string): Promise<bigint> {
+    let r: any;
+    try {
+      r = await this.rpcCall('query', { request_type: 'view_account', finality: 'optimistic', account_id: accountId });
+    } catch (e) {
+      if (notFound(e)) return 0n;
+      throw e;
+    }
+    // what the account's own storage holds (1e19 yocto a byte) cannot be spent
+    const free = BigInt(r.amount) - BigInt(r.storage_usage ?? 0) * 10n ** 19n;
+    return free > 0n ? free : 0n;
+  }
+
   async txDetails(hash: string, signerId: string): Promise<TxDetails | null> {
     let r: any;
     try {

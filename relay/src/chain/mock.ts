@@ -276,6 +276,75 @@ export class MockChain implements ChainAdapter {
     return { registered: this.tokenRegistered.has(accountId), minDeposit: '1250000000000000000000' };
   }
 
+  // ---------- Rhea and wrapped NEAR (protocol v1.12): read-only, for keyless dev and tests ----------
+  /** the wrap contract the mock knows */
+  readonly wrapId = 'wrap.testnet';
+  /** the mock pool contract: get_pool, quote and quote_by_output for the pool of the coin against wrap.testnet, fee 2000 */
+  dexId = 'dclv2.ref-dev.testnet';
+  /** the mock pool's price: NEAR per coin (400 coins per NEAR, as on testnet), with a 0.2% fee and no price impact */
+  swapNearPerCoin = 0.0025;
+  /** NEAR an account can spend (10 NEAR when not set), its wNEAR, and whether it is registered on the wrap contract */
+  private nearBalances = new Map<string, bigint>();
+  private wnear = new Map<string, bigint>();
+  private wrapRegistered = new Set<string>();
+
+  /** Tests: the account's NEAR, wNEAR and wrap registration. */
+  setSwapAccount(accountId: string, v: { near?: bigint; wnear?: bigint; wrapRegistered?: boolean }): void {
+    if (v.near !== undefined) this.nearBalances.set(accountId, v.near);
+    if (v.wnear !== undefined) this.wnear.set(accountId, v.wnear);
+    if (v.wrapRegistered === true) this.wrapRegistered.add(accountId);
+    if (v.wrapRegistered === false) this.wrapRegistered.delete(accountId);
+  }
+
+  async nearBalance(accountId: string): Promise<bigint> {
+    return this.nearBalances.get(accountId) ?? 10n * 10n ** 24n;
+  }
+
+  async view<T = unknown>(contractId: string, method: string, args: Record<string, unknown>): Promise<T> {
+    const acct = String(args.account_id ?? '');
+    const storage = { total: '1250000000000000000000', available: '0' };
+    const bounds = { min: '1250000000000000000000', max: '1250000000000000000000' };
+    let v: unknown;
+    if (contractId === this.wrapId && method === 'storage_balance_of') v = this.wrapRegistered.has(acct) ? storage : null;
+    else if (contractId === this.wrapId && method === 'ft_balance_of') v = (this.wnear.get(acct) ?? 0n).toString();
+    else if ((contractId === this.wrapId || contractId === this.tokenId) && method === 'storage_balance_bounds') v = bounds;
+    else if (contractId === this.tokenId && method === 'storage_balance_of') v = this.tokenRegistered.has(acct) ? storage : null;
+    else if (contractId === this.tokenId && method === 'ft_balance_of') v = this.walletBalance(acct).toString();
+    else if (contractId === this.contractId && method === 'balance_of') v = (await this.balanceOf(acct)).toString();
+    else if (contractId === this.dexId) v = this.dexView(method, args);
+    else throw new ContractError(`the mock does not view ${contractId}.${method}`);
+    return v as T;
+  }
+
+  /** The mock pool contract's views, shaped like dclv2's (quote: {amount, tag}; an unknown pool panics E403). */
+  private dexView(method: string, args: Record<string, unknown>): unknown {
+    const [x, y] = [this.tokenId, this.wrapId].sort();
+    const pool = `${x}|${y}|2000`;
+    if (method === 'get_pool') {
+      if (args.pool_id !== pool) return null;
+      const raw = (this.swapNearPerCoin * 1e24) / Number(this.coinUnit);
+      const point = Math.round(Math.log(x === this.tokenId ? raw : 1 / raw) / Math.log(1.0001));
+      return { pool_id: pool, token_x: x, token_y: y, fee: 2000, point_delta: 40, current_point: point, state: 'Running' };
+    }
+    if (method !== 'quote' && method !== 'quote_by_output') throw new ContractError(`the mock pool contract has no ${method}`);
+    const ids = args.pool_ids;
+    if (!Array.isArray(ids) || ids.length !== 1 || ids[0] !== pool) throw new ContractError('E403: pool not exist');
+    const buy = args.input_token === this.wrapId && args.output_token === this.tokenId;
+    if (!buy && !(args.input_token === this.tokenId && args.output_token === this.wrapId)) throw new ContractError('E404: invalid token');
+    const price = BigInt(Math.round(this.swapNearPerCoin * 1e12)) * 10n ** 12n; // yocto per coin
+    const keep = 998_000n; // what is left after the 0.2% fee, in millionths
+    const M = 1_000_000n;
+    const ceil = (a: bigint, b: bigint) => (a + b - 1n) / b;
+    const tag = args.tag ?? null;
+    if (method === 'quote') {
+      const net = (BigInt(String(args.input_amount ?? '0')) * keep) / M;
+      return { amount: (buy ? (net * this.coinUnit) / price : (net * price) / this.coinUnit).toString(), tag };
+    }
+    const out = BigInt(String(args.output_amount ?? '0'));
+    const net = buy ? ceil(out * price, this.coinUnit) : ceil(out * this.coinUnit, price);
+    return { amount: ceil(net * M, keep).toString(), tag };
+  }
+
   // ---------- a wallet's own transactions (tests: stand-ins for the wallet popup) ----------
   /** Coins on the token in the account's wallet, outside the game. */
   walletBalance(accountId: string): bigint {

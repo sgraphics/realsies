@@ -38,6 +38,12 @@ export interface MockWalletOptions {
   noBatch?: boolean;
   /** the wallet refuses an AddKey sent by the app as a transaction */
   noAddKeyTx?: boolean;
+  /**
+   * the wallet sends a batch all at once without waiting for each: a lone ft_transfer_call (the deposit of bought
+   * coins, the sale of withdrawn ones) runs before the earlier transactions' cross-contract calls have delivered the
+   * coins it moves, so it fails on chain, and the answer is a failure, as NEAR Connect reports it (QA: &nowait=1)
+   */
+  noWait?: boolean;
   delayMs?: number;
 }
 
@@ -102,6 +108,23 @@ export class MockWallet implements WalletApi {
     if (accountId !== this.signedIn && accountId !== this.account) throw new WalletError('unavailable', 'The wallet is signed in as another account.');
     if (this.o.noBatch && txs.length > 1) throw new WalletError('failed', 'This wallet signs one transaction at a time.');
     if (this.o.noAddKeyTx && txs.some((t) => t.actions.some((a) => a.type === 'AddKey'))) throw new WalletError('failed', 'This wallet does not add keys for apps.');
+    if (this.o.noWait && txs.length > 1) {
+      // each runs on its own, a lone ft_transfer_call first (it loses the race to the coins it needs); what failed
+      // fails the whole answer
+      const lone = (t: WalletTx) => t.actions.length === 1 && t.actions[0].type === 'FunctionCall' && t.actions[0].params.methodName === 'ft_transfer_call';
+      const order = txs.map((_, i) => i).sort((a, b) => Number(lone(txs[b])) - Number(lone(txs[a])));
+      const hashes: string[] = new Array(txs.length);
+      let failed: Error | null = null;
+      for (const i of order) {
+        try {
+          hashes[i] = this.ledger.ledgerWalletTx(accountId, txs[i]);
+        } catch (e) {
+          failed ??= e as Error;
+        }
+      }
+      if (failed) throw new WalletError('tx_failed', `The transaction failed on chain: ${failed.message}`);
+      return hashes;
+    }
     // in order, like the chain: what ran before a failure stays done
     return txs.map((t) => {
       try {

@@ -18,6 +18,8 @@ import type {
   RoundState,
   RoundSummary,
   ServerMsg,
+  SwapQuestion,
+  SwapQuote,
   TestUser,
   VerifyBundle,
   WalletInfo,
@@ -119,6 +121,11 @@ export class RealGameClient implements GameClient {
   /** v1.10: the REAL auction on meme.cooking at a glance, public */
   auctionInfo(): Promise<AuctionInfo> {
     return this.http('GET', '/api/auction');
+  }
+  /** v1.12: what NEAR buys or coins sell for on Rhea now, public (cached a few seconds by the relay) */
+  swapQuote(q: SwapQuestion): Promise<SwapQuote> {
+    const p = q.side === 'sell' ? `units=${enc(q.units)}` : 'near' in q ? `near=${enc(q.near)}` : `coins=${q.coins}`;
+    return this.http('GET', `/api/swap/quote?side=${q.side}&${p}`);
   }
   /** v1.7: the current round for a guest, public, no session */
   async currentRound(): Promise<RoundState | null> {

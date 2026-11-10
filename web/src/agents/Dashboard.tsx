@@ -7,6 +7,7 @@ import type { BotmasterChat, BotmasterProfile, BotmasterScore, BotmasterStats, P
 import { type BuilderClient, friendlyError, isAuthError, profileExtras } from '../net/builders.ts';
 import { MOCK_TOKEN } from '../net/mock/builders.ts';
 import { accountUrl, fmtCoins, fmtPct } from '../state/format.ts';
+import { coinValue } from '../state/near.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 import { BuilderTerms, Field, Footer, N, SecretInput, ShareBar, ShareOf, T, TopBar, fmtAgo, fmtShareOf, fmtWhen } from './parts.tsx';
 import { KeyPanel, Personas, brainLabel, personaState } from './Setup.tsx';
@@ -266,7 +267,8 @@ function Signed(p: {
 
 function Totals(p: { s: BotmasterScore; cfg: PublicConfig | null; payout: string }) {
   const { s, cfg } = p;
-  const usd = cfg?.usdPerCoin ? <>, about <N>${(s.turingBonusCoins * cfg.usdPerCoin).toFixed(2)}</N></> : null;
+  // the bonus's worth: NEAR at the current price when the coin trades on Rhea, dollars otherwise
+  const usd = cfg?.nearPerCoin || cfg?.usdPerCoin ? <>, about <N>{coinValue(cfg, s.turingBonusCoins)}</N></> : null;
   return (
     <section class="ag-kpis" aria-label="Totals over every settled round">
       <div class="ag-kpi hero">

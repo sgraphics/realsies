@@ -9,7 +9,7 @@ import {
   type RoundStatus, type RoundSummary, type Seat, type ServerMsg, type Skin, type TestUser, type ThemeId, type Truth,
   type VerifyBundle, type VerifyCompletion, type VerifyMessage, LEVELS, themeFor,
   type AuthChallenge, type AuthProof, type AuthSession, type PlayKeyInfo, type SignRequestTx, type WalletInfo, type LaunchConfig,
-  type AirdropResult, type AirdropStatus, AIRDROP, type AuctionInfo, type AuthFailure,
+  type AirdropResult, type AirdropStatus, AIRDROP, type AuctionInfo, type AuthFailure, type SwapConfig, type SwapQuestion, type SwapQuote,
 } from '../../../shared/protocol.ts';
 import type { AuctionViews } from '../launch/auction.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -84,7 +84,22 @@ export interface MockOptions {
    */
   betaClosed?: boolean;
   betaRedirect?: string;
+  /**
+   * Coins for NEAR on Rhea (protocol v1.12, PublicConfig.swap): quotes at 400 coins per NEAR with a 0.2% fee, and the
+   * wrap contract and the pool contract as a buy and a sale meet them; every account starts with 8.5 NEAR.
+   */
+  swap?: boolean;
+  /** the price moves past every swap (E204 on chain): the pool contract gives everything back (QA: &moved=1) */
+  priceMoves?: boolean;
 }
+
+/** The mock's Rhea: the testnet pool contract and pool of the coin, whatever the network says. */
+export const MOCK_SWAP: SwapConfig = { dex: 'dclv2.ref-dev.testnet', poolId: 'real.realsies.testnet|wrap.testnet|2000', wrapId: 'wrap.testnet', slippageBps: 100 };
+/** The mock pool's price: yoctoNEAR per coin (0.0025 NEAR, 400 coins per NEAR) and what is left after its 0.2% fee. */
+const SWAP_PRICE = 25n * 10n ** 20n;
+const SWAP_KEEP = 998n;
+const ONE_NEAR = 10n ** 24n;
+const MOCK_NEAR = (85n * ONE_NEAR) / 10n;
 
 /** The relay's words for beta_closed. */
 const BETA_CLOSED = 'The beta test is over. Thanks for playing! See you on mainnet.';
@@ -105,7 +120,7 @@ function apiError(code: string, message: string, status = 400, data?: Record<str
 }
 
 /** The mock relay's public config (testnet, test coins); also used by the mock AI-builder API. */
-export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet' | 'betaClosed' | 'betaRedirect'> = {}): PublicConfig {
+export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds' | 'roundMinutes' | 'countdownSeconds' | 'wallet' | 'coinsOpen' | 'buyUrl' | 'launch' | 'mainnet' | 'betaClosed' | 'betaRedirect' | 'swap'> = {}): PublicConfig {
   return {
     testMode: !opts.wallet,
     network: opts.mainnet ? 'mainnet' : 'testnet',
@@ -135,6 +150,7 @@ export function mockConfig(opts: Pick<MockOptions, 'chatSeconds' | 'callSeconds'
     },
     ...(opts.launch ? { launch: { ...opts.launch } } : {}),
     ...(opts.betaClosed ? { betaClosed: { redirect: opts.betaRedirect ?? '/?mock=1&launch=soon', reason: 'spend_cap' as const } } : {}),
+    ...(opts.swap && opts.coinsOpen !== false ? { swap: { ...MOCK_SWAP }, nearPerCoin: 0.0025 } : {}),
   };
 }
 
@@ -274,6 +290,8 @@ interface Persisted {
   airdrops?: Record<string, number>;
   /** the REAL auction on meme.cooking (v1.10): the total deposited, and per account NEAR, wNEAR and registrations */
   auction?: { total: string; near: Record<string, string>; wnear: Record<string, string>; meme: string[]; wrap: string[] };
+  /** coins for NEAR on Rhea (v1.12): per account NEAR (8.5 until spent), wNEAR, and who is registered on wrap.testnet */
+  swap?: { near: Record<string, string>; wnear: Record<string, string>; wrap: string[] };
 }
 
 interface Brain {
@@ -786,6 +804,10 @@ export class MockGameClient implements GameClient, MockLedger {
     return {
       accountId: account, coinsOpen: open, tokenId: this.config.tokenId, tokenRegistered: open && (this.st.registered ?? []).includes(account),
       storageDeposit: open ? '1250000000000000000000' : '0', walletBalance: ((BigInt(Math.round(held * 10_000)) * COIN_UNIT) / 10_000n).toString(),
+      // v1.12: what a buy with NEAR is built from
+      ...(this.config.swap
+        ? { nearBalance: this.nearOf(account).toString(), wrapRegistered: this.swapState().wrap.includes(account), wnearBalance: this.swapState().wnear[account] ?? '0', wrapStorageDeposit: '1250000000000000000000' }
+        : {}),
     };
   }
 
@@ -972,6 +994,157 @@ export class MockGameClient implements GameClient, MockLedger {
     return fakeTx(this.r);
   }
 
+  // ======================= coins for NEAR on Rhea (protocol v1.12) =======================
+
+  /** the price moves past every swap from now on (tests; QA &moved=1) */
+  get priceMoves(): boolean {
+    return !!this.o.priceMoves;
+  }
+  set priceMoves(v: boolean) {
+    this.o.priceMoves = v;
+  }
+
+  private swapState(): NonNullable<Persisted['swap']> {
+    return (this.st.swap ??= { near: {}, wnear: {}, wrap: [] });
+  }
+
+  private nearOf(account: string): bigint {
+    return BigInt(this.swapState().near[account] ?? MOCK_NEAR.toString());
+  }
+
+  /** Tests and QA: the account's NEAR, wNEAR and wrap registration. */
+  setSwapAccount(account: string, v: { near?: bigint; wnear?: bigint; wrap?: boolean }): void {
+    const s = this.swapState();
+    if (v.near !== undefined) s.near[account] = v.near.toString();
+    if (v.wnear !== undefined) s.wnear[account] = v.wnear.toString();
+    if (v.wrap !== undefined) s.wrap = v.wrap ? [...new Set([...s.wrap, account])] : s.wrap.filter((x) => x !== account);
+    this.save();
+  }
+
+  /** Tests: the account's NEAR and wNEAR on the mock chain, and its wrap registration. */
+  swapAccountOf(account: string): { near: bigint; wnear: bigint; wrap: boolean } {
+    return { near: this.nearOf(account), wnear: BigInt(this.swapState().wnear[account] ?? '0'), wrap: this.swapState().wrap.includes(account) };
+  }
+
+  /** The mock pool contract's quote: what `input` gives (a buy: yocto in, coin units out; a sale: units in, yocto out). */
+  private poolQuote(buy: boolean, input: bigint): bigint {
+    const net = (input * SWAP_KEEP) / 1000n;
+    return buy ? (net * COIN_UNIT) / SWAP_PRICE : (net * SWAP_PRICE) / COIN_UNIT;
+  }
+
+  /** quote_by_output of a buy: the yoctoNEAR that gives `units` of the coin. */
+  private poolCost(units: bigint): bigint {
+    const ceil = (a: bigint, b: bigint) => (a + b - 1n) / b;
+    return ceil(ceil(units * SWAP_PRICE, COIN_UNIT) * 1000n, SWAP_KEEP);
+  }
+
+  /** GET /api/swap/quote, with the relay's math (relay/src/swap.ts) and its refusals. */
+  swapQuote(q: SwapQuestion): Promise<SwapQuote> {
+    return this.tick(() => {
+      const sw = this.config.swap;
+      if (!sw) throw apiError('swap_off', 'buying coins with NEAR is not on here', 404);
+      const bps = BigInt(sw.slippageBps);
+      const less = (v: bigint) => (v * (10_000n - bps)) / 10_000n;
+      const buy = (near: bigint): SwapQuote => {
+        const amountOut = this.poolQuote(true, near);
+        const coins = this.poolQuote(true, less(near)) / COIN_UNIT;
+        return {
+          side: 'buy', amountIn: near.toString(), amountOut: amountOut.toString(), minOut: less(amountOut).toString(), coins: Number(coins),
+          coinUnits: (coins * COIN_UNIT).toString(), cost: (coins > 0n ? this.poolCost(coins * COIN_UNIT) : 0n).toString(), slippageBps: sw.slippageBps,
+        };
+      };
+      if (q.side === 'sell') {
+        if (!/^\d{1,40}$/.test(q.units) || BigInt(q.units) < 1n) throw apiError('invalid_request', 'units: more than 0', 400);
+        const out = this.poolQuote(false, BigInt(q.units));
+        return { side: 'sell', amountIn: q.units, amountOut: out.toString(), minOut: less(out).toString(), slippageBps: sw.slippageBps };
+      }
+      if ('near' in q) {
+        if (!/^\d{1,31}$/.test(q.near) || BigInt(q.near) < 10n ** 21n || BigInt(q.near) > 10_000n * ONE_NEAR) throw apiError('invalid_request', 'near: from 0.001 to 10000 NEAR (in yoctoNEAR)', 400);
+        return buy(BigInt(q.near));
+      }
+      if (!(Number.isInteger(q.coins) && q.coins >= 1 && q.coins <= 10_000_000)) throw apiError('invalid_request', 'coins: a whole number from 1', 400);
+      const step = 10n ** 21n;
+      const cost = this.poolCost(BigInt(q.coins) * COIN_UNIT);
+      let near = (((cost * 10_000n + (10_000n - bps) - 1n) / (10_000n - bps) + step - 1n) / step) * step;
+      let r = buy(near);
+      if ((r.coins ?? 0) < q.coins) r = buy((near += step));
+      return r;
+    });
+  }
+
+  /**
+   * wrap.testnet and the pool contract as a buy and a sale meet them, with their rules. A transaction's actions run all
+   * or none, as on chain. A swap the price moved past (E204 on chain) gives everything back and still reads as a
+   * success, as on chain.
+   */
+  private swapTx(account: string, tx: WalletTx, sw: SwapConfig): string {
+    const s = this.swapState();
+    const w = (this.st.walletCoins ??= {});
+    let near = this.nearOf(account);
+    let wnear = BigInt(s.wnear[account] ?? '0');
+    let wrapReg = s.wrap.includes(account);
+    let coins = w[account] ?? 0;
+    const unitsToCoins = (u: bigint) => Number((u * 10_000n) / COIN_UNIT) / 10_000;
+    const spend = (n: bigint) => {
+      if (n > near) throw new Error('Not enough NEAR in the wallet.');
+      near -= n;
+    };
+    for (const a of tx.actions) {
+      if (a.type !== 'FunctionCall') throw new Error('Function calls only.');
+      const m = a.params.methodName;
+      const dep = BigInt(a.params.deposit);
+      const args = a.params.args as Record<string, unknown>;
+      if (tx.receiverId === sw.wrapId && m === 'storage_deposit') {
+        if (args.account_id !== account || args.registration_only !== true) throw new Error('storage_deposit for another account.');
+        if (dep < 1_250_000_000_000_000_000_000n) throw new Error('Not enough deposit for the wrap storage.');
+        spend(dep);
+        wrapReg = true;
+      } else if (tx.receiverId === sw.wrapId && m === 'near_deposit') {
+        if (!wrapReg) throw new Error(`The account ${account} is not registered on ${sw.wrapId}.`);
+        spend(dep);
+        wnear += dep;
+      } else if (tx.receiverId === sw.wrapId && m === 'near_withdraw') {
+        const amount = BigInt(String(args.amount ?? '0'));
+        if (dep !== 1n) throw new Error('near_withdraw needs exactly 1 yoctoNEAR.');
+        if (amount > wnear) throw new Error('The account does not have enough wNEAR.');
+        wnear -= amount;
+        near += amount;
+      } else if (tx.receiverId === sw.wrapId && m === 'ft_transfer_call') {
+        // a buy: wNEAR to the pool contract with SwapByOutput
+        const amount = BigInt(String(args.amount ?? '0'));
+        if (dep !== 1n) throw new Error('ft_transfer_call needs exactly 1 yoctoNEAR.');
+        if (args.receiver_id !== sw.dex) throw new Error('wNEAR goes to the pool contract here.');
+        if (amount > wnear) throw new Error("The account doesn't have enough balance");
+        const msg = JSON.parse(String(args.msg)).SwapByOutput as { pool_ids: string[]; output_token: string; output_amount: string } | undefined;
+        if (!msg || msg.pool_ids?.join() !== sw.poolId || msg.output_token !== this.config.tokenId) throw new Error('Not a SwapByOutput of the coin.');
+        const units = BigInt(msg.output_amount);
+        const cost = this.poolCost(units);
+        if (this.o.priceMoves || cost > amount) continue; // E204: slippage error; every wNEAR comes back
+        if (!(this.st.registered ?? []).includes(account)) throw new Error('The account is not registered on the coin: the bought coins could not arrive.');
+        wnear -= cost;
+        coins = c4(coins + unitsToCoins(units));
+      } else if (tx.receiverId === this.config.tokenId && m === 'ft_transfer_call') {
+        // a sale: the coin to the pool contract with Swap; plain NEAR comes back (skip_unwrap_near false)
+        const units = BigInt(String(args.amount ?? '0'));
+        if (dep !== 1n) throw new Error('ft_transfer_call needs exactly 1 yoctoNEAR.');
+        if (unitsToCoins(units) > coins + 1e-9) throw new Error("The account doesn't have enough balance");
+        const msg = JSON.parse(String(args.msg)).Swap as { pool_ids: string[]; output_token: string; min_output_amount: string; skip_unwrap_near?: boolean } | undefined;
+        if (!msg || msg.pool_ids?.join() !== sw.poolId || msg.output_token !== sw.wrapId) throw new Error('Not a Swap of the coin for wNEAR.');
+        const out = this.poolQuote(false, units);
+        if (this.o.priceMoves || out < BigInt(msg.min_output_amount)) continue; // E204: the coins come back
+        coins = c4(coins - unitsToCoins(units));
+        if (msg.skip_unwrap_near === false) near += out;
+        else wnear += out;
+      } else throw new Error(`The mock wallet does not send ${tx.receiverId}.${m}.`);
+    }
+    s.near[account] = near.toString();
+    s.wnear[account] = wnear.toString();
+    if (wrapReg && !s.wrap.includes(account)) s.wrap.push(account);
+    w[account] = coins;
+    this.save();
+    return fakeTx(this.r);
+  }
+
   /** Tests: whether the account is registered on the coin (NEP-145 storage). */
   setRegistered(account: string, on: boolean): void {
     const reg = (this.st.registered ??= []).filter((a) => a !== account);
@@ -996,6 +1169,10 @@ export class MockGameClient implements GameClient, MockLedger {
   }
 
   ledgerWalletTx(account: string, tx: WalletTx): string {
+    const sw = this.config.swap;
+    if (sw && (tx.receiverId === sw.wrapId || (tx.receiverId === this.config.tokenId && tx.actions.some((a) => a.type === 'FunctionCall' && (a.params.args as { receiver_id?: string }).receiver_id === sw.dex)))) {
+      return this.swapTx(account, tx, sw);
+    }
     if (tx.receiverId === 'meme-cooking.near' || tx.receiverId === 'wrap.near') return this.auctionTx(account, tx);
     const a = tx.actions[0];
     if (a?.type === 'AddKey' && tx.actions.length === 1) {
@@ -1034,6 +1211,12 @@ export class MockGameClient implements GameClient, MockLedger {
       const reg = (this.st.registered ??= []);
       const who = String(args.account_id ?? account);
       if (!reg.includes(who)) reg.push(who);
+      // with the swap the mock keeps the wallet's NEAR: the registration is paid from it
+      if (this.config.swap) {
+        const dep = BigInt(a.params.deposit);
+        if (dep > this.nearOf(account)) throw new Error('Not enough NEAR in the wallet.');
+        this.swapState().near[account] = (this.nearOf(account) - dep).toString();
+      }
     } else throw new Error(`The mock wallet does not send ${tx.receiverId}.${a.params.methodName}.`);
     this.save();
     return hash;

@@ -22,6 +22,7 @@ npm run e2e          # the scenario against testnet; spawns a relay if none answ
                      # (never spawn one on game.realsies.testnet: the server is its only operator; use
                      #  RELAY_URL=https://realsies.lol, or SECRETS/E2E_USERS of a throwaway deployment)
 npx tsx tools/wallet-proof.ts   # wallet sign-in and the play key on testnet (PLAYER=..., a throwaway relay)
+npx tsx tools/swap-proof.ts     # coins for NEAR on Rhea on testnet: buy, deposit, withdraw, sell (PLAYER=<throwaway>.testnet)
 npm run typecheck
 npm run botmaster-admin -- requests   # AI builders: access requests, botmasters, personas (tools/botmaster-admin.ts)
 ```
@@ -41,6 +42,9 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `AUTH_RECIPIENT` | realsies.lol | NEP-413 recipient every sign-in signature must name: the domain the players see (a testnet relay moved to testnet.realsies.lol says so here) |
 | `SESSION_DAYS` | 30 | a wallet session lives this long |
 | `BUY_URL` | | "Buy REAL": the meme.cooking page before the launch finalizes, the Rhea swap after; unset = no link |
+| `SWAP_DEX`, `SWAP_POOL` | | coins for NEAR on Rhea (protocol v1.12, `src/swap.ts`): the pool contract (`dclv2.ref-labs.near`; testnet `dclv2.ref-dev.testnet`) and the pool of the coin against wrapped NEAR, `<token>\|<token>\|<fee>` with the two ids sorted as strings (testnet `real.realsies.testnet\|wrap.testnet\|2000`). With both set and coins open: `PublicConfig.swap` and `nearPerCoin` (the price at the pool's current point, re-read every minute and pushed when it moves), `GET /api/swap/quote`, and the wallet's NEAR, wrap registration and wNEAR in `WalletInfo`. The coins dialog then buys coins with NEAR and withdraws them as NEAR, one wallet approval each; the browser builds the swaps, the relay only reads. At start the pool id must name the game's coin and the wrap contract and the pool must exist (`get_pool`), or the relay stops with the reason; on mainnet before the coin it is checked when coins open (and only stays off if wrong). One log line, `swap: coins for NEAR on Rhea, pool ...`. One of the two without the other stops the relay; neither: nothing changes anywhere |
+| `SWAP_WRAP` | wrap.near on mainnet, wrap.testnet on testnet | the wrap contract |
+| `SWAP_SLIPPAGE_BPS` | 100 | room for the price to move between the quote and the swap, in basis points (1 to 2000): a buy asks for the whole coins its NEAR less this covers (`SwapByOutput`, all the NEAR offered as the most it may take), a sale takes at least its quote less this |
 | `LAUNCH_AUCTION_START`, `LAUNCH_AUCTION_END` | | the launch (protocol v1.4, `PublicConfig.launch`): REAL's meme.cooking auction, which opens with the mainnet game; ISO times with their zone (`2026-11-08T15:00:00Z`), the end defaulting to 24 hours after the start. Setting any `LAUNCH_*` turns it on. Until the start `/` is the coming-soon page (a countdown to the start and "Get REAL"; the game at `/play`); at the start the page hands over to the game in place, and from then `/` is the game with a banner: "REAL auction is live, ends in hh:mm, Get REAL", after the end "REAL is finalizing, coins open soon". Once the coin is set on the contract (`coinsOpen`, re-read every minute) the relay drops `launch`, pushes the config to every socket and the banner goes, no restart. Ignored with `TEST_MODE=1`: the testnet demo never shows any of it. A bad value stops the relay at boot |
 | `LAUNCH_TOKEN_URL` | `BUY_URL` | "Get REAL" (https): the meme.cooking page of REAL, on the coming-soon page (meme.cooking shows its own countdown before the auction) and in the banner; unset and no `BUY_URL`: the page shows the start time instead |
 | `LAUNCH_VIDEO_URL` | | the launch tweet with the trailer: the coming-soon page's video card (a silent teaser loop, `web/public/launch-teaser.mp4`, under a big PLAY icon) opens it in a new tab. An https link on x.com or twitter.com |
@@ -121,6 +125,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `examples/remote-brain.mjs` | a minimal remote brain (Node 22+, no dependencies) |
 | `tools/mcp-botmaster.mjs` | stdio MCP server for botmasters: the bot API docs and a request-a-persona tool that files a pending request |
 | `tools/botmaster-admin.ts` | the operator's command line on the DB: requests, approve or reject, botmasters, create, rotate, revoke, personas, approve, reject or disable; a token is printed once |
+| `tools/swap-proof.ts` | coins for NEAR on Rhea on testnet without a browser: the web's own buy and sale transactions (`web/src/wallet/swap.ts`), quoted with `src/swap.ts`, sent from a throwaway account in the legacy keychain to `game.realsies.testnet` and the testnet pool; balances checked on chain; refuses mainnet and project accounts; a report in `data/` |
 | `tools/wallet-proof.ts` | wallet sign-in and the play key end to end on testnet, against a relay on a throwaway deployment (it refuses `game.realsies.testnet` and `game.realsies.near`): the account's full-access key from the legacy keychain signs the NEP-413 sign-in, the near CLI does what a wallet popup would (AddKey, deposit, withdraw), the web app's encoder signs the play and the call; gas and allowance measured; a report in `data/` |
 
 Round lifecycle: start (secret, cast seed, `start_round`, attestation per model of the round's cast, `CAST_SIZE` demo bot
@@ -212,6 +217,7 @@ Same code with `TEST_MODE=0`. It needs, next to the testnet relay (its own unit,
 | `AUTH_RECIPIENT` | `realsies.lol` (and `testnet.realsies.lol` on the testnet relay once it moves there) |
 | `ROUND_MINUTES`, `FREE_CHATS_PER_DAY` | 360 and 3 |
 | `BUY_URL` | the meme.cooking page of REAL now; the Rhea swap after the launch finalizes (a restart) |
+| `SWAP_DEX`, `SWAP_POOL` | `dclv2.ref-labs.near` and `<REAL token>\|wrap.near\|<fee>` once the pool exists: coins for NEAR in the coins dialog. Checked when coins open; a wrong pool id keeps swap off with an error in the log |
 | `LAUNCH_AUCTION_START` (`LAUNCH_AUCTION_END` if not 24 hours), `LAUNCH_TOKEN_URL`, `LAUNCH_X_URL`, `LAUNCH_TELEGRAM_URL`, then `LAUNCH_VIDEO_URL` once the launch tweet is up (a restart) | the coming-soon page at `/` until the start (the game at `/play`), then the game with the auction banner until the coin is set. In `.env.mainnet`, and realsies.lol pointed at this relay: a test relay ignores them |
 | `NEAR_AI_API_KEY`, `NEAR_AI_BUDGET_USD`, `ADMIN_TOKEN`, `RELAY_ENCRYPTION_KEY` | as on testnet; its own NEAR AI budget |
 | `CHAIN` | `near` (or `auto` with the secrets file present) |
@@ -300,6 +306,24 @@ the player's, NEAR itself refusing a `withdraw` signed with the play key (Method
 sign-out. A play burnt 3.02 Tgas (0.000279 NEAR), a call 2.47 Tgas (0.000224 NEAR), and the key's allowance dropped by
 exactly what was burnt; a separate probe sent the same call at 10, 30 and 100 Tgas prepaid and was charged the same.
 `npm run e2e` against a local relay on that deployment (its own test users) passed with 101 checks in round 3.
+
+Coins for NEAR on Rhea (`test/swap.test.ts`, protocol v1.12): `SWAP_*` both or neither, the pool id's shape, the wrap
+contract by network, slippage 1 to 2000; the pool id against the game's coin and the wrap contract (sorted as the pool
+contract sorts them); the quote math against a stubbed pool contract (whole coins after the allowance, the NEAR that
+surely buys n coins, a sale's minimum, more than the pool can fill refused), the price from the pool's point on either
+side, the 5 s cache (a failed read not kept) and the refusals; then in-process relays: `swap` and `nearPerCoin` in the
+config, quotes over HTTP from the cache, the wallet's NEAR, wrap registration and wNEAR in `WalletInfo`; nothing without
+the settings; swap turning on when coins open; a pool of another token, one the pool contract lacks, or the wrong wrap
+contract stopping the relay with the reason.
+
+`PLAYER=<throwaway>.testnet npx tsx tools/swap-proof.ts` (testnet only; refuses project accounts; no relay) sends the
+web's own swap transactions (`web/src/wallet/swap.ts`), quoted with `src/swap.ts`, from an account in the legacy
+keychain, and checks the balances on chain; `SELL_WALLET=1` only sells what the wallet holds. 2026-11-10, a fresh faucet
+account `swapproof-02f825.testnet`: the coin registration, the wrap transaction (register, wrap, `SwapByOutput`) and the
+deposit; exactly the 98 quoted coins for 0.245979 NEAR, `game.realsies.testnet` balance +98; then withdraw, sell (98
+coins for exactly the quoted 0.244997 NEAR) and unwrap the 0.00402 wNEAR left over: the NEAR came back, the round trip
+cost 0.0105 NEAR (0.0025 of it registrations). A second account holding 0.374 wNEAR bought with no wrap at all; a sale
+from an account never registered on wrap.testnet paid plain NEAR. Reports in `data/swap-proof-*.json`.
 
 Also covered: `prune_round` in the mock chain with the contract's rules, the relay pruning a settled
 round while results and bundles stay served, and idle mode (no `start_round` or commits while nobody

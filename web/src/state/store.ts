@@ -3,14 +3,16 @@
 
 import type {
   ActiveChat, AirdropStatus, AuthChallenge, AuthFailure, AuthSession, ChatMessage, GameClient, LeaderRow, Level, Me, Mode, PlayKeyInfo, PublicConfig,
-  RoundResults, RoundState, RoundSummary, Seat, ServerMsg, TestUser, ThemeId, VerifyBundle, WalletInfo,
+  RoundResults, RoundState, RoundSummary, Seat, ServerMsg, SwapQuestion, SwapQuote, TestUser, ThemeId, VerifyBundle, WalletInfo,
 } from '../../../shared/protocol.ts';
 import { removeTranscriptMessage, replaceTranscriptMessage, saveTranscriptMessage } from '../net/transcript.ts';
 import { countdownFor, isCounting } from './countdown.ts';
 import { BOTS_NAPPING } from './notices.ts';
 import type { WalletApi, WalletError, WalletSignIn } from '../wallet/types.ts';
 import { forgetPlayKey, loadPlayKey, newPlayKey, savePlayKey, type PlayKey } from '../wallet/keys.ts';
-import { addPlayKeyTx, depositTx, sendSteps, storageTx, withdrawTx, type Step } from '../wallet/batch.ts';
+import { addPlayKeyTx, depositTx, sendSteps, storageTx, withdrawTx, type SendResult, type Step } from '../wallet/batch.ts';
+import { buyNearNeeded, buyTxs, sellTxs, swapWalletOf, type SwapStep } from '../wallet/swap.ts';
+import { fmtNear } from './near.ts';
 import { parsePublicKey, signTransaction } from '../wallet/tx.ts';
 import { base58Decode, base64Decode, base64Encode } from '../wallet/base58.ts';
 import { depositCheck, emptyWalletText, shortWalletText, symbolOf } from './walletFunds.ts';
@@ -95,7 +97,12 @@ export interface AppState {
   session?: SessionView;
   signIn: Flow;
   keySetup: Flow & { via?: 'sign-in' | 'transaction' };
-  walletTx: Flow & { kind?: 'deposit' | 'withdraw' };
+  /**
+   * A deposit or withdrawal of the coin, or (v1.12) a buy with NEAR or a sale for NEAR: `coins` bought or sold, `near`
+   * (yocto) about what a sale paid, `left` the coins landed in the wallet but the step after did not happen (the
+   * deposit of a buy, the sale of a withdrawal): the coins dialog offers that step on its own.
+   */
+  walletTx: Flow & { kind?: 'deposit' | 'withdraw' | 'buy' | 'sell'; coins?: number; near?: string; left?: boolean };
   walletInfo?: WalletInfo;
   /** the relay refused a paid pick for want of a play key: the one-approval sheet opens, then the pick goes on */
   keyNeeded?: { code: string; at: number; pick?: { level: Level; seatIndex: number; coins: number } };
@@ -147,6 +154,13 @@ export interface StoreActions {
   coinsEnabled(): boolean;
   walletDeposit(coins: number): Promise<boolean>;
   walletWithdraw(coins: number): Promise<boolean>;
+  // ----- coins for NEAR on Rhea (v1.12, PublicConfig.swap) -----
+  /** What NEAR buys or coins sell for now (the relay's quote). */
+  swapQuote(q: SwapQuestion): Promise<SwapQuote>;
+  /** Coins for `near` yoctoNEAR, into the game, in one wallet approval (wallet/swap.ts); then reads what landed. */
+  swapBuy(near: bigint): Promise<boolean>;
+  /** Coins from the game sold for NEAR in one approval; `from: 'wallet'` sells what the wallet itself holds. */
+  swapSell(coins: number, from?: 'game' | 'wallet'): Promise<boolean>;
   refreshWalletInfo(): Promise<WalletInfo | undefined>;
   resetFlow(which: 'signIn' | 'keySetup' | 'walletTx'): void;
   clearKeyNeeded(): void;
@@ -180,6 +194,27 @@ function errCode(e: unknown): string | undefined {
 }
 
 const RESULTS_KEY = (a: string) => `realsies:resultsReady:${a}`;
+
+/** Coins (a number with up to 4 decimals, as Me has them) in the coin's base units. */
+function coinsToUnits(coins: number, unit: bigint): bigint {
+  return (BigInt(Math.round(coins * 10_000)) * unit) / 10_000n;
+}
+
+/** v1.12: what the screen says when the price moved past a buy (the pool contract gave every wNEAR back). */
+export const PRICE_MOVED_BUY = 'The price moved before your buy went through, so nothing was bought. Your NEAR waits in your wallet as wNEAR, and your next buy uses it first.';
+export const PRICE_MOVED_SELL = 'The price moved before the sale went through, so nothing was sold.';
+
+/** A wallet account's coins in its wallet and in the game, and its wNEAR, in base units (v1.12). */
+interface Holdings {
+  coin: bigint;
+  game: bigint;
+  wnear: bigint;
+}
+
+/** A buy the wallet cannot cover, in plain words. */
+export function nearShortText(need: bigint, have: bigint): string {
+  return `That needs ${fmtNear(need, 3)} NEAR with storage and gas; your wallet has ${fmtNear(have, 3)}.`;
+}
 
 function ls(): Storage | null {
   try {
@@ -566,6 +601,30 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
     if (!s || !cfg) throw new Error('Sign in with your wallet first.');
     if (!wallet) throw new Error('No wallet in this browser.');
     return { s, cfg, w: wallet };
+  };
+  /** A deposit sent from the wallet: the relay checks it on chain (finality can trail a few seconds); Me after it. */
+  const reportDep = async (hash: string): Promise<Me | undefined> => {
+    for (let i = 0; i < 6 && client.reportDeposit; i++) {
+      try {
+        return (await client.reportDeposit(hash)).me;
+      } catch (e) {
+        if (errCode(e) !== 'tx_unknown' || i === 5) throw e;
+        await sleep(2000);
+      }
+    }
+    return undefined;
+  };
+  /**
+   * v1.12: what a wallet account holds, read again: the coin in its wallet and in the game (base units), and its
+   * wNEAR. A read that fails counts as no change, never as coins that arrived.
+   */
+  const holdings = async (unit: bigint, prev: Holdings): Promise<Holdings> => {
+    const [info, me] = await Promise.all([actions.refreshWalletInfo(), actions.refreshMe().catch(() => undefined)]);
+    return {
+      coin: info?.walletBalance !== undefined ? BigInt(info.walletBalance) : prev.coin,
+      game: me ? coinsToUnits(me.balanceCoins, unit) : prev.game,
+      wnear: info?.wnearBalance !== undefined ? BigInt(info.wnearBalance) : prev.wnear,
+    };
   };
 
   // ----- the sign-in's challenge, ahead of the tap -----
@@ -994,6 +1053,177 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
         return true;
       } catch (e) {
         set((x) => ({ walletTx: { ...x.walletTx, phase: 'error', kind: 'withdraw', error: errText(e) } }));
+        return false;
+      }
+    },
+
+    // ----- coins for NEAR on Rhea (v1.12) -----
+    swapQuote(q) {
+      if (!client.swapQuote) return Promise.reject(new Error('Buying coins with NEAR is not on here.'));
+      return client.swapQuote(q);
+    },
+    async swapBuy(near) {
+      try {
+        const { s, cfg, w } = walletReady();
+        if (!cfg.swap || !client.swapQuote) throw new Error('Buying coins with NEAR is not on here.');
+        if (cfg.coinsOpen === false) throw new Error('Coins open when $REAL launches.');
+        const unit = BigInt(cfg.coinUnit);
+        set({ walletTx: { phase: 'checking', kind: 'buy' } });
+        const [info, me, q] = await Promise.all([actions.refreshWalletInfo(), actions.refreshMe().catch(() => undefined), client.swapQuote({ side: 'buy', near: near.toString() })]);
+        const wal = swapWalletOf(info);
+        if (!info || !wal || info.walletBalance === undefined || !me) throw new Error('Your wallet could not be read just now. Try again in a moment.');
+        const coins = q.coins ?? 0;
+        if (coins < 1 || !q.coinUnits) throw new Error('That buys less than one coin. Try a little more NEAR.');
+        // never send a buy the wallet cannot cover: the registrations, the NEAR it wraps, and some left for gas
+        const need = buyNearNeeded(near, wal);
+        if (wal.near !== null && need > wal.near) throw new Error(nearShortText(need, wal.near));
+        const units = BigInt(q.coinUnits);
+        const before: Holdings = { coin: BigInt(info.walletBalance), game: coinsToUnits(me.balanceCoins, unit), wnear: wal.wnear };
+        // the coins that came in, wherever they are now (the wallet, or on into the game)
+        const up = (h: Holdings) => h.coin - before.coin + (h.game - before.game);
+        // after a refused batch each step goes alone and only if it did not land meanwhile: never a second buy
+        let buySent = false;
+        const landed = (step: SwapStep) => async (): Promise<boolean> => {
+          if (step === 'coin_storage') return (await actions.refreshWalletInfo())?.tokenRegistered === true;
+          let h = await holdings(unit, before);
+          if (step === 'buy') {
+            // the coins came in, or the wrap transaction ran and the price moved past it (its NEAR waits as wNEAR)
+            const done = up(h) >= units || h.wnear > before.wnear;
+            buySent = !done;
+            return done;
+          }
+          // the deposit: the bought coins sit in the wallet until it runs; a buy sent a moment ago may still be showing up
+          for (let i = 0; buySent && i < 5 && h.coin < before.coin + units; i++) {
+            await sleep(1500);
+            h = await holdings(unit, before);
+          }
+          return h.coin < before.coin + units;
+        };
+        // one approval: the play key (while this browser has none), the registration on the coin, the swap, the deposit
+        const key = await playKeyStep(s, cfg);
+        const txs = buyTxs(cfg, s.accountId, { maxIn: near, units }, wal);
+        const steps: Step[] = [...(key ? [key.step] : []), ...txs.map((t) => ({ tx: t.tx, landed: landed(t.step) }))];
+        set({ walletTx: { phase: 'wallet', kind: 'buy', coins } });
+        let sent: SendResult | null = null;
+        let failure: unknown = null;
+        try {
+          sent = await sendSteps(w, s.accountId, steps);
+        } catch (e) {
+          failure = e;
+        }
+        const buyHash = sent?.hashes[steps.length - 2] ?? undefined;
+        const depHash = sent?.hashes[steps.length - 1] ?? undefined;
+        const tx = depHash ?? buyHash;
+        set({ walletTx: { phase: 'checking', kind: 'buy', coins, ...(tx ? { tx } : {}) } });
+        // the relay checks the deposit on chain, as with any deposit (and pays a locked bonus with it)
+        if (depHash) {
+          const m = await reportDep(depHash).catch(() => undefined);
+          if (m) set({ me: m });
+        }
+        // what landed, from the balances: a swap the price moved past still reads as a success in the wallet
+        let after = await holdings(unit, before);
+        for (let i = 0; i < 5 && !failure && up(after) < units; i++) {
+          await sleep(1500);
+          after = await holdings(unit, before);
+        }
+        if (key) await settleKey(cfg.network, s.accountId, key.key, !!sent && sent.hashes[0] !== null);
+        void actions.refreshAirdrop();
+        if (up(after) >= units) {
+          // bought; when the deposit did not follow (a wallet that sent it before the swap had finished), the coins wait
+          // in the wallet and the dialog offers to put them in the game
+          const left = after.coin >= before.coin + units;
+          set({ walletTx: { phase: 'done', kind: 'buy', coins, ...(left ? { left: true } : {}), ...(tx ? { tx } : {}) } });
+          return true;
+        }
+        // nothing bought: the wallet's own reason when nothing ran on chain (the player closed it), else the price moved
+        if (failure && errCode(failure) !== 'tx_failed' && after.wnear <= before.wnear) throw failure;
+        throw new Error(PRICE_MOVED_BUY + (after.game > before.game ? ' The coins your wallet already held went into the game.' : ''));
+      } catch (e) {
+        set((x) => ({ walletTx: { ...x.walletTx, phase: 'error', kind: 'buy', error: errText(e) } }));
+        return false;
+      }
+    },
+    async swapSell(coins, from = 'game') {
+      try {
+        const { s, cfg, w } = walletReady();
+        if (!cfg.swap || !client.swapQuote) throw new Error('Selling coins for NEAR is not on here.');
+        const unit = BigInt(cfg.coinUnit);
+        set({ walletTx: { phase: 'checking', kind: 'sell' } });
+        const [info, me] = await Promise.all([actions.refreshWalletInfo(), actions.refreshMe().catch(() => undefined)]);
+        const wal = swapWalletOf(info);
+        if (!info || !wal || info.walletBalance === undefined || !me) throw new Error('Your wallet could not be read just now. Try again in a moment.');
+        const before: Holdings = { coin: BigInt(info.walletBalance), game: coinsToUnits(me.balanceCoins, unit), wnear: wal.wnear };
+        let units: bigint;
+        if (from === 'game') {
+          const n = Math.floor(coins);
+          if (!(n > 0)) throw new Error('Choose how many coins to withdraw.');
+          if (n > me.balanceCoins + 1e-9) throw new Error('Not enough coins in the game.');
+          units = BigInt(n) * unit;
+        } else {
+          units = before.coin;
+          if (units <= 0n) throw new Error('Your wallet holds no coins.');
+        }
+        const shown = Number((units * 10_000n) / unit) / 10_000;
+        const q = await client.swapQuote({ side: 'sell', units: units.toString() });
+        // from the game the coins pass through the wallet: withdrawn, then sold
+        const extra = from === 'game' ? units : 0n;
+        const withdrawn = (h: Holdings) => from === 'wallet' || h.game <= before.game - units;
+        const sold = (h: Holdings) => withdrawn(h) && h.coin + units <= before.coin + extra;
+        let withdrawSent = false;
+        const landed = (step: SwapStep) => async (): Promise<boolean> => {
+          if (step === 'coin_storage') return (await actions.refreshWalletInfo())?.tokenRegistered === true;
+          let h = await holdings(unit, before);
+          if (step === 'withdraw') {
+            withdrawSent = !withdrawn(h);
+            return !withdrawSent;
+          }
+          if (step === 'sell') {
+            // a withdrawal sent a moment ago may still be showing up in the wallet
+            for (let i = 0; withdrawSent && i < 5 && h.coin < before.coin + extra; i++) {
+              await sleep(1500);
+              h = await holdings(unit, before);
+            }
+            return h.coin < before.coin + extra;
+          }
+          return h.wnear < before.wnear;
+        };
+        // one approval: the play key with a withdrawal (while this browser has none), the registration on the coin, the
+        // withdrawal, the sale, and wNEAR left from earlier buys back to NEAR
+        const key = from === 'game' ? await playKeyStep(s, cfg) : null;
+        const txs = sellTxs(cfg, s.accountId, { units, minOut: BigInt(q.minOut) }, wal, from);
+        const steps: Step[] = [...(key ? [key.step] : []), ...txs.map((t) => ({ tx: t.tx, landed: landed(t.step) }))];
+        const saleAt = (key ? 1 : 0) + txs.findIndex((t) => t.step === 'sell');
+        set({ walletTx: { phase: 'wallet', kind: 'sell', coins: shown } });
+        let sent: SendResult | null = null;
+        let failure: unknown = null;
+        try {
+          sent = await sendSteps(w, s.accountId, steps);
+        } catch (e) {
+          failure = e;
+        }
+        const tx = sent?.hashes[saleAt] ?? undefined;
+        set({ walletTx: { phase: 'checking', kind: 'sell', coins: shown, ...(tx ? { tx } : {}) } });
+        let after = await holdings(unit, before);
+        for (let i = 0; i < 5 && !failure && !sold(after); i++) {
+          await sleep(1500);
+          after = await holdings(unit, before);
+        }
+        if (key) await settleKey(cfg.network, s.accountId, key.key, !!sent && sent.hashes[0] !== null);
+        void actions.refreshAirdrop();
+        if (sold(after)) {
+          set({ walletTx: { phase: 'done', kind: 'sell', coins: shown, near: q.amountOut, ...(tx ? { tx } : {}) } });
+          return true;
+        }
+        if (from === 'game' && withdrawn(after)) {
+          // withdrawn but not sold (the price moved, or the wallet sent the sale before the withdrawal had finished):
+          // the coins wait in the wallet and the dialog offers the sale on its own
+          set({ walletTx: { phase: 'done', kind: 'sell', coins: shown, left: true, ...(tx ? { tx } : {}) } });
+          return true;
+        }
+        if (failure && errCode(failure) !== 'tx_failed') throw failure;
+        throw new Error(PRICE_MOVED_SELL);
+      } catch (e) {
+        set((x) => ({ walletTx: { ...x.walletTx, phase: 'error', kind: 'sell', error: errText(e) } }));
         return false;
       }
     },

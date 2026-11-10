@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LaunchConfig } from '../../shared/protocol.js';
+import { swapFromEnv, type SwapSettings } from './swap.js';
 
 function findRelayRoot(): string {
   // Works from src/ (tsx) and from dist/ (bundled): walk up to the folder holding personas/.
@@ -133,6 +134,12 @@ export interface Config {
    * launchFromEnv). Sent only without test mode, and only until the coin is set on the contract.
    */
   launch?: LaunchConfig;
+  // ---------- coins for NEAR on Rhea (protocol v1.12) ----------
+  /**
+   * SWAP_DEX, SWAP_POOL, SWAP_WRAP, SWAP_SLIPPAGE_BPS (src/swap.ts): with both SWAP_DEX and SWAP_POOL, and once coins
+   * are open, PublicConfig.swap and nearPerCoin, GET /api/swap/quote and the wallet's NEAR in WalletInfo. Unset: none.
+   */
+  swap?: SwapSettings;
 }
 
 /** Every variable of the launch; setting any one of them turns it on. */
@@ -273,6 +280,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     playGasTgas: num('PLAY_GAS_TGAS', 30),
     signTimeoutSeconds: num('SIGN_TIMEOUT_SECONDS', 20),
     ...('launch' in overrides ? {} : { launch: launchFromEnv(env) }),
+    ...('swap' in overrides ? {} : { swap: swapFromEnv(env) }),
     ...overrides,
   };
   if (!['auto', 'near', 'mock'].includes(cfg.chain)) throw new Error(`CHAIN must be auto, near or mock`);
@@ -294,5 +302,6 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (!(cfg.signTimeoutSeconds >= 3 && cfg.signTimeoutSeconds <= 120)) throw new Error('SIGN_TIMEOUT_SECONDS must be from 3 to 120');
   if (cfg.launch) checkLaunch(cfg.launch);
   else delete cfg.launch;
+  if (!cfg.swap) delete cfg.swap;
   return cfg;
 }

@@ -4,8 +4,9 @@ import {
   AIRDROP, LEVELS, themeFor,
   type ActiveChat, type AirdropResult, type AirdropStatus, type ChatInfo, type ChatMessage, type ClientMsg, type LeaderRow, type Level, type Me, type Mode,
   type PublicConfig, type RoundResults, type RoundState, type RoundSummary, type Seat, type ServerMsg, type Skin,
-  type TestUser, type VerifyBundle, type WalletInfo,
+  type SwapQuote, type TestUser, type VerifyBundle, type WalletInfo,
 } from '../../../shared/protocol.js';
+import { SwapError, SwapQuotes, checkPoolNames, parseQuoteAsk, swapWallet, wrapIdOf } from '../swap.js';
 import { gamertag } from '../../../shared/names.js';
 import { LAUNCH_RETIRED, type Config } from '../config.js';
 import type { Db } from '../db.js';
@@ -172,6 +173,11 @@ export class Game implements BotHost {
   /** per play key (account|key): the next nonce to ask for and a recent block hash to sign with */
   private keyNonces = new Map<string, { next: bigint; blockHash: string; at: number }>();
   private configTimer: NodeJS.Timeout | null = null;
+  /** coins for NEAR on Rhea (v1.12): the quotes, once SWAP_* is set, coins are open and the pool checks out */
+  swap: SwapQuotes | null = null;
+  /** NEAR per coin in PublicConfig.nearPerCoin, re-read every minute */
+  private swapPrice: number | null = null;
+  private swapTimer: NodeJS.Timeout | null = null;
 
   constructor(
     readonly cfg: Config,
@@ -216,6 +222,8 @@ export class Game implements BotHost {
       }
     }
     this.coinUnit = this.chainCfg.coinUnit;
+    // a pool id that does not name the game's coin and the wrap contract stops the relay here
+    await this.setupSwap(true);
     this.betaClosedNow = !!this.betaState()?.closed;
     if (this.betaClosedNow) log.warn(`beta closed: ${this.betaLine()}; no new chats, sign-ins or rounds`);
     this.publicConfig = this.makePublicConfig();
@@ -265,7 +273,79 @@ export class Game implements BotHost {
       },
       ...(this.launchOn() ? { launch: { ...this.cfg.launch! } } : {}),
       ...(this.betaClosedNow ? { betaClosed: { redirect: this.cfg.betaClosedRedirect, reason: 'spend_cap' as const } } : {}),
+      ...(this.swap && this.chainCfg.coinsOpen
+        ? {
+            swap: { dex: this.swap.pool.dex, poolId: this.swap.pool.poolId, wrapId: this.swap.pool.wrapId, slippageBps: this.swap.pool.slippageBps },
+            ...(this.swapPrice !== null ? { nearPerCoin: this.swapPrice } : {}),
+          }
+        : {}),
     };
+  }
+
+  // =====================================================================================
+  // coins for NEAR on Rhea (protocol v1.12, src/swap.ts)
+  // =====================================================================================
+
+  /**
+   * SWAP_*: once coins are open, the pool id must name the game's coin and the wrap contract, and the pool must exist
+   * on the pool contract. At start a wrong pool stops the relay with the reason; when coins open later (mainnet, at the
+   * token launch) it only stays off, with the reason in the log. One line says what is on.
+   */
+  private async setupSwap(atStart: boolean): Promise<void> {
+    const s = this.cfg.swap;
+    if (!s || this.swap) return;
+    if (!this.chainCfg.coinsOpen) {
+      if (atStart) log.info(`swap: ${s.poolId} on ${s.dex} waits for the coin; checked when coins open`);
+      return;
+    }
+    const coin = this.chainCfg.token ?? this.chain.tokenId;
+    const wrapId = wrapIdOf(s, this.chain.network);
+    try {
+      checkPoolNames(s.poolId, coin, wrapId);
+      const pool = await this.chain.view<unknown>(s.dex, 'get_pool', { pool_id: s.poolId }).catch((e) => {
+        // NEAR not answering is no reason to stop: quotes fail until it answers
+        log.warn(`swap: could not read ${s.poolId} on ${s.dex} (${errMsg(e)}); going on`);
+        return undefined;
+      });
+      if (pool === null) throw new Error(`SWAP_POOL ${s.poolId} does not exist on ${s.dex} (SWAP_DEX)`);
+    } catch (e) {
+      if (atStart) throw e;
+      log.error(`swap stays off: ${errMsg(e)}`);
+      return;
+    }
+    this.swap = new SwapQuotes((c, m, a) => this.chain.view(c, m, a), { dex: s.dex, poolId: s.poolId, wrapId, coin, coinUnit: this.coinUnit, slippageBps: s.slippageBps });
+    this.swapPrice = await this.swap.nearPerCoin();
+    log.info(
+      `swap: coins for NEAR on Rhea, pool ${s.poolId} on ${s.dex}, ${wrapId}, slippage ${s.slippageBps / 100}%, ` +
+        `${this.swapPrice === null ? 'price not read yet' : `${this.swapPrice} NEAR per coin`}`,
+    );
+    this.swapTimer = setInterval(() => void this.refreshSwapPrice(), 60_000);
+    this.swapTimer.unref?.();
+  }
+
+  /** The price, once a minute; every connection hears it when it moved enough to show (4 significant digits). */
+  private async refreshSwapPrice(): Promise<void> {
+    if (!this.swap || this.stopped) return;
+    const p = await this.swap.nearPerCoin();
+    if (p === null) return;
+    const shown = (v: number | null) => (v === null ? '' : v.toPrecision(4));
+    const moved = shown(p) !== shown(this.swapPrice);
+    this.swapPrice = p;
+    if (!moved || !this.publicConfig) return;
+    this.publicConfig = this.makePublicConfig();
+    this.broadcast({ t: 'config', config: this.publicConfig });
+  }
+
+  /** GET /api/swap/quote: what NEAR buys or coins sell for now (cached a few seconds); refusals with their code. */
+  async swapQuote(q: URLSearchParams): Promise<SwapQuote> {
+    if (!this.swap) throw new GameError('swap_off', 'buying coins with NEAR is not on here', 404);
+    try {
+      return await this.swap.quote(parseQuoteAsk(q, this.coinUnit));
+    } catch (e) {
+      if (e instanceof SwapError) throw new GameError(e.code, e.message, e.status);
+      log.warn(`swap quote: ${errMsg(e)}`);
+      throw new GameError('swap_unavailable', 'Rhea is not answering right now; try again in a moment', 502);
+    }
   }
 
   // =====================================================================================
@@ -370,6 +450,7 @@ export class Game implements BotHost {
       const opened = c.coinsOpen && !this.chainCfg.coinsOpen;
       this.chainCfg = c;
       this.coinUnit = c.coinUnit;
+      if (opened) await this.setupSwap(false);
       this.publicConfig = this.makePublicConfig();
       if (opened) log.info(`coins are open: ${c.token}, coin unit ${c.coinUnit}${this.cfg.launch && !this.launchOn() ? '; the launch banner is gone' : ''}`);
       if (JSON.stringify(this.publicConfig) !== before) this.broadcast({ t: 'config', config: this.publicConfig });
@@ -396,6 +477,7 @@ export class Game implements BotHost {
     this.stopped = true;
     if (this.housekeeping) clearInterval(this.housekeeping);
     if (this.configTimer) clearTimeout(this.configTimer);
+    if (this.swapTimer) clearInterval(this.swapTimer);
     for (const p of [...this.signReqs.values()]) p.resolve({ ok: false, error: 'the relay is stopping' });
     for (const ts of this.roundTimers.values()) ts.forEach(clearTimeout);
     for (const t of this.missTimers.values()) clearTimeout(t);
@@ -2377,16 +2459,19 @@ export class Game implements BotHost {
    */
   async walletInfo(account: string): Promise<WalletInfo> {
     if (!this.chainCfg.coinsOpen) return { accountId: account, coinsOpen: false, tokenId: this.chain.tokenId, tokenRegistered: false, storageDeposit: '0', walletBalance: '0' };
-    const [st, bal] = await Promise.all([
+    const [st, bal, swap] = await Promise.all([
       this.chain.tokenStorage(account),
       this.chain.tokenBalance(account).catch((e) => {
         log.warn(`ft_balance_of ${account}: ${errMsg(e)}`);
         return null;
       }),
+      // v1.12: a buy with NEAR is built from the account's NEAR, its wrap registration and its wNEAR
+      this.swap ? swapWallet((c, m, a) => this.chain.view(c, m, a), (a) => this.chain.nearBalance(a), this.swap.pool.wrapId, account) : Promise.resolve({}),
     ]);
     return {
       accountId: account, coinsOpen: true, tokenId: this.chain.tokenId, tokenRegistered: st.registered, storageDeposit: st.minDeposit,
       ...(bal === null ? {} : { walletBalance: bal.toString() }),
+      ...swap,
     };
   }
 
