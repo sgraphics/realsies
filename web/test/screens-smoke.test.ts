@@ -385,9 +385,10 @@ try {
   render(h(Hud, { store: gs, kind: 'lobby', guest: true, onSignIn: () => signIns++ }), root as unknown as Element);
   await sleep(30);
   const ht = root.textContent;
-  ok(/Sign in/.test(ht) && !/Results|Rating|Coins|Deposit/.test(ht) && /TESTNET/.test(ht), 'the HUD of a guest: Sign in where the coins and rating are, no results');
-  click(findButton(root as never, /Sign in/));
-  ok(signIns === 1, 'tapping Sign in opens the prompt');
+  // while the free practice chat is the visitor's, the button says "Play free" ("Sign in" reads as a wall to a newcomer)
+  ok(/Play free|Sign in/.test(ht) && !/Results|Rating|Coins|Deposit/.test(ht) && /TESTNET/.test(ht), 'the HUD of a guest: Play free or Sign in where the coins and rating are, no results');
+  click(findButton(root as never, /Play free|Sign in/));
+  ok(signIns === 1, 'tapping it opens the prompt');
   render(null, root as unknown as Element);
   // the terms are accepted now: a tap goes straight to the sign-in; on testnet the wallet and the six test players
   render(h(LoginModal, { key: 'testnet', store: gs, onConsent() {}, onClose() {} }), root as unknown as Element);

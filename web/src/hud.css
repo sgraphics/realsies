@@ -263,6 +263,9 @@ html.kit .hud .hud-signin { padding: 0 calc(var(--upx) * 2 + 8px); }
 .world-center > *, .world-top > * { pointer-events: auto; }
 .world-note { max-width: 92%; text-align: center; }
 .world-note .px-title { margin-top: 6px; }
+/* a guest's one instruction, over the room right under the HUD: slim, one line, never over a character */
+.guest-hint { margin: 4px 8px 0; padding: 4px 12px; white-space: nowrap; font-size: 15px; line-height: 1.2; color: var(--px-yellow, #fee761); pointer-events: none !important; }
+@media (max-width: 480px) { .guest-hint { margin-top: 2px; font-size: 13px; padding: 2px 8px; } }
 
 /* gamertag tags beneath the pedestals */
 .tag-slot { display: flex; align-items: flex-start; justify-content: center; pointer-events: none !important; }

@@ -18,7 +18,7 @@ import { MockNearAi } from '../src/nearai/client.js';
 import { WsClient } from './client.js';
 
 const TOKEN = '7012345678:AAF-secret_token_value_0123456789xyz';
-const SETTINGS: TelegramSettings = { token: TOKEN, chat: '@realsieslol', minChats: 3, minPlayers: 2 };
+const SETTINGS: TelegramSettings = { token: TOKEN, chat: '@realsieslol', minChats: 3, minPlayers: 2, own: [] };
 const SITE = 'https://realsies.lol';
 const MIN = 60_000;
 const H = 60 * MIN;
@@ -56,7 +56,7 @@ async function captureLogs<T>(f: () => Promise<T>): Promise<{ value: T; lines: s
   }
 }
 
-const STATS: RoundStats = { roundId: 7, chats: 12, players: 5, rightCalls: 7, fooledPlayers: 4, bestFooler: 'Paige', humanChats: 2, coinsMoved: 310 };
+const STATS: RoundStats = { roundId: 7, chats: 12, players: 5, outsidePlayers: 5, rightCalls: 7, fooledPlayers: 4, bestFooler: 'Paige', humanChats: 2, coinsMoved: 310 };
 
 // ---------- settings ----------
 
@@ -65,6 +65,7 @@ test('settings: Telegram is off unless both the token and the chat are set; bad 
   assert.equal(telegramFromEnv({ TELEGRAM_BOT_TOKEN: TOKEN }), undefined, 'no chat: off');
   assert.equal(telegramFromEnv({ TELEGRAM_CHAT: '@realsieslol' }), undefined, 'no token: off');
   assert.deepEqual(telegramFromEnv({ TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT: '@realsieslol' }), SETTINGS, 'defaults: 3 chats by 2 players');
+  assert.deepEqual(telegramFromEnv({ TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT: '@realsieslol', TELEGRAM_OWN_ACCOUNTS: 'owner.near, second.near' })?.own, ['owner.near', 'second.near'], 'the accounts of the owner');
   assert.deepEqual(telegramFromEnv({ TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT: '-1001234567890', TELEGRAM_MIN_CHATS: '5', TELEGRAM_MIN_PLAYERS: '3' }), { ...SETTINGS, chat: '-1001234567890', minChats: 5, minPlayers: 3 });
   const bad = 'not-a-token-' + TOKEN.slice(12);
   assert.throws(() => telegramFromEnv({ TELEGRAM_BOT_TOKEN: bad, TELEGRAM_CHAT: '@realsieslol' }), (e: Error) => /TELEGRAM_BOT_TOKEN does not look like a bot token/.test(e.message) && !e.message.includes(bad));
@@ -149,7 +150,7 @@ test('a round\'s counts: started chats once each, different players, right calls
     play('h-c9', null, true, 20, 20n * COIN), // unassigned, refunded
   ];
   const st = roundStats(7, sides, chars, plays, COIN);
-  assert.deepEqual(st, { roundId: 7, chats: 5, players: 3, rightCalls: 2, fooledPlayers: 3, bestFooler: 'Paige', humanChats: 1, coinsMoved: 104 });
+  assert.deepEqual(st, { roundId: 7, chats: 5, players: 3, outsidePlayers: 3, rightCalls: 2, fooledPlayers: 3, bestFooler: 'Paige', humanChats: 1, coinsMoved: 104 });
   // a tie for the most players fooled: nobody is named; a bot without a card (an AI builder's) never is
   const tie = roundStats(7, sides.filter((s) => s.chatId !== 'c2'), chars, [], COIN);
   assert.equal(tie.bestFooler, undefined);
@@ -169,10 +170,10 @@ test('the round\'s message: plain short lines, only the numbers above zero, no p
       'The next round is open: https://realsies.lol',
     ].join('\n'),
   );
-  const thin = roundMessage({ roundId: 8, chats: 3, players: 2, rightCalls: 0, fooledPlayers: 0, humanChats: 0, coinsMoved: 0 }, SITE, false);
+  const thin = roundMessage({ roundId: 8, chats: 3, players: 2, outsidePlayers: 2, rightCalls: 0, fooledPlayers: 0, humanChats: 0, coinsMoved: 0 }, SITE, false);
   assert.equal(thin, ['Round 8 on Realsies is settled.', '3 chats by 2 players.', 'Play at https://realsies.lol'].join('\n'));
   assert.doesNotMatch(thin, /\b0\b/, 'no zero anywhere');
-  const one = roundMessage({ roundId: 9, chats: 3, players: 2, rightCalls: 1, fooledPlayers: 1, humanChats: 1, coinsMoved: 1 }, SITE, true);
+  const one = roundMessage({ roundId: 9, chats: 3, players: 2, outsidePlayers: 2, rightCalls: 1, fooledPlayers: 1, humanChats: 1, coinsMoved: 1 }, SITE, true);
   assert.match(one, /1 call was right\./);
   assert.match(one, /Bots fooled 1 player\.\n/);
   assert.match(one, /1 chat was between two real people\./);
@@ -195,6 +196,7 @@ test('a round posts one message, only above both thresholds, never in test mode,
   assert.equal(tg.enabled, true);
   assert.equal(await tg.roundSettled({ ...STATS, chats: 2 }, true), 'quiet', 'two chats: below 3');
   assert.equal(await tg.roundSettled({ ...STATS, players: 1 }, true), 'quiet', 'one player: below 2');
+  assert.equal(await tg.roundSettled({ ...STATS, outsidePlayers: 0 }, true), 'quiet', 'only the accounts of the owner played: nothing to tell the channel');
   assert.equal(calls.length, 0);
   assert.equal(await tg.roundSettled(STATS, true), 'sent');
   assert.equal(calls.length, 1);

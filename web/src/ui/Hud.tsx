@@ -22,6 +22,7 @@ import { DevMenu } from '../screens/DevMenu.tsx';
 import { LaunchBanner } from './LaunchBanner.tsx';
 import { TestnetPanel } from './TestnetPanel.tsx';
 import { TuringBanner } from './TuringBanner.tsx';
+import { practiceOn, triedToday } from '../state/practice.ts';
 
 export type HudKind = 'lobby' | 'chat' | 'call' | 'who';
 
@@ -144,6 +145,7 @@ export function Hud(p: HudProps) {
   );
   const rating = <Stat area="rating" icon="star" k="Rating" v={me?.rating ?? '–'} title="Your rating" />;
 
+  const freeTry = !!p.guest && practiceOn(cfg) && !triedToday(cfg?.practice?.perDay);
   const menuBtn = (
     <button type="button" class="hud-cell px-btn hud-menu-btn" aria-expanded={menu} aria-haspopup="menu" title="Menu" onClick={() => setMenu(!menu)}>
       <MenuGlyph />
@@ -176,8 +178,9 @@ export function Hud(p: HudProps) {
         </div>
         {clock}
         {p.guest ? (
-          <button type="button" class="hud-cell px-btn primary hud-signin" title="Sign in to play" onClick={p.onSignIn}>
-            <Icon name="user" /><span class="hud-btn-label">Sign in</span>
+          // while the free practice chat is this visitor's, the button says so: "Sign in" reads as a wall to a newcomer
+          <button type="button" class="hud-cell px-btn primary hud-signin" title={freeTry ? 'Try one chat free, no wallet needed' : 'Sign in to play'} onClick={p.onSignIn}>
+            <Icon name={freeTry ? 'chat' : 'user'} /><span class="hud-btn-label">{freeTry ? 'Play free' : 'Sign in'}</span>
           </button>
         ) : (
           <>

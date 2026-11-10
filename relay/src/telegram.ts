@@ -23,6 +23,11 @@ export interface TelegramSettings {
   minChats: number;
   /** ... by at least this many different players */
   minPlayers: number;
+  /**
+   * The owner's own accounts (TELEGRAM_OWN_ACCOUNTS): a round or an hour that only they played posts nothing. The
+   * owner testing with two wallets is not "2 players" to the people reading the channel.
+   */
+  own: string[];
 }
 
 const TOKEN = /^\d{3,}:[A-Za-z0-9_-]{20,}$/;
@@ -48,7 +53,8 @@ export function telegramFromEnv(env: NodeJS.ProcessEnv): TelegramSettings | unde
   if (!token || !chat) return undefined;
   if (!TOKEN.test(token)) throw new Error('TELEGRAM_BOT_TOKEN does not look like a bot token from @BotFather (digits, a colon, then letters and digits)');
   if (!CHAT.test(chat)) throw new Error(`TELEGRAM_CHAT must be a public channel or group as @name, or a numeric chat id (got ${chat})`);
-  return { token, chat, minChats, minPlayers };
+  const own = (env.TELEGRAM_OWN_ACCOUNTS ?? '').split(/[\s,]+/).map((a) => a.trim()).filter(Boolean);
+  return { token, chat, minChats, minPlayers, own };
 }
 
 // ---------- what a round did ----------
@@ -60,6 +66,8 @@ export interface RoundStats {
   chats: number;
   /** different players in them */
   players: number;
+  /** of those, the ones that are not the owner's own accounts */
+  outsidePlayers: number;
   /** calls that were right */
   rightCalls: number;
   /** different players who called a bot human */
@@ -73,7 +81,7 @@ export interface RoundStats {
 }
 
 /** A settled round's counts from the relay's records and the chain's plays (pure). */
-export function roundStats(roundId: number, sides: ChatSide[], characters: CharacterRec[], plays: ChainPlay[], coinUnit: bigint): RoundStats {
+export function roundStats(roundId: number, sides: ChatSide[], characters: CharacterRec[], plays: ChainPlay[], coinUnit: bigint, own: ReadonlySet<string> = new Set()): RoundStats {
   // a chat that never started (no bot could talk, or the round closed first) is no chat
   const started = sides.filter((s) => s.startedAt !== undefined && !s.aborted);
   const players = new Set(started.map((s) => s.viewer));
@@ -101,6 +109,7 @@ export function roundStats(roundId: number, sides: ChatSide[], characters: Chara
     roundId,
     chats: new Set(started.map((s) => s.convId)).size,
     players: players.size,
+    outsidePlayers: [...players].filter((p) => !own.has(p)).length,
     rightCalls,
     fooledPlayers: fooled.size,
     ...(bestFooler ? { bestFooler } : {}),
@@ -192,20 +201,26 @@ export class Telegram {
     if (this.o.testMode) return 'telegram: TELEGRAM_* is set, but a relay in test mode never posts';
     return (
       `telegram: round summaries${this.o.turingHour ? ' and the end of Turing Hour' : ''} go to ${this.s.chat} ` +
-      `when at least ${this.s.minChats} chats by ${this.s.minPlayers} players`
+      `when at least ${this.s.minChats} chats by ${this.s.minPlayers} players${this.s.own.length ? `, one of them not the owner's (${this.s.own.join(', ')})` : ''}`
     );
   }
 
-  private enough(chats: number, players: number): boolean {
-    return !!this.s && chats >= this.s.minChats && players >= this.s.minPlayers;
+  /** The owner's own accounts, for roundStats. */
+  get own(): ReadonlySet<string> {
+    return new Set(this.s?.own ?? []);
+  }
+
+  /** Enough chats by enough players, and at least one of them not the owner. */
+  private enough(chats: number, players: number, outside: number): boolean {
+    return !!this.s && chats >= this.s.minChats && players >= this.s.minPlayers && outside >= 1;
   }
 
   /** A round settled and its results are stored: one summary, if real players played enough. Never throws. */
   async roundSettled(st: RoundStats, nextOpen: boolean): Promise<PostOutcome> {
     try {
       if (!this.enabled) return 'off';
-      if (!this.enough(st.chats, st.players)) {
-        log.debug(`round ${st.roundId}: ${st.chats} chats by ${st.players} players, below the threshold; nothing posted`);
+      if (!this.enough(st.chats, st.players, st.outsidePlayers)) {
+        log.info(`round ${st.roundId}: ${st.chats} chats by ${st.players} players (${st.outsidePlayers} not the owner's), below the threshold; nothing posted`);
         return 'quiet';
       }
       return await this.post(`telegram_round:${st.roundId}`, `round ${st.roundId}`, roundMessage(st, this.o.siteUrl, nextOpen));
@@ -244,7 +259,8 @@ export class Telegram {
       const t = this.tally();
       const chats = t?.start === h.start ? t.chats : 0;
       const players = t?.start === h.start ? t.players.length : 0;
-      if (!this.enough(chats, players)) {
+      const outside = t?.start === h.start ? t.players.filter((p) => !this.own.has(p)).length : 0;
+      if (!this.enough(chats, players, outside)) {
         this.kv.setKv(key, JSON.stringify({ state: 'quiet', at: now, chats, players }));
         log.info(`Turing Hour of ${key.slice(-10)}: ${chats} chats by ${players} players, below the threshold; nothing posted`);
         return 'quiet';

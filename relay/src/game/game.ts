@@ -1331,7 +1331,7 @@ export class Game implements BotHost {
       throw e;
     }
     for (const [account, amt] of out.lockedBonusAdded) log.info(`round ${r.id}: ${account} earned a locked Turing bonus of ${unitsToCoins(amt, this.coinUnit)} coins (held by promo)`);
-    return roundStats(r.id, sides, characters, chainPlays, this.coinUnit);
+    return roundStats(r.id, sides, characters, chainPlays, this.coinUnit, this.telegram.own);
   }
 
   /** Drop a settled round from memory; the DB keeps everything. */
