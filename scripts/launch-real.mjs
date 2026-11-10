@@ -248,11 +248,30 @@ async function ensurePool() {
     p = await until('pool created', () => view(DEX, 'get_pool', { pool_id: POOL_ID }));
   }
   if (p.point_delta !== DELTA) die(`the pool's point_delta is ${p.point_delta}, expected ${DELTA}`);
-  if (BigInt(p.total_liquidity ?? '0') === 0n && p.current_point !== INIT) {
-    die(`the pool ${POOL_ID} exists at point ${p.current_point}, not ${INIT}: someone else created it. Use another FEE (10000, 400) or adjust the start price so the position starts above ${p.current_point}.`);
-  }
+  // an empty pool's price is nobody's: a stop-point swap moves it for free (tested on testnet), so a point that is
+  // not ours is no harm; the liquidity step moves it back under the position right before the tokens go in
+  if (BigInt(p.total_liquidity ?? '0') === 0n && p.current_point !== INIT) note(`the empty pool sits at point ${p.current_point}, not ${INIT}; the liquidity step moves it first`);
   ok(`pool ${POOL_ID} at point ${p.current_point}`);
   return true;
+}
+
+/**
+ * The empty pool back under the position. Anyone can push an empty pool's point with a SwapByStopPoint (it costs
+ * nothing: no liquidity, nothing is swapped); the same call from the token side brings it down to INIT again.
+ */
+async function pointUnderPosition() {
+  let p = await view(DEX, 'get_pool', { pool_id: POOL_ID });
+  if (p.current_point < LEFT) return p;
+  if (BigInt(p.total_liquidity ?? '0') !== 0n) die(`the pool is at point ${p.current_point} and somebody else has liquidity in it: a token-only position from ${LEFT} is not possible as it stands. Look at get_pool and list the positions before going on.`);
+  if ((await balanceOf(LP)) < 10n ** 18n) die(`the empty pool is at point ${p.current_point}; moving it needs one token in ${LP}'s wallet, and it holds none (withdraw_asset one from the pool contract, then run again)`);
+  await ensureGasMoney(LP, 250);
+  call(TOKEN, 'ft_transfer_call', { receiver_id: DEX, amount: (10n ** 18n).toString(), msg: JSON.stringify({ SwapByStopPoint: { pool_id: POOL_ID, stop_point: INIT, skip_unwrap_near: true } }) }, { as: LP, gas: '250', deposit: '1 yoctoNEAR' }, `move the empty pool from point ${p.current_point} back to ${INIT}`);
+  for (let i = 0; i < 10; i++) {
+    await sleep(1500);
+    p = await view(DEX, 'get_pool', { pool_id: POOL_ID });
+    if (p.current_point < LEFT) return p;
+  }
+  die(`the pool is still at point ${p.current_point}`);
 }
 
 async function stepPool() {
@@ -309,6 +328,8 @@ async function stepLiquidity() {
     }
   }
   const inDex = async () => BigInt(((await view(DEX, 'list_user_assets', { account_id: LP })) ?? {})[TOKEN] ?? '0');
+  // while the tokens are still in the wallet: the pool's point must be under the position
+  await pointUnderPosition();
   let held = await inDex();
   if (held < POOL_AMT) {
     const lpBal = await balanceOf(LP);
@@ -324,8 +345,8 @@ async function stepLiquidity() {
   }
   ok(`the pool contract holds ${tokens(held)} for ${LP}`);
   const p = await view(DEX, 'get_pool', { pool_id: POOL_ID });
-  if (p.current_point >= LEFT) die(`the pool is at point ${p.current_point}, not below ${LEFT}: a token-only position is not possible there`);
-  const args = { pool_id: POOL_ID, left_point: LEFT, right_point: RIGHT, amount_x: POOL_AMT.toString(), amount_y: '0' };
+  if (p.current_point >= LEFT) die(`the pool moved to point ${p.current_point} while the tokens were being deposited: a token-only position is not possible there. The tokens are safe in the pool contract for ${LP}; take one out with withdraw_asset and run this step again.`);
+  const args ={ pool_id: POOL_ID, left_point: LEFT, right_point: RIGHT, amount_x: POOL_AMT.toString(), amount_y: '0' };
   const pre = await view(DEX, 'predict_add_liquidity', args);
   if (!pre) die(`the preview failed: ${await viewError(DEX, 'predict_add_liquidity', args)}`);
   if (pre.need_y !== '0') die(`the preview wants ${pre.need_y} wNEAR: the position would not be token-only`);
