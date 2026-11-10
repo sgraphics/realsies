@@ -4,7 +4,7 @@
 //   --dashboard copies them into .bl0x/topics/near-hackathon/promo/.
 //     turing-hour-tonight   "TURING HOUR", "Tonight 20:00 UTC"       the day's first announcement
 //     turing-hour           "TURING HOUR", "Every day 20:00 UTC"     any day
-//     turing-hour-now       "TURING HOUR", "Real people are here now" at the start of the hour
+//     turing-hour-now       "TURING HOUR", "Live now"                 at the start of the hour (a longer line runs into the emblem)
 //     free-chat             "FREE CHAT", "No wallet needed"           the free practice chat
 //     real-live             "$REAL LIVE", "Play coins. Win coins."    REAL is live
 
@@ -33,7 +33,7 @@ const turing = (tagline: string): LiveOpts => ({ trio, stamp: [], tagline, url: 
 const cards: [string, LiveOpts][] = [
   ['turing-hour-tonight', turing('Tonight 20:00 UTC')],
   ['turing-hour', turing('Every day 20:00 UTC')],
-  ['turing-hour-now', turing('Real people are here now')],
+  ['turing-hour-now', turing('Live now')],
   ['free-chat', card([['FREE', 4], ['CHAT', 4]], 'No wallet needed')],
   ['real-live', card([['$REAL', 3], ['LIVE', 4]], 'Play coins. Win coins.')],
 ];
