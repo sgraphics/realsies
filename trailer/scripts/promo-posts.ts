@@ -26,12 +26,14 @@ mkdirSync(OUT, { recursive: true });
 const seeds = lobbySeeds();
 const trio = { left: seeds[END_SEATS.left], mid: castLook(CAST.guest), right: seeds[END_SEATS.right] };
 const card = (stamp: [string, number][], tagline: string): LiveOpts => ({ trio, stamp: stamp.map(([text, fk]) => ({ text, fk })), tagline, url: URL_TEXT });
+// Turing Hour has its own mark, a round clock dial in the cool colours, so nobody takes it for the LIVE stamp
+const turing = (tagline: string): LiveOpts => ({ trio, stamp: [], tagline, url: URL_TEXT, emblem: 'dial' });
 
 // the stamp sits where LIVE NOW sits: its widest line must not be wider than "LIVE" at 4, or the wide card clips it
 const cards: [string, LiveOpts][] = [
-  ['turing-hour-tonight', card([['TURING', 2], ['HOUR', 4]], 'Tonight 20:00 UTC')],
-  ['turing-hour', card([['TURING', 2], ['HOUR', 4]], 'Every day 20:00 UTC')],
-  ['turing-hour-now', card([['TURING', 2], ['HOUR', 4]], 'Real people are here now')],
+  ['turing-hour-tonight', turing('Tonight 20:00 UTC')],
+  ['turing-hour', turing('Every day 20:00 UTC')],
+  ['turing-hour-now', turing('Real people are here now')],
   ['free-chat', card([['FREE', 4], ['CHAT', 4]], 'No wallet needed')],
   ['real-live', card([['$REAL', 3], ['LIVE', 4]], 'Play coins. Win coins.')],
 ];

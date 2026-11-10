@@ -16,6 +16,8 @@ export interface LiveOpts {
   stamp: { text: string; fk: number }[];
   tagline: string;
   url: string;
+  /** 'dial': the round Turing Hour emblem instead of the gold stamp (the stamp's lines are not used then). */
+  emblem?: 'dial';
 }
 
 // ---------------------------------------------------------------- the stamp
@@ -81,6 +83,55 @@ function stamp(out: Rgba, lines: { text: string; fk: number }[], cx: number, cy:
   blitK(out, r, x, y, o.k);
 }
 
+// ---------------------------------------------------------------- the Turing Hour emblem
+
+/**
+ * Turing Hour's own mark, unlike the gold stamp at a glance: round, in the cool colours, a clock dial with twelve
+ * ticks and the words inside. `r` is its radius in emblem pixels.
+ */
+function dialSprite(r: number): Rgba {
+  const d = 2 * r + 1, c = r;
+  const b = createBuffer(d, d);
+  const disc = (rad: number, col: Color) => {
+    for (let y = 0; y < d; y++) for (let x = 0; x < d; x++) if ((x - c) * (x - c) + (y - c) * (y - c) <= rad * rad) px(b, x, y, col);
+  };
+  disc(r, P.black);
+  disc(r - 2, P.cyan);
+  disc(r - 7, P.blueDark);
+  disc(r - 9, P.navyDark);
+  // the dial: the four quarter ticks long, white and two wide, the eight between them short and grey
+  for (let i = 0; i < 12; i++) {
+    const a = (i * Math.PI) / 6, main = i % 3 === 0;
+    for (let t = 0; t < (main ? 7 : 4); t++) {
+      const rr = r - 11 - t;
+      const x = Math.round(c + Math.sin(a) * rr), y = Math.round(c - Math.cos(a) * rr);
+      px(b, x, y, main ? P.white : P.grey);
+      if (main) for (const [ax, ay] of [[1, 0], [0, 1], [1, 1]]) px(b, x + ax, y + ay, P.white);
+    }
+  }
+  const lines: [string, number, Color][] = [['TURING', 2, P.white], ['HOUR', 3, P.cyan]];
+  const GAP = 6;
+  let y = c - Math.round((lines.reduce((h, l) => h + 7 * l[1], 0) + GAP * (lines.length - 1)) / 2) + 1;
+  for (const [text, k, col] of lines) {
+    const x = c - Math.round((textW(text) * k) / 2);
+    // inked one pixel bolder, like the stamp's lettering
+    drawText(b, text, x, y, { color: col, scale: k });
+    drawText(b, text, x + 1, y, { color: col, scale: k });
+    y += 7 * k + GAP;
+  }
+  return b;
+}
+
+/** The card's mark: the gold stamp, or the round dial for Turing Hour (tilted the other way). */
+function mark(out: Rgba, o: LiveOpts, cx: number, cy: number, dialR: number): void {
+  if (o.emblem !== 'dial') return stamp(out, o.stamp, cx, cy, { k: 3, deg: -10 });
+  const k = 3;
+  const r = rotate(dialSprite(dialR), (7 * Math.PI) / 180);
+  const x = even(cx - (r.w * k) / 2), y = even(cy - (r.h * k) / 2);
+  blitK(out, r, x + 3 * k, y + 3 * k, k, { tint: P.black });
+  blitK(out, r, x, y, k);
+}
+
 // ---------------------------------------------------------------- the two cards
 
 const TAG = (scale: number) => ({ color: P.white, scale, outline: P.black });
@@ -99,7 +150,7 @@ export function live(out: Rgba, o: LiveOpts): void {
   crest(out, { k: K, top: 160, cx: BW / 2 });
   logo(out, lx, ly, lk);
   drawTextC(out, o.tagline, out.w / 2, tagY, TAG(tagS));
-  stamp(out, o.stamp, 1716, 222, { k: 3, deg: -10 });
+  mark(out, o, 1716, 222, 62);
   url(out, o.url, out.w / 2, 990, 9);
 }
 
@@ -114,6 +165,6 @@ export function liveSquare(out: Rgba, o: LiveOpts): void {
   crest(out, { k: K, top: 160, cx: BW / 2, litHalf: 40 });
   logo(out, lx, ly, lk);
   drawTextC(out, o.tagline, out.w / 2, tagY, TAG(tagS));
-  stamp(out, o.stamp, out.w / 2, 524, { k: 3, deg: -10 });
+  mark(out, o, out.w / 2, 524, 56);
   url(out, o.url, out.w / 2, 990, 9);
 }
