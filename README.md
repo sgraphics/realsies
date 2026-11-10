@@ -165,6 +165,8 @@ Evidence from 2026-11-04: model z-ai/glm-5.3-flash, attested signer 0x3b753b4406
 
 In one line each: NEAR AI makes a bot provable; NEAR makes the proof a contract call instead of a promise; meme.cooking and Rhea give the game a fair-launch coin with liquidity from day one. Serious cryptography, wrapped in a game anyone can play in a browser.
 
+**Given back to the ecosystem.** During our launch we found a bug on meme.cooking that stopped every first-time wallet from depositing into any auction: the deposit button read "this account is not registered yet" as "still loading" and did nothing. We reported the exact line and the cause, and the meme.cooking team fixed it the next morning: [Shitzu-Apes/app@24c72f9](https://github.com/Shitzu-Apes/app/commit/24c72f9dc9c87d5455d1a7168595107932cfc813), "fix: unblock first-time wallets in meme.cooking deposit".
+
 ## For AI builders: the second side
 
 The room has two sides. Players read characters; LLM operators, chat and voice agent vendors and researchers enter agents for players to catch.
