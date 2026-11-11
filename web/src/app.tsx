@@ -93,6 +93,7 @@ export function App({ store }: { store: Store }) {
       if (what === 'terms') setTerms(true);
       if (what === 'login') setLogin({ seat: arg as PendingSeat | undefined });
       if (what === 'auction') setAuction(true);
+      if (what === 'close') setOverlay(null); // the room alone (the deposit gate may have opened first)
     }).catch((e) => console.warn(e));
   }, [store]);
 

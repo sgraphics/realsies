@@ -41,8 +41,10 @@
 //   &as=sam&qa=swap&near=0.5       the coins dialog, 0.5 NEAR typed and its quote (&game=120&withdraw=40: coins in the
 //                                  game and 40 typed to withdraw as NEAR; &wcoins=98: coins in the wallet itself)
 //   &as=sam&qa=swap-done           a buy of 0.25 NEAR (&buy=) in the open dialog: done; &nowait=1 a wallet that sends
-//                                  the batch at once (the coins wait in the wallet); &moved=1 the price moved past it
+//                                  the batch at once (the coins wait in the wallet); &moved=1 the price moved past it;
+//                                  &wait=1 the wallet never answers the buy ("Approve in your wallet.", after &game=)
 //   &as=sam&qa=swap-sold&game=120  40 coins (&sell=) withdrawn as NEAR
+//   &room=1                        (any swap step) no dialog: the room, its HUD with the coins (after the buy, if any)
 // The launch (?mock=1&launch=soon|auction|finalizing): the coming-soon page, then the game with its auction banner; see src/net/index.ts.
 // Turing Hour (protocol v1.13, &turing=soon|on): the line above the room 3 h 12 min before the hour, or during it.
 // Only active together with ?mock=1.
@@ -55,6 +57,7 @@ import { isCounting } from './state/countdown.ts';
 import { EVIDENCE_CHAT_ID } from './net/mock/evidence.ts';
 import { mockLaunchOf } from './launch/phase.ts';
 import { parseNear } from './state/near.ts';
+import type { MockWallet } from './wallet/mock.ts';
 
 export interface QaPlan {
   step: string;
@@ -211,7 +214,9 @@ export async function runQa(store: Store, search: string, open: (what: string, a
     if (wcoins > 0) await store.client.faucetToWallet?.(wcoins);
     await store.actions.refreshWalletInfo();
     store.actions.resetFlow('walletTx');
-    open('deposit', { near: q.get('near') ?? undefined, withdraw: q.get('withdraw') ?? undefined, prefill: q.get('dep') ?? undefined });
+    if (q.get('wait') === '1') (store.wallet as MockWallet).o.hold = 'tx';
+    if (q.get('room') === '1') open('close');
+    else open('deposit', { near: q.get('near') ?? undefined, withdraw: q.get('withdraw') ?? undefined, prefill: q.get('dep') ?? undefined });
     await new Promise((r) => setTimeout(r, 400));
     if (plan.step === 'swap-done') await store.actions.swapBuy(parseNear(q.get('buy') ?? '0.25') ?? 0n);
     if (plan.step === 'swap-sold') await store.actions.swapSell(Number(q.get('sell') ?? 40));
