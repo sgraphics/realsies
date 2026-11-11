@@ -24,3 +24,6 @@ art/out/
 trailer/out/
 .bl0x/topics/near-hackathon/how-you-win/*.mp4
 .bl0x/topics/near-hackathon/post-kit/**/*.mp4
+
+# worktrees of helper sessions
+.claude/
