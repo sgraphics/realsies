@@ -296,6 +296,12 @@ export function Hud(p: HudProps) {
             <button type="button" class="px-btn small hud-menu-item" onClick={() => { setMenu(false); p.onTerms?.(); }}>
               <Icon name="shield" /> Terms
             </button>
+            {/* the coin's own page (mainnet): the token's contract, its fixed supply, where the 80% and the team's 20% sit */}
+            {kind === 'lobby' && !testnet && cfg?.coinsOpen && (
+              <a class="px-btn small hud-menu-item" href="/token.html" target="_blank" rel="noopener" onClick={() => setMenu(false)}>
+                <Icon name="coin" /> About $REAL
+              </a>
+            )}
             {kind === 'lobby' && walletAccount && (
               <button type="button" class="px-btn small hud-menu-item" title={walletAccount} onClick={() => { setMenu(false); p.onSignOut?.(); }}>
                 <Icon name="user" /> Sign out ({shortAccount})

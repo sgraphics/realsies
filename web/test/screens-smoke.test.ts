@@ -293,7 +293,7 @@ try {
   render(h(WalletSignInPanel, { store: ws }), root as unknown as Element);
   await sleep(20);
   const si = root.textContent;
-  ok(/Sign in with a NEAR wallet/.test(si) && /no transaction, no gas/.test(si) && /Get a wallet/.test(si), 'sign-in panel: the button, free to play, get a wallet: ' + si.slice(0, 90));
+  ok(/Sign in with a NEAR wallet/.test(si) && /no transaction, no gas/.test(si) && /Pick Meteor or Intear in the list/.test(si), 'sign-in panel: the button, free to play, which wallet a newcomer picks: ' + si.slice(0, 90));
   // a tap before the challenge came: "Preparing…" on the button (off), Cancel next to it
   const prc = new MockGameClient({ wallet: true, storageKey: null, timeScale: 0.02 });
   (prc as { authChallenge: unknown }).authChallenge = () => new Promise(() => {});

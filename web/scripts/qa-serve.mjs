@@ -3,13 +3,14 @@
 // CSS px. Headless Chrome on Windows will not make a window narrower than 500 px and takes the
 // window frame off the viewport, so phone sizes are emulated by the iframe (its own viewport,
 // media queries and devicePixelRatio), and the screenshot is cropped to w x h afterwards.
-// usage: node scripts/qa-serve.mjs [port=5173]
+// usage: [QA_ROOT=qa-out/dist2] node scripts/qa-serve.mjs [port=5173]
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'dist');
+// QA_ROOT: another build folder (for example a second build next to one that is being photographed), relative to web/
+const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', process.env.QA_ROOT || 'dist');
 const port = Number(process.argv[2] ?? process.env.QA_PORT ?? 5173);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.mp4': 'video/mp4' };
 const FRAME = `<!doctype html><html><head><meta charset="utf-8"><title>qa frame</title>

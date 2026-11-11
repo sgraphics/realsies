@@ -6,8 +6,6 @@ import type { Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 
-export const GET_A_WALLET_URL = 'https://wallet.near.org';
-
 /**
  * The sign-in panel: one button, then "waiting for your wallet", "checking", or what went wrong and "Try again".
  * `secondary`: next to the free practice chat (protocol v1.14), which is the green choice, so its button is the plain one.
@@ -54,7 +52,9 @@ export function WalletSignInPanel(p: { store: Store; tight?: boolean; secondary?
         <li><Icon name="coin" /><span>Coins later, with one wallet approval.</span></li>
       </ul>
       <div class="px-row between signin-foot">
-        <span class="px-dim">New to NEAR? <a class="px-link" href={GET_A_WALLET_URL} target="_blank" rel="noreferrer">Get a wallet <Icon name="link" /></a></span>
+        {/* the list's Meteor and Intear are web wallets: a newcomer needs no extension and no app (2026-11-11: visitors with
+            an exchange's wallet got stuck, and "Get a wallet" sent them to a directory) */}
+        <span class="px-dim">No NEAR wallet yet? Pick Meteor or Intear in the list: they open in your browser, nothing to install.</span>
         {busy && <Button small kind="ghost" onClick={() => p.store.actions.resetFlow('signIn')}>Cancel</Button>}
       </div>
     </div>
