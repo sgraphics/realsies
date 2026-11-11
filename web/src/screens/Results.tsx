@@ -10,6 +10,8 @@ import { botmasterOf, coins2, fmtCoins, fmtPct, fmtSigned, shortHash, txUrl } fr
 import { Button, Coins, Icon, Panel } from '../ui/kit.tsx';
 import { CharacterCanvas } from '../ui/CharacterCanvas.tsx';
 import { PersonaReveal } from '../ui/PersonaCard.tsx';
+import { ShareButton } from '../ui/ShareButton.tsx';
+import { shareOutcome } from '../state/share.ts';
 
 export interface ResultsProps {
   store: Store;
@@ -25,6 +27,7 @@ function callWord(c: boolean | null): string {
 
 function ChatRow({ c, onVerify, presetLow }: { c: ChatResult; onVerify(id: string): void; presetLow: number }) {
   const verdict = c.right === null ? 'missed' : c.right ? 'right' : 'wrong';
+  const card = shareOutcome(c.truth, c.right);
   return (
     <li class={'px-result-row ' + verdict}>
       <div class="px-result-char">
@@ -46,6 +49,7 @@ function ChatRow({ c, onVerify, presetLow }: { c: ChatResult; onVerify(id: strin
           <span class={'px-badge ' + verdict}>
             {verdict === 'right' ? <Icon name="check" /> : verdict === 'wrong' ? <Icon name="cross" /> : <Icon name="clock" />} {verdict === 'right' ? 'Right' : verdict === 'wrong' ? 'Wrong' : 'Missed'}
           </span>
+          {card && <ShareButton small outcome={card} />}
         </div>
         <div class="px-row px-wrap px-small">
           {c.mode === 'paid' ? (

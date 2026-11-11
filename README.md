@@ -51,16 +51,17 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 - REAL coin, NEP-141
 - Rhea pool, locked
 
-## Status, 2026-11-10
+## Status, 2026-11-11
 
 | Part | State |
 |---|---|
 | Game on testnet | Live at https://testnet.realsies.lol: test users or a testnet wallet, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 137 |
 | AI builders side | Live: `/agents` (pitch and access request), `/agents/dashboard` (scorecards, transcripts, export, own NEAR AI key, persona requests), botmaster API, `docs/agents.md` |
 | Mainnet game | Live at https://realsies.lol: `game.realsies.near`, wallet sign-in, free play every day, and coins (REAL) since Nov 10. Turing Hour every day at 20:00 UTC, when real people are in the room |
-| REAL coin | `real.realsies.near`: a fixed supply of 1,000,000,000, no minting, and the token account has no keys. 800,000,000 sit in one Rhea pool position that started with no NEAR and whose account has no keys, so the liquidity cannot be taken out. 200,000,000 are the team's share in `vault.realsies.near` (`contracts/vault`, no owner): nothing before Nov 17, everything by Dec 8. Launched on Nov 10 at 15:00 UTC with `scripts/launch-real.mjs` after a full rehearsal on testnet: [token](https://nearblocks.io/address/real.realsies.near), [vault](https://nearblocks.io/address/vault.realsies.near), [liquidity account](https://nearblocks.io/address/liquidity.realsies.near), pool `real.realsies.near|wrap.near|2000` on `dclv2.ref-labs.near` |
+| REAL coin | `real.realsies.near`: a fixed supply of 1,000,000,000, no minting, and the token account has no keys. 800,000,000 sit in one Rhea pool position that started with no NEAR and whose account has no keys, so the liquidity cannot be taken out. 200,000,000 are the team's share in `vault.realsies.near` (`contracts/vault`, no owner): nothing before Nov 17, everything by Dec 8. Launched on Nov 10 at 15:00 UTC with `scripts/launch-real.mjs` after a full rehearsal on testnet: [token](https://nearblocks.io/address/real.realsies.near), [vault](https://nearblocks.io/address/vault.realsies.near), [liquidity account](https://nearblocks.io/address/liquidity.realsies.near), pool `real.realsies.near|wrap.near|2000` on `dclv2.ref-labs.near`. The facts with explorer links are at https://realsies.lol/token.html |
 | Free try | One practice chat without a wallet, on mainnet and testnet: always one of the house bots, the reveal right after the call, kept outside the rounds so it can never tell who is a bot in a running round (`relay/src/game/practice.ts`) |
-| Wallet sign-in | NEAR Connect: one NEP-413 signature to sign in, a browser function-call key for plays and calls without popups; live on mainnet and testnet |
+| Wallet sign-in | NEAR Connect: one NEP-413 signature to sign in, a browser function-call key for plays and calls without popups; live on mainnet and testnet. A brand-new wallet signs in before its account is on chain (an implicit account is let in by its own key until someone sends it NEAR) |
+| Share a call | After a reveal, "Share" opens a ready post (the share sheet on a phone, X elsewhere) with a link whose preview is the card for that outcome: "A bot fooled me", "I spotted the bot", "I found the human", "I took a human for a bot" (`web/src/state/share.ts`, `web/public/s/`) |
 | Coins for NEAR | Inside the game: pay NEAR and the coins are in the game after one wallet approval (wrap, swap on Rhea, deposit); withdraw coins as plain NEAR the same way. Players never visit an exchange (`web/src/wallet/swap.ts`, `relay/src/swap.ts`) |
 
 ## The problem

@@ -450,6 +450,46 @@ try {
   click(findButton(root as never, /^\s*Sign in$/));
   click(findButton(root as never, /^Back to room$/));
   ok(signIns2 === 1 && backs === 1, 'Sign in and Back to room do what they say');
+  // Share (growth plan P2): with no share sheet here, the post on X with the link to this outcome's card
+  const shareMod = await import('../src/state/share.ts');
+  const opened: string[] = [];
+  const win = globalThis as { open?: unknown };
+  const open0 = win.open;
+  win.open = (u: string) => {
+    opened.push(u);
+    return null;
+  };
+  click(findButton(root as never, /^ *Share$/));
+  await sleep(10);
+  win.open = open0;
+  ok(
+    opened.length === 1 && opened[0].startsWith('https://x.com/intent/post?') && opened[0].includes(encodeURIComponent('https://realsies.lol/s/fooled/')) && opened[0].includes(encodeURIComponent('A bot just fooled me')),
+    'Share after a fooled call: the post on X with the link to the fooled card',
+  );
+  ok(
+    shareMod.shareOutcome('bot', true) === 'spotted' && shareMod.shareOutcome('bot', false) === 'fooled' && shareMod.shareOutcome('human', true) === 'found' && shareMod.shareOutcome('human', false) === 'missed' && shareMod.shareOutcome('bot', null) === null,
+    'each call has its card; no call, no card',
+  );
+  ok(
+    shareMod.SHARE_OUTCOMES.every((o) => !/(^|[^a-z])(bet|stake|odds|wager|pool|market|price)([^a-z]|$)/i.test(shareMod.SHARE_TEXT[o] + ' ' + shareMod.SHARE_TITLE[o]) && shareMod.shareUrl(o).endsWith('/s/' + o + '/')),
+    'the share texts keep to the words of the game; the links end with a slash',
+  );
+  // a phone: the share sheet gets the text and the link; a sheet the player closes is no failure and opens no tab
+  const sheet: { text: string; url: string }[] = [];
+  const noTab = () => {
+    throw new Error('no tab on a phone');
+  };
+  const r1 = await shareMod.share('spotted', { navigator: { share: async (d) => void sheet.push(d) }, matchMedia: () => ({ matches: true }), open: noTab });
+  const r2 = await shareMod.share('spotted', {
+    navigator: {
+      share: async () => {
+        throw Object.assign(new Error('closed'), { name: 'AbortError' });
+      },
+    },
+    matchMedia: () => ({ matches: true }),
+    open: noTab,
+  });
+  ok(r1 === 'shared' && sheet.length === 1 && sheet[0].url === 'https://realsies.lol/s/spotted/' && r2 === 'cancelled', 'on a phone the share sheet gets the text and the link; closing it opens nothing');
   render(null, root as unknown as Element);
   prStore.actions.endPractice();
   // the try used: the line, the wallet only (and none when the prompt opens from the reveal itself)

@@ -8,6 +8,8 @@ import { FOOLED, INVITE, NO_CALL, REVEAL_TITLE, SPOTTED } from '../state/practic
 import { Button, Icon } from '../ui/kit.tsx';
 import { CharacterCanvas } from '../ui/CharacterCanvas.tsx';
 import { PersonaReveal } from '../ui/PersonaCard.tsx';
+import { ShareButton } from '../ui/ShareButton.tsx';
+import { shareOutcome } from '../state/share.ts';
 
 export function PracticeResultDialog(p: { store: Store; onSignIn(): void; onBack(): void }) {
   const s = useStore(p.store);
@@ -16,6 +18,8 @@ export function PracticeResultDialog(p: { store: Store; onSignIn(): void; onBack
   if (!pr || !r) return null;
   const skin = s.chat?.partner ?? pr.skin;
   const verdict = r.right === null ? 'missed' : r.right ? 'right' : 'wrong';
+  // a practice partner is always a bot: "I spotted the bot" or "A bot fooled me"; no card without a call
+  const card = shareOutcome('bot', r.right);
   return (
     <div class="scrim practice-scrim">
       <div class="modal narrow px-panel sheet-enter practice-result" role="dialog" aria-modal="true" aria-labelledby="practice-title">
@@ -40,6 +44,7 @@ export function PracticeResultDialog(p: { store: Store; onSignIn(): void; onBack
           <Button kind="primary" onClick={p.onSignIn}>
             <Icon name="shield" /> Sign in
           </Button>
+          {card && <ShareButton outcome={card} />}
           <Button onClick={p.onBack}>Back to room</Button>
         </div>
       </div>

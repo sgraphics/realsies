@@ -136,21 +136,25 @@ function mark(out: Rgba, o: LiveOpts, cx: number, cy: number, dialR: number): vo
 
 const TAG = (scale: number) => ({ color: P.white, scale, outline: P.black });
 
-/** 1920x1080: the end card's composition, the logo a step left so the stamp sits clear of it at the top right. */
+/**
+ * 1920x1080: the end card's composition, the logo a step left so the stamp sits clear of it at the top right. A wider
+ * buffer (the share cards are 2064 wide, 1.91:1) keeps the composition and gets more sky at both sides.
+ */
 export function live(out: Rgba, o: LiveOpts): void {
   const K = 6, BW = out.w / K;
+  const dx = even((out.w - 1920) / 2);
   const lk = 11, ly = 30, lx = even((out.w - LOGO_W * lk) / 2) - 40;
   const tagY = ly + LOGO_H * lk + 22, tagS = 10;
   const clear = [
     { x: 0, y: tagY - 24, w: out.w, h: 7 * tagS + 48 },
-    { x: 1480, y: 30, w: 440, h: 400 },
+    { x: 1480 + dx, y: 30, w: 440, h: 400 },
   ];
   blitK(out, sky({ w: out.w, h: out.h, k: K, sun: { x: BW / 2, y: 143 }, limb: { y: 141, cx: BW / 2 }, clear }), 0, 0, K);
-  new Trio(o.trio).draw(out, { cx: [560, 960, 1360], waist: 968, kMid: 17, kSide: 15 });
+  new Trio(o.trio).draw(out, { cx: [560 + dx, 960 + dx, 1360 + dx], waist: 968, kMid: 17, kSide: 15 });
   crest(out, { k: K, top: 160, cx: BW / 2 });
   logo(out, lx, ly, lk);
   drawTextC(out, o.tagline, out.w / 2, tagY, TAG(tagS));
-  mark(out, o, 1716, 222, 62);
+  mark(out, o, 1716 + dx, 222, 62);
   url(out, o.url, out.w / 2, 990, 9);
 }
 
