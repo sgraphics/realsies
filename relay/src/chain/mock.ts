@@ -156,6 +156,10 @@ export class MockChain implements ChainAdapter {
     this.addKey(accountId, publicKey, trusted.permission);
     return trusted;
   }
+  /** On the mock chain an account exists once a key has been put on it (it stays when its keys are deleted, as on NEAR). */
+  async accountExists(accountId: string): Promise<boolean> {
+    return this.keys.has(accountId);
+  }
   async viewAccessKey(accountId: string, publicKey: string, hint?: 'full' | 'play'): Promise<AccessKeyView | null> {
     const k = this.keyOf(accountId, publicKey, hint);
     if (!k) return null;

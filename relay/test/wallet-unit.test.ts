@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { KeyPairSigner, PublicKey, actions, baseDecode, baseEncode, createTransaction } from 'near-api-js';
-import { NEP413_TAG, decodeSignature, serializeNep413, signNep413, verifyNep413 } from '../src/auth/nep413.js';
+import { NEP413_TAG, decodeSignature, implicitAccountOf, serializeNep413, signNep413, verifyNep413 } from '../src/auth/nep413.js';
 import { AuthError, AuthService } from '../src/auth/service.js';
 import { checkSignedTx, signRequestOf, type ExpectedTx } from '../src/auth/tx.js';
 import { MockChain } from '../src/chain/mock.js';
@@ -100,6 +100,49 @@ test('sign-in: a full-access key signs the challenge; reused, unknown and expire
 
     await assert.rejects(auth.verify({ ...signChallenge(auth.challenge(), acct, fa), accountId: 'Not An Account' }), code('invalid_request'));
     await assert.rejects(auth.verify({ ...signChallenge(auth.challenge(), acct, fa), publicKey: 'secp256k1:abc' }), code('invalid_request'));
+  } finally {
+    close();
+  }
+});
+
+test("sign-in: a new wallet's implicit account signs in before it is on chain; once it is on chain its keys decide; no key can claim another key's account", async () => {
+  const chain = new MockChain();
+  chain.txLatencyMs = 0;
+  const { auth, close } = authOn(chain);
+  try {
+    const k = newKey();
+    const implicit = implicitAccountOf(k.publicKey);
+    assert.match(implicit, /^[0-9a-f]{64}$/);
+    assert.equal(implicitAccountOf('ed25519:8gcwPcHgqJn5voGWHwV9euvVFD6VjzvDCTh2RBJoUgeG'), '722818511d6d71e827ea7240e601770acfd0c18c9a36f36c8bc7f17ea99abf25', 'an example of the kind of account that was turned away on 2026-11-11');
+
+    // nobody has sent it NEAR: it is not on chain, and its own key signs in
+    assert.equal(await chain.accountExists(implicit), false);
+    const { session } = await auth.verify(signChallenge(auth.challenge(), implicit, k));
+    assert.equal(session.account, implicit);
+    assert.equal(session.signInKey, k.publicKey);
+
+    // another key cannot claim it, and a named account that is not on chain is nobody's
+    const other = newKey();
+    await assert.rejects(auth.verify(signChallenge(auth.challenge(), implicit, other)), code('key_not_found'), "another key, this key's account");
+    await assert.rejects(auth.verify(signChallenge(auth.challenge(), 'nobody.near', k)), code('key_not_found'), 'a named account that does not exist');
+
+    // on chain with its key: the usual path
+    chain.addKey(implicit, k.publicKey, 'FullAccess');
+    assert.equal(await chain.accountExists(implicit), true);
+    assert.equal((await auth.verify(signChallenge(auth.challenge(), implicit, k))).session.account, implicit);
+
+    // on chain, and the owner replaced the key: the old one no longer signs in, the new one does
+    chain.deleteKey(implicit, k.publicKey);
+    chain.addKey(implicit, other.publicKey, 'FullAccess');
+    await assert.rejects(auth.verify(signChallenge(auth.challenge(), implicit, k)), code('key_not_found'), 'a key the owner removed');
+    assert.equal((await auth.verify(signChallenge(auth.challenge(), implicit, other))).session.account, implicit);
+
+    // NEAR cannot be asked whether the account exists: no guess either way
+    const k2 = newKey();
+    chain.accountExists = async () => {
+      throw new Error('rpc down');
+    };
+    await assert.rejects(auth.verify(signChallenge(auth.challenge(), implicitAccountOf(k2.publicKey), k2)), (e) => code('rpc_unavailable')(e) && (e as AuthError).status === 503);
   } finally {
     close();
   }

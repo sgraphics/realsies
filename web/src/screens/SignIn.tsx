@@ -37,6 +37,8 @@ export function WalletSignInPanel(p: { store: Store; tight?: boolean; secondary?
           <Button kind={kind} class="signin-btn" onClick={signIn}>
             <Icon name="shield" /> Try again
           </Button>
+          {/* some wallets fail to sign a message (seen with OKX Wallet on 2026-11-11): name a way out */}
+          <p class="px-sub px-dim">If it keeps failing, try another wallet, for example Meteor or Intear.</p>
         </>
       ) : f.phase === 'preparing' ? (
         <Button kind={kind} class="signin-btn" disabled>

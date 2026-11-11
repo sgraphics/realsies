@@ -264,7 +264,8 @@ export interface LaunchConfig {
 
 // ---------- wallet sign-in (v1.3) ----------
 // Sign in: the relay issues a nonce (AuthChallenge), the wallet signs a NEP-413 message for `recipient`, the
-// relay checks the signature and, over RPC, that the key is a full-access key of the account, then issues a
+// relay checks the signature and, over RPC, that the key is a full-access key of the account (a new wallet's
+// implicit account, the key's own 64 hex, is let in before it is on chain), then issues a
 // session (AuthSession.token, sent as `Authorization: Bearer`). The WebSocket takes a one-time ticket for it
 // (`/ws?ticket=`). Free play needs nothing more. Coins: the browser makes its own ed25519 key and the wallet
 // adds it in one approval as a function-call key for the game contract (`play`, `call`, a small gas

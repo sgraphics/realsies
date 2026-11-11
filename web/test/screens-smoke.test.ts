@@ -317,6 +317,7 @@ try {
   const et = root.textContent;
   const retry = findButton(root as never, /Try again/);
   ok(/You closed the wallet without approving\./.test(et) && !!retry && !disabled(retry) && !findButton(root as never, /Sign in with a NEAR wallet/), 'a failed sign-in: the reason, and Try again in place of the button');
+  ok(/If it keeps failing, try another wallet, for example Meteor or Intear\./.test(et), 'a failed sign-in names a way out: another wallet');
   ew.o.reject = undefined;
   click(retry);
   for (let i = 0; i < 40 && !es.get().welcomed; i++) await sleep(25);

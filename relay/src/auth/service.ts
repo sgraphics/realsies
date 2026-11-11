@@ -2,7 +2,8 @@
 //
 //   challenge  -> a 32-byte nonce and the message to sign, one use, AUTH_CHALLENGE_SECONDS to live
 //   verify     -> NEP-413 signature over {message, nonce, recipient = AUTH_RECIPIENT} by the given key, then
-//                 view_access_key over RPC: the key must be a full-access key of the account. The nonce is
+//                 view_access_key over RPC: the key must be a full-access key of the account. A new wallet's
+//                 implicit account (the key's own 64 hex) is let in before it is on chain. The nonce is
 //                 spent on the first attempt, right or wrong. Then a session: a random 32-byte token, of
 //                 which only the sha256 is stored; SESSION_DAYS to live.
 //   ticket     -> a one-time WebSocket ticket (30 s) for a session, so the token never sits in a URL
@@ -12,7 +13,7 @@ import crypto from 'node:crypto';
 import type { AuthChallenge, PlayKeyInfo } from '../../../shared/protocol.js';
 import type { Db } from '../db.js';
 import type { ChainAdapter } from '../chain/types.js';
-import { decodeNonce, decodeSignature, isAccountId, parseEd25519PublicKey, verifyNep413 } from './nep413.js';
+import { decodeNonce, decodeSignature, implicitAccountOf, isAccountId, parseEd25519PublicKey, verifyNep413 } from './nep413.js';
 import { PLAYER_METHODS } from './tx.js';
 import { errMsg } from '../util.js';
 import { logger } from '../log.js';
@@ -142,8 +143,15 @@ export class AuthService {
       log.warn(`view_access_key ${accountId}: ${errMsg(e)}`);
       throw new AuthError('rpc_unavailable', 'could not reach NEAR to check the key; try again', 503);
     }
-    if (!ak) throw new AuthError('key_not_found', `${publicKey} is not a key of ${accountId}`, 403);
-    if (ak.permission !== 'FullAccess') throw new AuthError('not_full_access', 'sign in with a full-access key of the account, not a function-call key', 403);
+    if (!ak) {
+      // A new wallet's account (64 hex: the key itself) is not on chain until someone sends it NEAR, so there is
+      // no key to find. The signature proves the key and the key is the account: let it in. Once the account is
+      // on chain its keys are what count, like any other account (the owner may have replaced this one).
+      if (!(await this.newImplicitAccount(accountId, publicKey))) throw new AuthError('key_not_found', `${publicKey} is not a key of ${accountId}`, 403);
+      log.info(`${accountId.slice(0, 12)}… is a new wallet account, not on chain yet: signed in by its own key`);
+    } else if (ak.permission !== 'FullAccess') {
+      throw new AuthError('not_full_access', 'sign in with a full-access key of the account, not a function-call key', 403);
+    }
     const token = crypto.randomBytes(32).toString('base64url');
     const s: SessionRec = {
       id: sha256hex(token), account: accountId, signInKey: publicKey, createdAt: now, expiresAt: now + this.opts.sessionDays * 86_400_000, lastSeenAt: now, playKey: null,
@@ -151,6 +159,17 @@ export class AuthService {
     this.save(s);
     log.info(`session for ${accountId} (${s.id.slice(0, 8)})`);
     return { token, session: s };
+  }
+
+  /** The account is the key's own implicit account and nobody has sent it NEAR yet (it is not on chain). */
+  private async newImplicitAccount(accountId: string, publicKey: string): Promise<boolean> {
+    if (implicitAccountOf(publicKey) !== accountId) return false;
+    try {
+      return !(await this.chain.accountExists(accountId));
+    } catch (e) {
+      log.warn(`view_account ${accountId}: ${errMsg(e)}`);
+      throw new AuthError('rpc_unavailable', 'could not reach NEAR to check the account; try again', 503);
+    }
   }
 
   // ---------- sessions ----------

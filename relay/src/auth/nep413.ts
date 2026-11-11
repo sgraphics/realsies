@@ -50,6 +50,14 @@ export function parseEd25519PublicKey(s: unknown): Uint8Array {
   return raw;
 }
 
+/**
+ * The implicit account of an ed25519 key: its 32 bytes in lowercase hex. A new wallet's account has this name and
+ * is not on chain until someone sends it NEAR; whoever holds the key is the only one who can ever hold the account.
+ */
+export function implicitAccountOf(publicKey: string): string {
+  return Buffer.from(parseEd25519PublicKey(publicKey)).toString('hex');
+}
+
 export function formatEd25519PublicKey(raw: Uint8Array): string {
   return `ed25519:${baseEncode(raw)}`;
 }

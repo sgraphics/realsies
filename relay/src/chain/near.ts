@@ -262,6 +262,16 @@ export class NearChain implements ChainAdapter {
     };
   }
 
+  async accountExists(accountId: string): Promise<boolean> {
+    try {
+      await this.rpcCall('query', { request_type: 'view_account', finality: 'final', account_id: accountId });
+      return true;
+    } catch (e) {
+      if (notFound(e)) return false;
+      throw e;
+    }
+  }
+
   async tokenStorage(accountId: string): Promise<{ registered: boolean; minDeposit: string }> {
     if (!this.tokenId) return { registered: false, minDeposit: '0' };
     if (!this.storageMin) {

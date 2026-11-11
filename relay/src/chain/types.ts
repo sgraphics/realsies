@@ -179,6 +179,8 @@ export interface ChainAdapter {
    * (a sign-in key or a play key); only the keyless dev mock reads it (MockChain.trustUnknownKeys).
    */
   viewAccessKey(accountId: string, publicKey: string, hint?: 'full' | 'play'): Promise<AccessKeyView | null>;
+  /** Whether the account is on chain (view_account). A new wallet's implicit account is not, until someone sends it NEAR. */
+  accountExists(accountId: string): Promise<boolean>;
   /**
    * Broadcasts a transaction a player signed (borsh SignedTransaction) and waits for its outcome; the same
    * bytes are resent on rate limits and network errors. `code` tells a stale nonce or block hash

@@ -89,7 +89,7 @@ cd ../art && npm install
 cd ../relay && npm install && npm run build && npm start   # http://localhost:3960
 ```
 
-The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (132 tests) and `web` (nine suites), `cargo test` in `contracts/game` (16) and `contracts/vault` (19), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
+The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (133 tests) and `web` (nine suites), `cargo test` in `contracts/game` (16) and `contracts/vault` (19), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
 
 The trust chain also runs on its own, without the game:
 
