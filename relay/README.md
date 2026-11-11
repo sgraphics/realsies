@@ -44,7 +44,7 @@ Read from the process env, then the repo-root `.env`, then `relay/.env` (never o
 | `BUY_URL` | | "Buy REAL": the meme.cooking page before the launch finalizes, the Rhea swap after; unset = no link |
 | `SWAP_DEX`, `SWAP_POOL` | | coins for NEAR on Rhea (protocol v1.12, `src/swap.ts`): the pool contract (`dclv2.ref-labs.near`; testnet `dclv2.ref-dev.testnet`) and the pool of the coin against wrapped NEAR, `<token>\|<token>\|<fee>` with the two ids sorted as strings (testnet `real.realsies.testnet\|wrap.testnet\|2000`). With both set and coins open: `PublicConfig.swap` and `nearPerCoin` (the price at the pool's current point, re-read every minute and pushed when it moves), `GET /api/swap/quote`, and the wallet's NEAR, wrap registration and wNEAR in `WalletInfo`. The coins dialog then buys coins with NEAR and withdraws them as NEAR, one wallet approval each; the browser builds the swaps, the relay only reads. At start the pool id must name the game's coin and the wrap contract and the pool must exist (`get_pool`), or the relay stops with the reason; on mainnet before the coin it is checked when coins open (and only stays off if wrong). One log line, `swap: coins for NEAR on Rhea, pool ...`. One of the two without the other stops the relay; neither: nothing changes anywhere |
 | `SWAP_WRAP` | wrap.near on mainnet, wrap.testnet on testnet | the wrap contract |
-| `SWAP_SLIPPAGE_BPS` | 100 | room for the price to move between the quote and the swap, in basis points (1 to 2000): a buy asks for the whole coins its NEAR less this covers (`SwapByOutput`, all the NEAR offered as the most it may take), a sale takes at least its quote less this |
+| `SWAP_SLIPPAGE_BPS` | 100 | room for the price to move between the quote and the swap, in basis points (1 to 2000): a buy gets the whole coins its NEAR less this covers, its swap sends their cost plus this (`swapIn`, v1.15: `Swap` with those coins as the minimum, never more than the NEAR offered; an older web or relay: `SwapByOutput`, all the NEAR offered as the most it may take), a sale takes at least its quote less this |
 | `LAUNCH_AUCTION_START`, `LAUNCH_AUCTION_END` | | the launch (protocol v1.4, `PublicConfig.launch`): REAL's meme.cooking auction, which opens with the mainnet game; ISO times with their zone (`2026-11-08T15:00:00Z`), the end defaulting to 24 hours after the start. Setting any `LAUNCH_*` turns it on. Until the start `/` is the coming-soon page (a countdown to the start and "Get REAL"; the game at `/play`); at the start the page hands over to the game in place, and from then `/` is the game with a banner: "REAL auction is live, ends in hh:mm, Get REAL", after the end "REAL is finalizing, coins open soon". Once the coin is set on the contract (`coinsOpen`, re-read every minute) the relay drops `launch`, pushes the config to every socket and the banner goes, no restart. Ignored with `TEST_MODE=1`: the testnet demo never shows any of it. A bad value stops the relay at boot |
 | `LAUNCH_TOKEN_URL` | `BUY_URL` | "Get REAL" (https): the meme.cooking page of REAL, on the coming-soon page (meme.cooking shows its own countdown before the auction) and in the banner; unset and no `BUY_URL`: the page shows the start time instead |
 | `LAUNCH_VIDEO_URL` | | the launch tweet with the trailer: the coming-soon page's video card (a silent teaser loop, `web/public/launch-teaser.mp4`, under a big PLAY icon) opens it in a new tab. An https link on x.com or twitter.com |
@@ -317,8 +317,9 @@ exactly what was burnt; a separate probe sent the same call at 10, 30 and 100 Tg
 
 Coins for NEAR on Rhea (`test/swap.test.ts`, protocol v1.12): `SWAP_*` both or neither, the pool id's shape, the wrap
 contract by network, slippage 1 to 2000; the pool id against the game's coin and the wrap contract (sorted as the pool
-contract sorts them); the quote math against a stubbed pool contract (whole coins after the allowance, the NEAR that
-surely buys n coins, a sale's minimum, more than the pool can fill refused), the price from the pool's point on either
+contract sorts them); the quote math against a stubbed pool contract (whole coins after the allowance, what the swap
+sends (v1.15 `swapIn`: their cost plus the allowance, never more than offered, all of it when that is short by
+rounding), the NEAR that surely buys n coins, a sale's minimum, more than the pool can fill refused), the price from the pool's point on either
 side, the 5 s cache (a failed read not kept) and the refusals; then in-process relays: `swap` and `nearPerCoin` in the
 config, quotes over HTTP from the cache, the wallet's NEAR, wrap registration and wNEAR in `WalletInfo`; nothing without
 the settings; swap turning on when coins open; a pool of another token, one the pool contract lacks, or the wrong wrap
@@ -332,6 +333,12 @@ deposit; exactly the 98 quoted coins for 0.245979 NEAR, `game.realsies.testnet` 
 coins for exactly the quoted 0.244997 NEAR) and unwrap the 0.00402 wNEAR left over: the NEAR came back, the round trip
 cost 0.0105 NEAR (0.0025 of it registrations). A second account holding 0.374 wNEAR bought with no wrap at all; a sale
 from an account never registered on wrap.testnet paid plain NEAR. Reports in `data/swap-proof-*.json`.
+2026-11-11, v1.15 (the buy an exact-input `Swap` of the quote's `swapIn`), the same account: the wrap transaction
+(wrap, `Swap`) and the deposit, one approval's worth as before; the pool contract logged `swap`, read back over RPC
+(the `SwapByOutput` buy of 2026-11-10 logged `swap_desire`); `game.realsies.testnet` +96, exactly the quoted coins;
+0.9685 of a coin stayed in the wallet, under the allowance's 0.9696; a buy asking one unit more than its 0.01 NEAR
+buys failed with `E204: slippage error`, the 0.01 wNEAR stayed with the player and no coin moved; then withdraw, sell
+and unwrap as before. `FAIL_PATH=0` skips that failing buy.
 
 Also covered: `prune_round` in the mock chain with the contract's rules, the relay pruning a settled
 round while results and bundles stay served, and idle mode (no `start_round` or commits while nobody

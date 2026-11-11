@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.14 (2026-11-10: the practice chat, one free try for a visitor without a wallet: PublicConfig.practice, GET and POST /api/practice, /ws?practice=, ServerMsg practice_result; additive).
+// Realsies relay <-> web protocol, v1.15 (2026-11-11: SwapQuote.swapIn, a buy's exact-input Swap, which chart sites count as a buy; additive).
+// v1.14 (2026-11-10: the practice chat, one free try for a visitor without a wallet: PublicConfig.practice, GET and POST /api/practice, /ws?practice=, ServerMsg practice_result; additive).
 // v1.13 (2026-11-10: PublicConfig.turingHour, the daily Turing Hour when real people are promised in the room; additive).
 // v1.12 (2026-11-10: coins for NEAR and back on Rhea: PublicConfig.swap and nearPerCoin, GET /api/swap/quote and SwapQuote, WalletInfo.nearBalance, wrapRegistered, wnearBalance and wrapStorageDeposit; additive).
 // v1.11 (2026-11-09: POST /api/auth/failed and AuthFailure, a browser's failed sign-in for the operator's log; additive).
@@ -185,10 +186,13 @@ export interface PracticeResult {
 // pays NEAR and gets coins in the game, or withdraws coins as NEAR, each in one wallet approval: the browser builds the
 // transactions from the relay's quote (web/src/wallet/swap.ts) and the wallet sends them. The relay only reads.
 // A buy is one transaction to the wrap contract (storage_deposit if needed, near_deposit for what the wallet's wNEAR
-// does not cover, then ft_transfer_call to the pool contract with {"SwapByOutput": ...}: exactly `coins` whole coins,
-// at most the NEAR offered, the rest back as wNEAR), then the usual deposit of those coins into the game. A sale is
-// `withdraw` on the game, then ft_transfer_call of the coin to the pool contract with {"Swap": ...} and
-// skip_unwrap_near false: plain NEAR arrives.
+// does not cover, then ft_transfer_call of `swapIn` to the pool contract with {"Swap": ...}: at least `coins` whole
+// coins out), then the usual deposit of exactly those coins into the game; the little more of the coin the swap gives
+// stays in the wallet. Since v1.15 the buy is exact-input because the pool contract logs a Swap as the event `swap`,
+// which chart sites (DexScreener, GeckoTerminal) count as a buy, and {"SwapByOutput": ...} (exactly `coins`, at most
+// the NEAR offered, the rest back as wNEAR; still sent when an older relay's quote has no swapIn) as `swap_desire`,
+// which they do not. A sale is `withdraw` on the game, then ft_transfer_call of the coin to the pool contract with
+// {"Swap": ...} and skip_unwrap_near false: plain NEAR arrives.
 
 /** What GET /api/swap/quote is asked: amounts as decimal strings of base units (yoctoNEAR, coin units) */
 export type SwapQuestion = { side: 'buy'; near: string } | { side: 'buy'; coins: number } | { side: 'sell'; units: string };
@@ -222,10 +226,17 @@ export interface SwapQuote {
   minOut: string;
   /** buy: the whole coins amountIn surely covers, even after the price moves by the allowance: what is bought, exactly */
   coins?: number;
-  /** buy: those coins in base units (the swap's output_amount) */
+  /** buy: those coins in base units (the swap's min_output_amount; SwapByOutput's output_amount) and the deposit */
   coinUnits?: string;
-  /** buy: what those coins cost at the current price, yoctoNEAR; the rest of amountIn comes back as wNEAR */
+  /** buy: what those coins cost at the current price, yoctoNEAR; with SwapByOutput the rest of amountIn comes back as wNEAR */
   cost?: string;
+  /**
+   * buy, v1.15: what the swap sends, yoctoNEAR: `cost` plus the slippage allowance, never more than amountIn. The swap
+   * is exact-input ({"Swap": ...} with min_output_amount = coinUnits), which chart sites count as a buy; a little more
+   * of the coin than coinUnits arrives and stays in the wallet. Absent on an older relay (and when no coin is
+   * covered): the web then buys with SwapByOutput as before.
+   */
+  swapIn?: string;
   slippageBps: number;
 }
 

@@ -1,8 +1,10 @@
 // Coins for a wallet player when the relay buys and sells them on Rhea (protocol v1.12, PublicConfig.swap): the player
 // only ever sees NEAR and coins. "Get coins": a NEAR amount (a quick one or one typed), a live line with the coins it
 // gives, one button, one wallet approval (the play key, the registrations, the swap and the deposit ride together:
-// state/store.ts swapBuy). "Withdraw": coins out of the game as NEAR, one approval too. Only while the wallet holds the
-// coin itself (an airdrop, or a buy whose deposit did not follow): one line with "Put in the game" and "Swap to NEAR".
+// state/store.ts swapBuy). "Withdraw": coins out of the game as NEAR, one approval too. Only while the wallet holds at
+// least one whole coin itself and that is not just the little a buy leaves behind (an airdrop, or a buy whose deposit
+// did not follow; since v1.15 each buy leaves about 1% of its coins in the wallet, which does not count while it is
+// under a fiftieth of what is in the game): one line with "Put in the game" and "Swap to NEAR".
 // One short honest line on the price. Without PublicConfig.swap the coins dialog is WalletCoins.tsx, unchanged.
 
 import { useEffect, useState } from 'preact/hooks';
@@ -105,6 +107,8 @@ export function SwapCoinsDialog(p: { store: Store; gate: boolean; onDone(): void
   const need = yocto !== null && wal ? buyNearNeeded(yocto, wal) : null;
   const short = need !== null && wal?.near != null && need > wal.near;
   const coinsOut = buyQ?.q?.coins ?? 0;
+  // what the swap sends (v1.15, swapIn); an older relay's quote has only what the coins cost
+  const pays = buyQ?.q?.swapIn ?? buyQ?.q?.cost;
   const canBuy = !busy && !!buyAsk && coinsOut >= 1 && !short;
   const buyLine = !buyAsk
     ? near.trim() && yocto !== null
@@ -119,7 +123,7 @@ export function SwapCoinsDialog(p: { store: Store; gate: boolean; onDone(): void
           : coinsOut < 1
             ? 'That is less than one coin.'
             : // a buy takes a little less than the NEAR offered (room for the price to move); say what it costs
-              `You get ${coinsOut.toLocaleString('en-US')} coin${coinsOut === 1 ? '' : 's'}${buyQ.q?.cost && buyQ.q.cost !== '0' ? ` for about ${fmtNear(BigInt(buyQ.q.cost), 3)} NEAR. The rest stays in your wallet` : ''}.`;
+              `You get ${coinsOut.toLocaleString('en-US')} coin${coinsOut === 1 ? '' : 's'}${pays && pays !== '0' ? ` for about ${fmtNear(BigInt(pays), 3)} NEAR. The rest stays in your wallet` : ''}.`;
 
   // ----- withdraw as NEAR -----
   const wdN = Math.floor(Number(wd));
@@ -142,6 +146,11 @@ export function SwapCoinsDialog(p: { store: Store; gate: boolean; onDone(): void
   };
 
   const done = f.phase === 'done';
+  // The wallet's own coins get their row when they are worth a tap: a buy whose deposit did not follow, an airdrop,
+  // coins bought elsewhere. Not the little an exact-input buy leaves behind (v1.15, about 1% of each buy): under one
+  // coin, or under a fiftieth of what is in the game, the row stays away. It comes back by itself once the game holds
+  // less (coins played away, or withdrawn), which is when that little is worth putting in or swapping.
+  const held = (done && !!f.left && walletUnits > 0n) || (walletCoins >= 1 && walletCoins * 50 >= balance);
   const doneText =
     f.kind === 'buy'
       ? f.left
@@ -165,7 +174,7 @@ export function SwapCoinsDialog(p: { store: Store; gate: boolean; onDone(): void
               In the game: <b>{fmtCoins(balance)} coins</b>{balance > 0 ? <> (about {coinValue(cfg, balance)})</> : null}{me?.lockedCoins ? <>, {fmtCoins(me.lockedCoins)} on the table</> : null}
             </p>
           )}
-          {walletUnits > 0n && (
+          {held && (
             <div class={'px-row wallet-why swap-held' + (done && f.left ? ' on' : '')} role="status">
               <p class="px-sub">In your wallet: <b>{fmtTokens(walletUnits, decimals)} {symbol}</b></p>
               <div class="swap-held-btns">

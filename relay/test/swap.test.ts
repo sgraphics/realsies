@@ -1,6 +1,8 @@
 // Coins for NEAR on Rhea (protocol v1.12): the SWAP_* settings and their checks, the pool id against the game's coin and
-// the wrap contract, the quote math against a stubbed pool contract (whole coins after the slippage allowance, the NEAR
-// that surely buys n coins, a sale's minimum), the cache and the refusals, the price from the pool's point, and
+// the wrap contract, the quote math against a stubbed pool contract (whole coins after the slippage allowance, what the
+// exact-input swap sends (v1.15 swapIn: their cost plus the allowance, never more than offered, all of it when that is
+// short by rounding), the NEAR that surely buys n coins, a sale's minimum), the cache and the refusals, the price from
+// the pool's point, and
 // in-process relays: PublicConfig.swap and nearPerCoin, GET /api/swap/quote, the wallet's NEAR in WalletInfo, nothing
 // without the settings, a wrong pool stopping the relay, and swap turning on when coins open.
 import test from 'node:test';
@@ -96,23 +98,50 @@ test('loadConfig reads SWAP_* and refuses a bad one at boot', () => {
 test('quotes: a buy gets the whole coins its NEAR less the allowance covers; by coins, the NEAR that surely buys them; a sale its minimum', async () => {
   const { view, calls } = stubView();
   // 0.25 NEAR at 400 coins per NEAR: 100 coins; less 1% the quote is 99 coins: exactly 99 are bought, for 0.2475 NEAR
+  // the swap sends their cost plus the allowance, 0.2475 / 0.99: exactly the 0.25 NEAR offered, which surely buys them
   const b = await quoteBuy(view, P, NEAR / 4n);
   assert.deepEqual(b, {
     side: 'buy', amountIn: (NEAR / 4n).toString(), amountOut: (100n * UNIT).toString(), minOut: (99n * UNIT).toString(),
-    coins: 99, coinUnits: (99n * UNIT).toString(), cost: ((99n * NEAR) / 400n).toString(), slippageBps: 100,
+    coins: 99, coinUnits: (99n * UNIT).toString(), cost: ((99n * NEAR) / 400n).toString(), swapIn: (NEAR / 4n).toString(), slippageBps: 100,
   });
-  assert.deepEqual(calls.map((c) => c.method).sort(), ['quote', 'quote', 'quote_by_output']);
+  assert.deepEqual(calls.map((c) => c.method).sort(), ['quote', 'quote', 'quote_by_output'], 'swapIn is all of the NEAR offered: nothing more to ask');
   assert.equal(calls.find((c) => c.method === 'quote_by_output')!.args.output_amount, (99n * UNIT).toString(), 'the cost of exactly those coins');
   assert.equal(calls[0].args.input_token, 'wrap.testnet');
   assert.equal(calls[0].args.output_token, 'real.realsies.testnet');
-  // a fraction of a coin is never promised
+  // a fraction of a coin is never promised; the swap sends the coin's cost plus 1%, less than offered, asked first
+  calls.length = 0;
   const odd = await quoteBuy(view, P, (NEAR * 3n) / 1000n);
   assert.equal(odd.coins, 1, '0.003 NEAR: 1.2 coins, 1.188 after the allowance: 1 coin');
-  assert.equal((await quoteBuy(view, P, NEAR / 1000n)).coins, 0, '0.001 NEAR: under one coin after the allowance');
+  assert.equal(odd.cost, (NEAR / 400n).toString());
+  assert.equal(odd.swapIn, (((NEAR / 400n) * 10_000n + 9_899n) / 9_900n).toString(), 'swapIn: 0.0025 NEAR / 0.99, rounded up');
+  assert.equal(calls.length, 4, 'one more view: what swapIn buys');
+  assert.deepEqual(calls[3], { method: 'quote', args: { pool_ids: [POOL], input_token: 'wrap.testnet', output_token: 'real.realsies.testnet', input_amount: odd.swapIn, tag: 'realsies' } });
+  const none = await quoteBuy(view, P, NEAR / 1000n);
+  assert.equal(none.coins, 0, '0.001 NEAR: under one coin after the allowance');
+  assert.ok(!('swapIn' in none), 'no coin: no swapIn');
+  // swapIn never more than offered, and it always buys the coins at the price quoted
+  for (const n of [1001n, 2_500n, 7_777n, 25_000n, 123_456n, 999_999n]) {
+    const near = n * 10n ** 18n;
+    const r = await quoteBuy(view, P, near);
+    if (!r.coins) continue;
+    const sIn = BigInt(r.swapIn!);
+    const out = BigInt((await view<{ amount: string }>(DEX, 'quote', { pool_ids: [POOL], input_token: 'wrap.testnet', output_token: 'real.realsies.testnet', input_amount: sIn.toString() })).amount);
+    assert.ok(sIn <= near && sIn >= BigInt(r.cost!) && out >= BigInt(r.coinUnits!), `${near} yocto: swapIn ${sIn}, buys ${out} >= ${r.coinUnits}`);
+  }
+  // rounding leaves swapIn a hair short of the coins: all of the NEAR offered instead
+  const short: ViewFn = async <T,>(c: string, m: string, a: Record<string, unknown>) =>
+    (m === 'quote' && a.input_amount === odd.swapIn ? { amount: (UNIT - 1n).toString() } : await stubView().view<T>(c, m, a)) as T;
+  assert.equal((await quoteBuy(short, P, (NEAR * 3n) / 1000n)).swapIn, ((NEAR * 3n) / 1000n).toString(), 'short by one unit: swapIn is the 0.003 NEAR offered');
+  // their cost with the allowance would be more than offered (the cost a hair under it): swapIn is what was offered
+  const dear: ViewFn = async <T,>(c: string, m: string, a: Record<string, unknown>) =>
+    (m === 'quote_by_output' ? { amount: ((NEAR * 3n) / 1000n - 1n).toString() } : await stubView().view<T>(c, m, a)) as T;
+  const capd = await quoteBuy(dear, P, (NEAR * 3n) / 1000n);
+  assert.equal(capd.swapIn, ((NEAR * 3n) / 1000n).toString(), 'never more than the NEAR offered');
   // asked by coins: 50 coins cost 0.125 NEAR; with the allowance 0.12626..., rounded up to 0.127 NEAR, which buys 50
   const c = await quoteBuyCoins(view, P, 50);
   assert.equal(c.amountIn, ((127n * NEAR) / 1000n).toString());
   assert.ok(c.coins! >= 50, `${c.coins} coins`);
+  assert.ok(c.swapIn && BigInt(c.swapIn) <= BigInt(c.amountIn) && BigInt(c.swapIn) === (BigInt(c.cost!) * 10_000n + 9_899n) / 9_900n, `by coins too: swapIn ${c.swapIn}, the cost plus 1%`);
   for (const n of [1, 7, 10, 25, 99, 250, 500]) assert.ok((await quoteBuyCoins(view, P, n)).coins! >= n, `${n} coins: the amount buys at least that many`);
   // a sale: 10 coins for 0.025 NEAR, at least 0.02475 after the allowance
   const s = await quoteSell(view, P, 10n * UNIT);
@@ -249,6 +278,7 @@ test('a relay with SWAP_*: swap and nearPerCoin in the config, quotes over HTTP 
     assert.equal(buy.coins, 98);
     assert.equal(buy.coinUnits, (98n * UNIT).toString());
     assert.ok(BigInt(buy.cost!) <= (NEAR * 2475n) / 10000n && BigInt(buy.cost!) > 0n, `cost ${buy.cost}`);
+    assert.ok(BigInt(buy.swapIn!) > BigInt(buy.cost!) && BigInt(buy.swapIn!) <= NEAR / 4n, `swapIn ${buy.swapIn}: the cost and the allowance, within the NEAR offered`);
     assert.equal(BigInt(buy.minOut), (BigInt(buy.amountOut) * 99n) / 100n);
     const n = chain.dexCalls;
     assert.deepEqual((await api(base, '/api/swap/quote?side=buy&near=250000000000000000000000')).body, buy);

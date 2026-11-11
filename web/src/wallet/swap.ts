@@ -7,13 +7,20 @@
 //   one transaction to the wrap contract, three actions:
 //     storage_deposit {account_id, registration_only: true}     0.00125 NEAR       while not registered there
 //     near_deposit {}                                            what wNEAR lacks   unless the wallet's wNEAR covers it all
-//     ft_transfer_call {receiver_id: <pool contract>, amount: <NEAR offered>, msg: {"SwapByOutput": {pool_ids, output_token: <coin>,
-//       output_amount: <whole coins>, skip_unwrap_near: true}}}  1 yoctoNEAR, 250 Tgas
+//     ft_transfer_call {receiver_id: <pool contract>, amount: <swapIn>, msg: {"Swap": {pool_ids, output_token: <coin>,
+//       min_output_amount: <whole coins>, skip_unwrap_near: true}}}  1 yoctoNEAR, 250 Tgas
 //   ft_transfer_call {receiver_id: <game>, amount: <those coins>, msg: ""}  on the coin: the deposit, as before
-// SwapByOutput buys exactly the coins the quote promised and takes at most the NEAR offered; what it does not use comes
-// back as wNEAR, which the next buy spends first. Verified on testnet: a price that moved past the offer panics in the
-// pool contract (E204: slippage error) and every wNEAR comes back, while the transaction itself still reads as a
+// The swap is exact-input (v1.15): it sends the quote's swapIn (the cost of the whole coins plus the slippage
+// allowance, at most the NEAR offered; the rest of that NEAR is never wrapped) and wants at least those coins back.
+// Why: the pool contract logs a Swap as the event `swap`, which DexScreener and GeckoTerminal count as a buy, and a
+// SwapByOutput as `swap_desire`, which they do not, so exact-output buys were invisible on the charts. A Swap gives a
+// little more of the coin than the whole coins (up to the allowance, about 1%); the deposit moves exactly the whole
+// coins and that little stays in the wallet. Verified on testnet: a price that moved past the allowance fails inside
+// the pool contract (E204: slippage error) and every wNEAR comes back, while the transaction itself still reads as a
 // success; so the store reads the balances afterwards instead of trusting the wallet's answer.
+// Without swapIn (an older relay) the buy is the earlier exact-output one: amount <NEAR offered>, msg {"SwapByOutput":
+// {pool_ids, output_token: <coin>, output_amount: <whole coins>, skip_unwrap_near: true}}; what it does not use comes
+// back as wNEAR, which the next buy spends first.
 //
 // A sale:
 //   withdraw {amount}  on the game        (not when selling what the wallet itself holds)
@@ -77,8 +84,13 @@ function call(methodName: string, args: object, gas: bigint, deposit: bigint): W
   return { type: 'FunctionCall', params: { methodName, args, gas: gas.toString(), deposit: deposit.toString() } };
 }
 
-/** The swap message of a buy: exactly `units` of the coin, at most what the ft_transfer_call carries. */
+/** The swap message of a buy (v1.15): all the ft_transfer_call carries in, at least `units` of the coin out. */
 export function buyMsg(s: SwapConfig, coin: string, units: bigint): string {
+  return JSON.stringify({ Swap: { pool_ids: [s.poolId], output_token: coin, min_output_amount: units.toString(), skip_unwrap_near: true } });
+}
+
+/** The swap message of a buy on an older relay (no swapIn): exactly `units` of the coin, at most what the ft_transfer_call carries. */
+export function buyByOutputMsg(s: SwapConfig, coin: string, units: bigint): string {
   return JSON.stringify({ SwapByOutput: { pool_ids: [s.poolId], output_token: coin, output_amount: units.toString(), skip_unwrap_near: true } });
 }
 
@@ -87,12 +99,26 @@ export function sellMsg(s: SwapConfig, minOut: bigint): string {
   return JSON.stringify({ Swap: { pool_ids: [s.poolId], output_token: s.wrapId, min_output_amount: minOut.toString(), skip_unwrap_near: false } });
 }
 
-/** The one transaction to the wrap contract: register there if needed, wrap what the wallet's wNEAR lacks, swap. */
-export function buySwapTx(s: SwapConfig, coin: string, accountId: string, maxIn: bigint, units: bigint, w: Pick<SwapWallet, 'wrapRegistered' | 'wrapStorage' | 'wnear'>): WalletTx {
+/**
+ * The one transaction to the wrap contract: register there if needed, wrap what the wallet's wNEAR lacks, swap. With
+ * `swapIn` the swap sends exactly that for at least `units` (Swap); without it all of `maxIn` for exactly `units`
+ * (SwapByOutput, an older relay).
+ */
+export function buySwapTx(
+  s: SwapConfig,
+  coin: string,
+  accountId: string,
+  maxIn: bigint,
+  units: bigint,
+  w: Pick<SwapWallet, 'wrapRegistered' | 'wrapStorage' | 'wnear'>,
+  swapIn?: bigint,
+): WalletTx {
+  const amount = swapIn ?? maxIn;
   const actions: WalletTx['actions'] = [];
   if (!w.wrapRegistered) actions.push(call('storage_deposit', { account_id: accountId, registration_only: true }, SMALL_GAS, w.wrapStorage));
-  if (w.wnear < maxIn) actions.push(call('near_deposit', {}, SMALL_GAS, maxIn - w.wnear));
-  actions.push(call('ft_transfer_call', { receiver_id: s.dex, amount: maxIn.toString(), msg: buyMsg(s, coin, units) }, SWAP_GAS, 1n));
+  if (w.wnear < amount) actions.push(call('near_deposit', {}, SMALL_GAS, amount - w.wnear));
+  const msg = swapIn === undefined ? buyByOutputMsg(s, coin, units) : buyMsg(s, coin, units);
+  actions.push(call('ft_transfer_call', { receiver_id: s.dex, amount: amount.toString(), msg }, SWAP_GAS, 1n));
   return { receiverId: s.wrapId, actions };
 }
 
@@ -107,15 +133,16 @@ export function unwrapTx(s: SwapConfig, amount: bigint): WalletTx {
 }
 
 /**
- * A buy of exactly `units` (whole coins) for at most `maxIn` yoctoNEAR, then their deposit into the game. The play
- * key is not here: the store puts it first when this browser has none.
+ * A buy of `units` (whole coins), then their deposit into the game: with `swapIn` (the quote's, v1.15) a swap of
+ * exactly that for at least `units`; without it a swap of exactly `units` for at most `maxIn`. The play key is not
+ * here: the store puts it first when this browser has none.
  */
-export function buyTxs(cfg: PublicConfig, accountId: string, q: { maxIn: bigint; units: bigint }, w: SwapWallet): SwapTx[] {
+export function buyTxs(cfg: PublicConfig, accountId: string, q: { maxIn: bigint; units: bigint; swapIn?: bigint }, w: SwapWallet): SwapTx[] {
   const s = cfg.swap;
   if (!s) throw new Error('This relay does not buy coins with NEAR.');
   const out: SwapTx[] = [];
   if (!w.tokenRegistered) out.push({ step: 'coin_storage', tx: storageTx(cfg, accountId, w.storageDeposit.toString()) });
-  out.push({ step: 'buy', tx: buySwapTx(s, cfg.tokenId, accountId, q.maxIn, q.units, w) });
+  out.push({ step: 'buy', tx: buySwapTx(s, cfg.tokenId, accountId, q.maxIn, q.units, w, q.swapIn) });
   out.push({ step: 'deposit', tx: depositTx(cfg, q.units) });
   return out;
 }
@@ -144,7 +171,10 @@ export function sellTxs(
   return out;
 }
 
-/** NEAR a buy takes from the wallet: the registrations it makes, the NEAR it wraps, and the reserve for gas. */
+/**
+ * NEAR a buy takes from the wallet: the registrations it makes, the NEAR it wraps, and the reserve for gas. Counted
+ * with the NEAR offered (`maxIn`), which is at least the swapIn a v1.15 buy wraps: never less than it takes.
+ */
 export function buyNearNeeded(maxIn: bigint, w: Pick<SwapWallet, 'tokenRegistered' | 'storageDeposit' | 'wrapRegistered' | 'wrapStorage' | 'wnear'>): bigint {
   return (w.tokenRegistered ? 0n : w.storageDeposit) + (w.wrapRegistered ? 0n : w.wrapStorage) + (w.wnear < maxIn ? maxIn - w.wnear : 0n) + NEAR_RESERVE;
 }

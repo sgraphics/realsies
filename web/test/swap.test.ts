@@ -57,29 +57,44 @@ console.log('the transactions of a buy and a sale');
 {
   const cfg = { contractId: 'game.realsies.testnet', tokenId: 'real.realsies.testnet', coinUnit: UNIT.toString(), swap: MOCK_SWAP } as PublicConfig;
   const fresh = { tokenRegistered: false, storageDeposit: 1_250_000_000_000_000_000_000n, wrapRegistered: false, wrapStorage: S.WRAP_STORAGE, wnear: 0n, near: 5n * NEAR };
-  const txs = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT }, fresh);
+  // v1.15: the quote's swapIn (0.248 NEAR of the 0.25 offered) goes in, at least 98 coins come out (Swap)
+  const swapIn = 248n * 10n ** 21n;
+  const txs = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT, swapIn }, fresh);
   ok(txs.map((t) => t.step).join() === 'coin_storage,buy,deposit', 'a first buy: the registration on the coin, the swap, the deposit');
   ok(txs[0].tx.receiverId === 'real.realsies.testnet' && methods(txs[0].tx) === 'storage_deposit', 'registered on the coin first: the bought coins arrive by ft_transfer');
   const w = txs[1].tx;
   ok(w.receiverId === 'wrap.testnet' && methods(w) === 'storage_deposit+near_deposit+ft_transfer_call', 'one transaction to the wrap contract: register, wrap, swap');
   const [reg, wrap, swap] = w.actions.map((a) => (a.type === 'FunctionCall' ? a.params : null))!;
   ok(reg!.deposit === S.WRAP_STORAGE.toString() && JSON.stringify(reg!.args) === JSON.stringify({ account_id: ACCT, registration_only: true }), 'the wrap registration: 0.00125 NEAR');
-  ok(wrap!.deposit === (NEAR / 4n).toString(), 'the NEAR offered, wrapped');
+  ok(wrap!.deposit === swapIn.toString(), 'swapIn wrapped, not the whole 0.25 NEAR offered');
   const sargs = swap!.args as { receiver_id: string; amount: string; msg: string };
-  ok(swap!.deposit === '1' && sargs.receiver_id === 'dclv2.ref-dev.testnet' && sargs.amount === (NEAR / 4n).toString(), 'the swap: 1 yoctoNEAR, all the NEAR offered to the pool contract');
+  ok(swap!.deposit === '1' && sargs.receiver_id === 'dclv2.ref-dev.testnet' && sargs.amount === swapIn.toString(), 'the swap: 1 yoctoNEAR, exactly swapIn to the pool contract');
   ok(
-    sargs.msg === JSON.stringify({ SwapByOutput: { pool_ids: ['real.realsies.testnet|wrap.testnet|2000'], output_token: 'real.realsies.testnet', output_amount: (98n * UNIT).toString(), skip_unwrap_near: true } }),
-    'SwapByOutput: exactly 98 coins',
+    sargs.msg === JSON.stringify({ Swap: { pool_ids: ['real.realsies.testnet|wrap.testnet|2000'], output_token: 'real.realsies.testnet', min_output_amount: (98n * UNIT).toString(), skip_unwrap_near: true } }),
+    'Swap (exact input, the event the chart sites count): at least 98 coins',
   );
   const gas = w.actions.reduce((g, a) => g + (a.type === 'FunctionCall' ? BigInt(a.params.gas) : 0n), 0n);
   ok(gas <= 300n * 10n ** 12n && BigInt(swap!.gas) === 250n * 10n ** 12n, `the wrap transaction asks ${gas / 10n ** 12n} Tgas, under 300; the swap 250`);
   const dep = txs[2].tx;
-  ok(dep.receiverId === 'real.realsies.testnet' && methods(dep) === 'ft_transfer_call' && JSON.stringify((dep.actions[0] as { params: { args: object } }).params.args) === JSON.stringify({ receiver_id: 'game.realsies.testnet', amount: (98n * UNIT).toString(), msg: '' }), 'the deposit: exactly the bought coins into the game, as any deposit');
-  const part = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT }, { ...fresh, tokenRegistered: true, wrapRegistered: true, wnear: NEAR / 100n });
-  ok(part.length === 2 && methods(part[0].tx) === 'near_deposit+ft_transfer_call' && (part[0].tx.actions[0] as { params: { deposit: string } }).params.deposit === ((NEAR * 24n) / 100n).toString(), 'registered, 0.01 wNEAR held: only what the wNEAR lacks is wrapped');
-  const covered = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT }, { ...fresh, tokenRegistered: true, wrapRegistered: true, wnear: NEAR });
-  ok(methods(covered[0].tx) === 'ft_transfer_call', 'wNEAR covers it all: no wrap at all');
-  ok(S.buyNearNeeded(NEAR / 4n, fresh) === NEAR / 4n + 1_250_000_000_000_000_000_000n * 2n + S.NEAR_RESERVE && S.NEAR_RESERVE === NEAR / 20n, 'what a buy takes: the registrations, the NEAR and 0.05 NEAR for gas');
+  ok(dep.receiverId === 'real.realsies.testnet' && methods(dep) === 'ft_transfer_call' && JSON.stringify((dep.actions[0] as { params: { args: object } }).params.args) === JSON.stringify({ receiver_id: 'game.realsies.testnet', amount: (98n * UNIT).toString(), msg: '' }), 'the deposit: exactly the 98 whole coins into the game, as any deposit');
+  const part = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT, swapIn }, { ...fresh, tokenRegistered: true, wrapRegistered: true, wnear: NEAR / 100n });
+  ok(part.length === 2 && methods(part[0].tx) === 'near_deposit+ft_transfer_call' && (part[0].tx.actions[0] as { params: { deposit: string } }).params.deposit === (swapIn - NEAR / 100n).toString(), 'registered, 0.01 wNEAR held: only what the wNEAR lacks of swapIn is wrapped');
+  const covered = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT, swapIn }, { ...fresh, tokenRegistered: true, wrapRegistered: true, wnear: swapIn });
+  ok(methods(covered[0].tx) === 'ft_transfer_call', 'wNEAR covers swapIn: no wrap at all');
+  ok(S.buyNearNeeded(NEAR / 4n, fresh) === NEAR / 4n + 1_250_000_000_000_000_000_000n * 2n + S.NEAR_RESERVE && S.NEAR_RESERVE === NEAR / 20n, 'what a buy takes: the registrations, the NEAR offered (at least swapIn) and 0.05 NEAR for gas');
+
+  // an older relay (no swapIn): the exact-output buy as before
+  const old = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT }, fresh);
+  ok(old.map((t) => t.step).join() === 'coin_storage,buy,deposit' && methods(old[1].tx) === 'storage_deposit+near_deposit+ft_transfer_call', 'without swapIn: the same three transactions');
+  const [, owrap, oswap] = old[1].tx.actions.map((a) => (a.type === 'FunctionCall' ? a.params : null))!;
+  const oargs = oswap!.args as { receiver_id: string; amount: string; msg: string };
+  ok(owrap!.deposit === (NEAR / 4n).toString() && oargs.amount === (NEAR / 4n).toString() && oargs.receiver_id === 'dclv2.ref-dev.testnet', 'without swapIn: the NEAR offered, wrapped, all of it to the pool contract');
+  ok(
+    oargs.msg === JSON.stringify({ SwapByOutput: { pool_ids: ['real.realsies.testnet|wrap.testnet|2000'], output_token: 'real.realsies.testnet', output_amount: (98n * UNIT).toString(), skip_unwrap_near: true } }),
+    'without swapIn: SwapByOutput, exactly 98 coins',
+  );
+  const opart = S.buyTxs(cfg, ACCT, { maxIn: NEAR / 4n, units: 98n * UNIT }, { ...fresh, tokenRegistered: true, wrapRegistered: true, wnear: NEAR / 100n });
+  ok((opart[0].tx.actions[0] as { params: { deposit: string } }).params.deposit === ((NEAR * 24n) / 100n).toString(), 'without swapIn: only what the wNEAR lacks of the NEAR offered is wrapped');
 
   const sell = S.sellTxs(cfg, ACCT, { units: 40n * UNIT, minOut: 99n * 10n ** 21n }, { tokenRegistered: false, storageDeposit: 1n, wnear: 5n * 10n ** 21n }, 'game');
   ok(sell.map((t) => t.step).join() === 'coin_storage,withdraw,sell,unwrap', 'a withdrawal as NEAR: the registration, the withdrawal, the sale, the leftover wNEAR unwrapped');
@@ -103,37 +118,69 @@ console.log('a buy and a withdrawal, one approval each');
     await store.actions.walletSignIn();
     const q = await store.actions.swapQuote({ side: 'buy', near: (NEAR / 4n).toString() });
     ok(q.coins === 98 && BigInt(q.cost!) <= (NEAR * 99n) / 400n, `0.25 NEAR: ${q.coins} coins for ${Number(BigInt(q.cost!) / 10n ** 18n) / 1e6} NEAR`);
+    const swapIn = BigInt(q.swapIn ?? '0');
+    ok(swapIn === (BigInt(q.cost!) * 10_000n + 9_899n) / 9_900n && swapIn < NEAR / 4n, `v1.15: the swap sends ${Number(swapIn / 10n ** 18n) / 1e6} NEAR, the cost plus 1%, under the 0.25 offered`);
     const byCoins = await store.actions.swapQuote({ side: 'buy', coins: 25 });
-    ok(byCoins.coins! >= 25 && BigInt(byCoins.amountIn) % 10n ** 21n === 0n, `25 coins: ${Number(BigInt(byCoins.amountIn) / 10n ** 21n) / 1000} NEAR buys ${byCoins.coins}`);
+    ok(byCoins.coins! >= 25 && BigInt(byCoins.amountIn) % 10n ** 21n === 0n && BigInt(byCoins.swapIn!) <= BigInt(byCoins.amountIn), `25 coins: ${Number(BigInt(byCoins.amountIn) / 10n ** 21n) / 1000} NEAR buys ${byCoins.coins}, the swap sends ${Number(BigInt(byCoins.swapIn!) / 10n ** 18n) / 1e6}`);
     const a0 = client.swapAccountOf(ACCT);
     ok(await store.actions.swapBuy(NEAR / 4n), 'the buy');
     const f = store.get().walletTx;
-    ok(f.phase === 'done' && f.kind === 'buy' && f.coins === 98 && !f.left && !!f.tx, 'done: 98 coins, with the transaction');
+    ok(f.phase === 'done' && f.kind === 'buy' && f.coins === 98 && !f.left && !!f.tx, 'done: 98 coins, with the transaction (not "in your wallet": the little more stays there quietly)');
     ok(wallet.calls.filter((c) => c === 'tx').length === 1, 'one wallet approval');
     ok(JSON.stringify(wallet.sent[0]) === JSON.stringify(['AddKey', 'storage_deposit', 'storage_deposit+near_deposit+ft_transfer_call', 'ft_transfer_call']), `in order: the play key, the coin registration, the wrap transaction, the deposit (${wallet.sent[0].join(', ')})`);
-    ok(store.get().me?.balanceCoins === 98 && client.walletCoinsOf(ACCT) === 0, 'the coins are in the game, none stranded in the wallet');
+    const dust = client.walletCoinsOf(ACCT);
+    ok(store.get().me?.balanceCoins === 98 && dust > 0 && dust < 98 * 0.0102, `exactly 98 coins in the game; the little more the swap gave stays in the wallet (${dust}, about 1% of them)`);
     ok(store.actions.coinsEnabled(), 'the play key came along');
     const a1 = client.swapAccountOf(ACCT);
-    const leftover = a1.wnear;
-    ok(a1.wrap && leftover > 0n && leftover < NEAR / 100n, `the unused NEAR waits as wNEAR (${Number(leftover / 10n ** 18n) / 1e6})`);
-    ok(a0.near - a1.near === NEAR / 4n + 2n * 1_250_000_000_000_000_000_000n, 'the wallet paid the NEAR offered and two registrations');
+    ok(a1.wrap && a1.wnear === 0n, 'no wNEAR left: the swap spent all it was sent');
+    ok(a0.near - a1.near === swapIn + 2n * 1_250_000_000_000_000_000_000n, 'the wallet paid swapIn and two registrations; the rest of the 0.25 NEAR never left it');
 
-    // the next buy spends the wNEAR first and registers nothing
+    // the next buy registers nothing; the coins in the wallet before it (the little left over) stay out of its count
+    const q2 = await store.actions.swapQuote({ side: 'buy', near: (NEAR / 4n).toString() });
     ok(await store.actions.swapBuy(NEAR / 4n), 'a second buy');
     ok(JSON.stringify(wallet.sent[1]) === JSON.stringify(['near_deposit+ft_transfer_call', 'ft_transfer_call']), 'no key, no registrations: the wrap transaction and the deposit');
-    ok(client.swapAccountOf(ACCT).near === a1.near - (NEAR / 4n - leftover), 'only what the wNEAR lacked was wrapped');
-    ok(store.get().me?.balanceCoins === 196, '196 coins in the game');
+    ok(client.swapAccountOf(ACCT).near === a1.near - BigInt(q2.swapIn!), 'only swapIn was wrapped');
+    ok(store.get().me?.balanceCoins === 196 && !store.get().walletTx.left, '196 coins in the game');
+    ok(Math.abs(client.walletCoinsOf(ACCT) - 2 * dust) < 0.001, `the little more of both buys in the wallet (${client.walletCoinsOf(ACCT)})`);
 
-    // withdraw 40 as NEAR: the withdrawal, the sale and the leftover wNEAR back to NEAR, one approval
+    // withdraw 40 as NEAR: the withdrawal and the sale, one approval; no wNEAR to unwrap
     const sq = await store.actions.swapQuote({ side: 'sell', units: (40n * UNIT).toString() });
     const b = client.swapAccountOf(ACCT);
+    const wb = client.walletCoinsOf(ACCT);
     ok(await store.actions.swapSell(40), 'the withdrawal as NEAR');
     const g = store.get().walletTx;
     ok(g.phase === 'done' && g.kind === 'sell' && g.coins === 40 && g.near === sq.amountOut && !g.left, 'done: 40 coins as about the quoted NEAR');
+    ok(JSON.stringify(wallet.sent[2]) === JSON.stringify(['withdraw', 'ft_transfer_call']), 'one approval: withdraw, sale');
+    const c = client.swapAccountOf(ACCT);
+    ok(c.wnear === 0n && c.near === b.near + BigInt(sq.amountOut), 'the NEAR came back');
+    ok(store.get().me?.balanceCoins === 156 && client.walletCoinsOf(ACCT) === wb, '156 coins left in the game; the wallet as it was');
+  } finally {
+    done();
+  }
+}
+{
+  // an older relay (quotes without swapIn): the exact-output buy as before, its unused NEAR as wNEAR, unwrapped with
+  // the next withdrawal
+  const { client, wallet, store, done } = setup({ swapByOutput: true });
+  try {
+    await store.actions.loadConfig();
+    await store.actions.walletSignIn();
+    const q = await store.actions.swapQuote({ side: 'buy', near: (NEAR / 4n).toString() });
+    ok(q.coins === 98 && !('swapIn' in q), 'an older relay: no swapIn in the quote');
+    const a0 = client.swapAccountOf(ACCT);
+    ok(await store.actions.swapBuy(NEAR / 4n), 'the buy');
+    ok(JSON.stringify(wallet.sent[0]) === JSON.stringify(['AddKey', 'storage_deposit', 'storage_deposit+near_deposit+ft_transfer_call', 'ft_transfer_call']), 'the same approval');
+    ok(store.get().me?.balanceCoins === 98 && client.walletCoinsOf(ACCT) === 0 && !store.get().walletTx.left, 'exactly 98 coins, all in the game, none in the wallet');
+    const a1 = client.swapAccountOf(ACCT);
+    const leftover = a1.wnear;
+    ok(leftover > 0n && leftover < NEAR / 100n && a0.near - a1.near === NEAR / 4n + 2n * 1_250_000_000_000_000_000_000n, `all the NEAR offered wrapped, the unused part waits as wNEAR (${Number(leftover / 10n ** 18n) / 1e6})`);
+    ok(await store.actions.swapBuy(NEAR / 4n) && client.swapAccountOf(ACCT).near === a1.near - (NEAR / 4n - leftover), 'the next buy spends the wNEAR first');
+    const b = client.swapAccountOf(ACCT);
+    const sq = await store.actions.swapQuote({ side: 'sell', units: (40n * UNIT).toString() });
+    ok(await store.actions.swapSell(40), 'the withdrawal as NEAR');
     ok(JSON.stringify(wallet.sent[2]) === JSON.stringify(['withdraw', 'ft_transfer_call', 'near_withdraw']), 'one approval: withdraw, sale, unwrap');
     const c = client.swapAccountOf(ACCT);
-    ok(c.wnear === 0n && c.near === b.near + BigInt(sq.amountOut) + b.wnear, 'the NEAR came back, the leftover wNEAR with it');
-    ok(store.get().me?.balanceCoins === 156 && client.walletCoinsOf(ACCT) === 0, '156 coins left in the game, nothing in the wallet');
+    ok(c.wnear === 0n && c.near === b.near + BigInt(sq.amountOut) + b.wnear && store.get().me?.balanceCoins === 156, 'the NEAR came back, the leftover wNEAR with it');
   } finally {
     done();
   }
@@ -147,19 +194,21 @@ console.log('a price that moved past the swap');
     await store.actions.loadConfig();
     await store.actions.walletSignIn();
     client.priceMoves = true;
+    const q = await store.actions.swapQuote({ side: 'buy', near: (NEAR / 2n).toString() });
     ok(!(await store.actions.swapBuy(NEAR / 2n)), 'the buy did not go through');
     const f = store.get().walletTx;
     ok(f.phase === 'error' && f.error === PRICE_MOVED_BUY, `said plainly: "${f.error}"`);
     const a = client.swapAccountOf(ACCT);
-    ok(a.wnear === NEAR / 2n && (store.get().me?.balanceCoins ?? 0) === 0, 'nothing bought; the NEAR waits as wNEAR');
+    ok(a.wnear === BigInt(q.swapIn!) && (store.get().me?.balanceCoins ?? 0) === 0 && client.walletCoinsOf(ACCT) === 0, 'nothing bought; the NEAR the swap was sent waits as wNEAR');
     client.priceMoves = false;
     ok(await store.actions.swapBuy(NEAR / 4n), 'the next try');
     ok(wallet.sent[wallet.sent.length - 1].join() === 'ft_transfer_call,ft_transfer_call', 'spends that wNEAR: no new wrap');
     ok(store.get().me?.balanceCoins === 98, 'and buys');
+    const dust = client.walletCoinsOf(ACCT);
     client.priceMoves = true;
     ok(await store.actions.swapSell(10), 'a withdrawal whose sale the price moved past');
     const g = store.get().walletTx;
-    ok(g.phase === 'done' && g.left === true && client.walletCoinsOf(ACCT) === 10, 'withdrawn but not sold: the 10 coins wait in the wallet, offered on their own');
+    ok(g.phase === 'done' && g.left === true && Math.abs(client.walletCoinsOf(ACCT) - dust - 10) < 1e-6, 'withdrawn but not sold: the 10 coins wait in the wallet, offered on their own');
     ok(client.swapAccountOf(ACCT).wnear === 0n && wallet.sent[wallet.sent.length - 1].join() === 'withdraw,ft_transfer_call,near_withdraw', 'the wNEAR left from the buys went back to NEAR in the same approval');
     ok(!(await store.actions.swapSell(0, 'wallet')) && store.get().walletTx.error === PRICE_MOVED_SELL, 'and selling them while the price still moves says so');
     client.priceMoves = false;
@@ -180,11 +229,12 @@ console.log('a wallet that sends the batch at once, one that sends one at a time
     ok(await store.actions.swapBuy(NEAR / 4n), 'the buy');
     const f = store.get().walletTx;
     ok(f.phase === 'done' && f.left === true && f.coins === 98, 'the deposit ran before the swap had finished: done, the coins wait in the wallet');
-    ok(client.walletCoinsOf(ACCT) === 98 && (store.get().me?.balanceCoins ?? 0) === 0, '98 coins in the wallet, none in the game');
+    const held = client.walletCoinsOf(ACCT);
+    ok(held >= 98 && held < 99 && (store.get().me?.balanceCoins ?? 0) === 0, `98 coins and the little more in the wallet (${held}), none in the game`);
     ok(await store.actions.walletDeposit(98), 'Put in the game: the existing deposit');
-    ok(store.get().me?.balanceCoins === 98 && client.walletCoinsOf(ACCT) === 0, 'now they are in the game');
+    ok(store.get().me?.balanceCoins === 98 && Math.abs(client.walletCoinsOf(ACCT) - (held - 98)) < 1e-6, 'now they are in the game; the fraction stays in the wallet');
     ok(await store.actions.swapSell(30), 'a withdrawal as NEAR');
-    ok(store.get().walletTx.left === true && client.walletCoinsOf(ACCT) === 30, 'the sale ran before the withdrawal: the coins wait in the wallet');
+    ok(store.get().walletTx.left === true && Math.abs(client.walletCoinsOf(ACCT) - (held - 98) - 30) < 1e-6, 'the sale ran before the withdrawal: the coins wait in the wallet');
     wallet.o.noWait = false;
     ok(await store.actions.swapSell(0, 'wallet') && client.walletCoinsOf(ACCT) === 0, 'Swap to NEAR sells them');
   } finally {
@@ -199,7 +249,7 @@ console.log('a wallet that sends the batch at once, one that sends one at a time
     ok(await store.actions.swapBuy(NEAR / 4n), 'one transaction per approval: the buy');
     const sends = wallet.sent.slice(1).map((x) => x.join());
     ok(JSON.stringify(sends) === JSON.stringify(['storage_deposit', 'storage_deposit+near_deposit+ft_transfer_call', 'ft_transfer_call', 'AddKey']), `each step once, the play key last (${sends.join(' | ')})`);
-    ok(store.get().me?.balanceCoins === 98 && client.walletCoinsOf(ACCT) === 0, 'bought and deposited');
+    ok(store.get().me?.balanceCoins === 98 && client.walletCoinsOf(ACCT) < 1 && !store.get().walletTx.left, 'bought and deposited: the deposit counted as landed with the fraction left in the wallet');
   } finally {
     done();
   }
@@ -236,7 +286,7 @@ console.log('a wallet that sends the batch at once, one that sends one at a time
     await store.actions.walletSignIn();
     ok(await store.actions.swapBuy(NEAR / 4n), 'a batch that partly ran (the key, the registration, the swap)');
     ok(sent.filter((x) => x === 'storage_deposit+near_deposit+ft_transfer_call' || x === 'near_deposit+ft_transfer_call').length === 1, 'the swap went out once, never twice');
-    ok(sent[sent.length - 1] === 'ft_transfer_call' && store.get().me?.balanceCoins === 98 && client.walletCoinsOf(ACCT) === 0, 'only the deposit followed; 98 coins in the game');
+    ok(sent[sent.length - 1] === 'ft_transfer_call' && store.get().me?.balanceCoins === 98 && client.walletCoinsOf(ACCT) < 1, 'only the deposit followed; 98 coins in the game');
   } finally {
     store.actions.logout();
     client.dispose();

@@ -1,8 +1,8 @@
-// Coins for NEAR and back on Rhea (formerly Ref Finance), protocol v1.12. The relay only reads: the settings (SWAP_*),
-// the check that the pool is the game's coin against wrapped NEAR, the pool contract's quotes for GET /api/swap/quote
-// (the same question answered from a cache for a few seconds), the price of one coin for PublicConfig.nearPerCoin, and
-// the wallet's NEAR and wNEAR for WalletInfo. The browser builds and the wallet sends the swaps (web/src/wallet/swap.ts);
-// the testnet proof (tools/swap-proof.ts) quotes with these same functions.
+// Coins for NEAR and back on Rhea (formerly Ref Finance), protocol v1.12 (v1.15: a buy's swapIn). The relay only reads:
+// the settings (SWAP_*), the check that the pool is the game's coin against wrapped NEAR, the pool contract's quotes
+// for GET /api/swap/quote (the same question answered from a cache for a few seconds), the price of one coin for
+// PublicConfig.nearPerCoin, and the wallet's NEAR and wNEAR for WalletInfo. The browser builds and the wallet sends
+// the swaps (web/src/wallet/swap.ts); the testnet proof (tools/swap-proof.ts) quotes with these same functions.
 //
 // Verified on testnet (dclv2.ref-dev.testnet 2.3.14, .bl0x/topics/near-hackathon/experiments/rhea-pool-rehearsal.md):
 // `quote` and `quote_by_output` match real swaps to the unit; an amount the pool cannot fill quotes as "0"; get_pool of
@@ -112,8 +112,11 @@ async function amountOf(view: ViewFn, p: SwapPool, method: 'quote' | 'quote_by_o
 
 /**
  * What `near` buys: the coins it surely covers are those that `near` less the slippage allowance buys now, rounded
- * down to whole coins. The buy asks for exactly those (SwapByOutput) and offers all of `near`, so a price that moves
- * by up to the allowance still fills it, and the deposit that follows moves exactly what was bought.
+ * down to whole coins, and the deposit that follows moves exactly those. Since v1.15 the swap is exact-input (Swap,
+ * which the pool contract logs as the event `swap` that chart sites count; SwapByOutput is logged as `swap_desire`,
+ * which they do not): it sends `swapIn`, the cost of those coins plus the allowance (never more than `near`), and wants
+ * at least those coins back, so a price that moves by up to the allowance still fills it and a little more of the coin
+ * than that arrives. When rounding leaves `swapIn` a hair short of them now, it is all of `near`, which buys them.
  */
 export async function quoteBuy(view: ViewFn, p: SwapPool, near: bigint): Promise<SwapQuote> {
   const [amountOut, covered] = await Promise.all([
@@ -126,9 +129,16 @@ export async function quoteBuy(view: ViewFn, p: SwapPool, near: bigint): Promise
   // the pool cannot fill that many (quote_by_output says 0), or the last of them cost more than offered (the top of
   // the range): the swap could only fail
   if (coins > 0n && (cost === 0n || cost > near)) throw new SwapError('swap_too_big', 'that is more coins than are on offer right now; try a smaller amount', 400);
+  let swapIn = 0n;
+  if (coins > 0n) {
+    swapIn = ceilDiv(cost * BPS, BPS - BigInt(p.slippageBps));
+    if (swapIn > near) swapIn = near;
+    // all of `near` buys them by construction (its part less the allowance already does); anything less is asked
+    if (swapIn < near && (await amountOf(view, p, 'quote', p.wrapId, p.coin, swapIn)) < coinUnits) swapIn = near;
+  }
   return {
     side: 'buy', amountIn: near.toString(), amountOut: amountOut.toString(), minOut: less(amountOut, p.slippageBps).toString(),
-    coins: Number(coins), coinUnits: coinUnits.toString(), cost: cost.toString(), slippageBps: p.slippageBps,
+    coins: Number(coins), coinUnits: coinUnits.toString(), cost: cost.toString(), ...(coins > 0n ? { swapIn: swapIn.toString() } : {}), slippageBps: p.slippageBps,
   };
 }
 

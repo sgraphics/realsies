@@ -1,7 +1,8 @@
 // A read-only look at a deployed relay's coins-for-NEAR side (protocol v1.12), the way a signed-in wallet player's
 // browser sees it: the public config (swap, nearPerCoin), a NEP-413 sign-in with a throwaway account's key from the
 // near CLI's legacy keychain, GET /api/session/wallet with the fields a buy is built from, the quotes, and the very
-// transactions the web would hand the wallet for a buy and a withdrawal (web/src/wallet/swap.ts, loaded as it is).
+// transactions the web would hand the wallet for a buy and a withdrawal (web/src/wallet/swap.ts, loaded as it is; the
+// buy from the quote's swapIn since v1.15, a Swap, or a SwapByOutput when the relay is older).
 // It sends nothing to the chain and the key is never printed. swap-proof.ts sends the transactions; this checks that
 // the live relay feeds the builders what they need.
 //
@@ -43,10 +44,10 @@ async function api(method: string, p: string, body?: unknown, token?: string): P
 
 interface WalletTx {
   receiverId: string;
-  actions: { type: string; params: { methodName?: string; gas?: string; deposit?: string } }[];
+  actions: { type: string; params: { methodName?: string; gas?: string; deposit?: string; args?: { amount?: string; msg?: string } } }[];
 }
 interface WebSwap {
-  buyTxs(cfg: PublicConfig, accountId: string, q: { maxIn: bigint; units: bigint }, w: unknown): { step: string; tx: WalletTx }[];
+  buyTxs(cfg: PublicConfig, accountId: string, q: { maxIn: bigint; units: bigint; swapIn?: bigint }, w: unknown): { step: string; tx: WalletTx }[];
   sellTxs(cfg: PublicConfig, accountId: string, q: { units: bigint; minOut: bigint }, w: unknown, from: 'game' | 'wallet'): { step: string; tx: WalletTx }[];
   swapWalletOf(info: WalletInfo): unknown;
   buyNearNeeded(maxIn: bigint, w: unknown): bigint;
@@ -84,9 +85,14 @@ async function main(): Promise<void> {
   const bq = await api('GET', `/api/swap/quote?side=buy&near=${maxIn}`);
   ok(bq.status === 200 && (bq.body as SwapQuote).coins! >= 1, `0.25 NEAR buys ${bq.body.coins} coins for ${near(bq.body.cost ?? '0')} NEAR (${bq.status})`);
   const q = bq.body as SwapQuote;
-  const buy = web.buyTxs(cfg, player, { maxIn, units: BigInt(q.coinUnits!) }, w);
+  // v1.15: the swap sends the quote's swapIn (exact input, Swap); a relay without it gets the SwapByOutput buy
+  const buy = web.buyTxs(cfg, player, { maxIn, units: BigInt(q.coinUnits!), ...(q.swapIn ? { swapIn: BigInt(q.swapIn) } : {}) }, w);
   console.log(`      a buy, as the wallet would get it (needs ${near(web.buyNearNeeded(maxIn, w))} NEAR in the wallet):\n        ${shape(buy)}`);
   ok(buy.at(-1)!.step === 'deposit' && buy.some((t) => t.step === 'buy'), 'the buy ends with the deposit into the game');
+  const swapArgs = buy.find((t) => t.step === 'buy')!.tx.actions.at(-1)!.params.args ?? {};
+  const kind = Object.keys(JSON.parse(swapArgs.msg ?? '{}'))[0];
+  if (q.swapIn) ok(kind === 'Swap' && swapArgs.amount === q.swapIn, `the relay quotes swapIn (v1.15): the swap sends ${near(q.swapIn)} NEAR with Swap, which the pool contract logs as \`swap\``);
+  else console.log(`      this relay quotes no swapIn (before v1.15): the swap is ${kind} of ${near(swapArgs.amount ?? '0')} NEAR, logged as \`swap_desire\``);
 
   const cq = await api('GET', '/api/swap/quote?side=buy&coins=25');
   ok(cq.status === 200 && cq.body.coins >= 25, `25 coins cost about ${near(cq.body.cost ?? '0')} NEAR; the dialog would offer ${near(cq.body.amountIn)} (${cq.status})`);

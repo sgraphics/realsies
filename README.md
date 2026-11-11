@@ -62,7 +62,7 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 | Free try | One practice chat without a wallet, on mainnet and testnet: always one of the house bots, the reveal right after the call, kept outside the rounds so it can never tell who is a bot in a running round (`relay/src/game/practice.ts`) |
 | Wallet sign-in | NEAR Connect: one NEP-413 signature to sign in, a browser function-call key for plays and calls without popups; live on mainnet and testnet. A brand-new wallet signs in before its account is on chain (an implicit account is let in by its own key until someone sends it NEAR) |
 | Share a call | After a reveal, "Share" opens a ready post (the share sheet on a phone, X elsewhere) with a link whose preview is the card for that outcome: "A bot fooled me", "I spotted the bot", "I found the human", "I took a human for a bot" (`web/src/state/share.ts`, `web/public/s/`) |
-| Coins for NEAR | Inside the game: pay NEAR and the coins are in the game after one wallet approval (wrap, swap on Rhea, deposit); withdraw coins as plain NEAR the same way. Players never visit an exchange (`web/src/wallet/swap.ts`, `relay/src/swap.ts`) |
+| Coins for NEAR | Inside the game: pay NEAR and the coins are in the game after one wallet approval (wrap, swap on Rhea, deposit); withdraw coins as plain NEAR the same way. Players never visit an exchange. A buy is an exact-input swap, the kind chart sites count as a buy (`web/src/wallet/swap.ts`, `relay/src/swap.ts`) |
 
 ## The problem
 

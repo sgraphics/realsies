@@ -92,6 +92,8 @@ export interface MockOptions {
   swap?: boolean;
   /** the price moves past every swap (E204 on chain): the pool contract gives everything back (QA: &moved=1) */
   priceMoves?: boolean;
+  /** a relay from before v1.15: buy quotes have no swapIn, so the web buys with SwapByOutput */
+  swapByOutput?: boolean;
   /** Turing Hour (protocol v1.13, PublicConfig.turingHour) */
   turingHour?: { startUtc: string; minutes: number };
   /** the practice chat (protocol v1.14, PublicConfig.practice): tries a day per device; default 1, 0 = off */
@@ -1061,9 +1063,13 @@ export class MockGameClient implements GameClient, MockLedger {
       const buy = (near: bigint): SwapQuote => {
         const amountOut = this.poolQuote(true, near);
         const coins = this.poolQuote(true, less(near)) / COIN_UNIT;
+        const cost = coins > 0n ? this.poolCost(coins * COIN_UNIT) : 0n;
+        // v1.15: what the swap sends, the cost plus the allowance, at most `near` (all of it when that is short by rounding)
+        let swapIn = (cost * 10_000n + (10_000n - bps) - 1n) / (10_000n - bps);
+        if (swapIn > near || this.poolQuote(true, swapIn) < coins * COIN_UNIT) swapIn = near;
         return {
           side: 'buy', amountIn: near.toString(), amountOut: amountOut.toString(), minOut: less(amountOut).toString(), coins: Number(coins),
-          coinUnits: (coins * COIN_UNIT).toString(), cost: (coins > 0n ? this.poolCost(coins * COIN_UNIT) : 0n).toString(), slippageBps: sw.slippageBps,
+          coinUnits: (coins * COIN_UNIT).toString(), cost: cost.toString(), ...(coins > 0n && !this.o.swapByOutput ? { swapIn: swapIn.toString() } : {}), slippageBps: sw.slippageBps,
         };
       };
       if (q.side === 'sell') {
@@ -1123,16 +1129,21 @@ export class MockGameClient implements GameClient, MockLedger {
         wnear -= amount;
         near += amount;
       } else if (tx.receiverId === sw.wrapId && m === 'ft_transfer_call') {
-        // a buy: wNEAR to the pool contract with SwapByOutput
+        // a buy: wNEAR to the pool contract, with Swap (v1.15: all of it in, at least min_output_amount of the coin out)
+        // or with SwapByOutput (an older relay's quote: exactly output_amount, at most all of it, the rest stays wNEAR)
         const amount = BigInt(String(args.amount ?? '0'));
         if (dep !== 1n) throw new Error('ft_transfer_call needs exactly 1 yoctoNEAR.');
         if (args.receiver_id !== sw.dex) throw new Error('wNEAR goes to the pool contract here.');
         if (amount > wnear) throw new Error("The account doesn't have enough balance");
-        const msg = JSON.parse(String(args.msg)).SwapByOutput as { pool_ids: string[]; output_token: string; output_amount: string } | undefined;
-        if (!msg || msg.pool_ids?.join() !== sw.poolId || msg.output_token !== this.config.tokenId) throw new Error('Not a SwapByOutput of the coin.');
-        const units = BigInt(msg.output_amount);
-        const cost = this.poolCost(units);
-        if (this.o.priceMoves || cost > amount) continue; // E204: slippage error; every wNEAR comes back
+        type BuyMsg = { pool_ids: string[]; output_token: string; min_output_amount?: string; output_amount?: string };
+        const parsed = JSON.parse(String(args.msg)) as { Swap?: BuyMsg; SwapByOutput?: BuyMsg };
+        const msg = parsed.Swap ?? parsed.SwapByOutput;
+        if (!msg || msg.pool_ids?.join() !== sw.poolId || msg.output_token !== this.config.tokenId) throw new Error('Not a swap of wNEAR for the coin.');
+        const exactIn = !!parsed.Swap;
+        const units = exactIn ? this.poolQuote(true, amount) : BigInt(msg.output_amount ?? '0');
+        const cost = exactIn ? amount : this.poolCost(units);
+        // E204: slippage error; every wNEAR comes back
+        if (this.o.priceMoves || (exactIn ? units < BigInt(msg.min_output_amount ?? '0') : cost > amount)) continue;
         if (!(this.st.registered ?? []).includes(account)) throw new Error('The account is not registered on the coin: the bought coins could not arrive.');
         wnear -= cost;
         coins = c4(coins + unitsToCoins(units));

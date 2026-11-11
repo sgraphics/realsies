@@ -1130,8 +1130,13 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
         const need = buyNearNeeded(near, wal);
         if (wal.near !== null && need > wal.near) throw new Error(nearShortText(need, wal.near));
         const units = BigInt(q.coinUnits);
+        // v1.15: the swap sends swapIn for at least `units` (an older relay's quote has none: SwapByOutput, exactly `units`)
+        const swapIn = q.swapIn ? BigInt(q.swapIn) : undefined;
         const before: Holdings = { coin: BigInt(info.walletBalance), game: coinsToUnits(me.balanceCoins, unit), wnear: wal.wnear };
-        // the coins that came in, wherever they are now (the wallet, or on into the game)
+        // the coins that came in, wherever they are now (the wallet, or on into the game). An exact-input swap gives a
+        // little more than `units` (up to the allowance, about 1% of them) and the deposit moves exactly `units`, so
+        // that little stays in the wallet: under `units` by far, it leaves the wallet checks below as they were (the
+        // deposit ran while the wallet holds less than `units` more than before)
         const up = (h: Holdings) => h.coin - before.coin + (h.game - before.game);
         // after a refused batch each step goes alone and only if it did not land meanwhile: never a second buy
         let buySent = false;
@@ -1153,7 +1158,7 @@ export function createStore(client: GameClient, wallet?: WalletApi, opts: { now?
         };
         // one approval: the play key (while this browser has none), the registration on the coin, the swap, the deposit
         const key = await playKeyStep(s, cfg);
-        const txs = buyTxs(cfg, s.accountId, { maxIn: near, units }, wal);
+        const txs = buyTxs(cfg, s.accountId, { maxIn: near, units, ...(swapIn !== undefined ? { swapIn } : {}) }, wal);
         const steps: Step[] = [...(key ? [key.step] : []), ...txs.map((t) => ({ tx: t.tx, landed: landed(t.step) }))];
         set({ walletTx: { phase: 'wallet', kind: 'buy', coins } });
         let sent: SendResult | null = null;
