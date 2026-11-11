@@ -28,7 +28,7 @@ import sys
 import time
 
 SERVER = os.environ.get('SERVER', 'root@realsies-server')
-OWN = set(os.environ.get('OWN', 'realsies.near owner-two.near').split())
+OWN = set(os.environ.get('OWN', 'realsies.near owner-two.near owner-three.near').split())
 STATE = os.environ.get('STATE') or os.path.join(os.environ.get('TEMP') or '/tmp', 'realsies-join-watch')
 CURSOR = '/var/tmp/realsies-join-watch.cursor'
 UNIT = 'realsies-mainnet'
