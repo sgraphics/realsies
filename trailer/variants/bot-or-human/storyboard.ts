@@ -43,7 +43,7 @@ export const TEXT = {
 };
 
 /** Words the clip never shows (token words). */
-const BANNED = /\b(bets?|betting|stakes?|staking|odds|wagers?|pools?|markets?|prices?)\b/i;
+export const BANNED = /\b(bets?|betting|stakes?|staking|odds|wagers?|pools?|markets?|prices?)\b/i;
 
 export interface TranscriptLine {
   t?: number;
@@ -84,7 +84,7 @@ export interface Plan {
 // ---------------------------------------------------------------- reading and checking
 
 /** The glyphs the pixel fonts draw (engine/font.ts and the promo extras in src/scenes/promo/text.ts). */
-const DRAWABLE = /^[A-Za-z0-9 .,?!'"\-:/()_…%+=<>#*$;[\]|·→✓×−–’]*$/u;
+export const DRAWABLE = /^[A-Za-z0-9 .,?!'"\-:/()_…%+=<>#*$;[\]|·→✓×−–’]*$/u;
 
 /**
  * Typography the pixel font has no glyph for, drawn as its plain form: curly quotes, dashes, accents (é as e). The
