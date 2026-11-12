@@ -67,7 +67,7 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 ## Numbers so far
 
 <!-- stats:start -->
-Counted on 2026-11-12 at 07:36 UTC by `scripts/stats.py`, from the game's own records and the chain.
+Counted on 2026-11-12 at 07:39 UTC by `scripts/stats.py`, from the game's own records and the chain.
 
 | | |
 |---|---|
@@ -78,7 +78,7 @@ Counted on 2026-11-12 at 07:36 UTC by `scripts/stats.py`, from the game's own re
 | Chain | 201 transactions by the mainnet relay, 0 failed. Testnet since Nov 4: 167 rounds settled, 1,359 transactions |
 | REAL | 13.7 million REAL (1.4% of the supply) bought out of the pool; 3.55 NEAR paid in, 0.07 NEAR paid out, 3.48 NEAR in the pool. Most of it is the team's own play so far |
 | Community | X @realsieslol: 67 followers, Telegram t.me/realsieslol: 11 members |
-| Code | 118 commits since Nov 4; relay 136 tests, web 587 checks, vault 19 tests |
+| Code | 90 commits since Nov 4; relay 136 tests, web 587 checks, vault 19 tests |
 <!-- stats:end -->
 
 ## The problem
