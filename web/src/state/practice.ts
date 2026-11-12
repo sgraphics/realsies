@@ -1,17 +1,20 @@
-// The practice chat (protocol v1.14): one free try for a visitor without a wallet, a chat with a house bot outside the
-// rounds and the reveal right after the call. This browser keeps a random device id (the relay counts tries per device
-// and per IP) and the day of its own try, so "Before you play" knows at once that it was used. The words of the try
-// live here, in one place.
+// The practice chat (protocol v1.14): free tries for a visitor without a wallet (PublicConfig.practice.perDay a day),
+// each a chat with a house bot outside the rounds and the reveal right after the call. This browser keeps a random
+// device id (the relay counts tries per device and per IP) and how many it had today, so "Before you play" knows at
+// once when they are used. The words of the try live here, in one place.
 
-import type { PracticeRefusal, PublicConfig } from '../../../shared/protocol.ts';
+import type { PracticeRefusal, PublicConfig, Seat } from '../../../shared/protocol.ts';
 import { BOTS_NAPPING } from './notices.ts';
 
 const DEVICE_KEY = 'realsies:device';
 const TRIED_KEY = 'realsies:practice';
 
-/** The choice after the terms, and the one plain line when there is no try. */
-export const TRY_FREE = 'Try one chat free';
-export const PRACTICE_USED = "You've had your free chat today.";
+/** The room's hint for a guest while a try is left (Lobby.tsx); with none left it says "Tap anyone to chat". */
+export const HINT_FREE = "Tap anyone to chat. It's free: no wallet needed";
+/** The terms step's button and the choice after the terms; the wallet's way under it; the one plain line when there is no try. */
+export const TRY_FREE = 'Start free chat';
+export const WALLET_LINK = 'I have a NEAR wallet: sign in';
+export const PRACTICE_USED = "You've had your free chats for today.";
 export const PRACTICE_CAP = 'The free chats are all gone for today.';
 /** The reveal (PracticeResult.tsx). */
 export const REVEAL_TITLE = 'That was a bot';
@@ -19,6 +22,10 @@ export const SPOTTED = 'You spotted it';
 export const FOOLED = 'It fooled you';
 export const NO_CALL = 'No call in time';
 export const INVITE = 'Real rounds have real people and coins. Sign in with a wallet to play them.';
+export const PLAY_AGAIN = 'Play again';
+/** Where to follow the game: under the reveal's invite, and at the bottom of the room's menu. */
+export const TELEGRAM_URL = 'https://t.me/realsieslol';
+export const X_URL = 'https://x.com/realsieslol';
 
 /** Every refusal the relay gives a try (the code of a refused POST, and GET /api/practice's reason). */
 export const REFUSALS: readonly PracticeRefusal[] = ['practice_used', 'practice_cap', 'practice_off', 'bots_unavailable', 'beta_closed'];
@@ -91,6 +98,17 @@ export function forgetPractice(): void {
 /** The free try is on at this relay (and the beta is not over). */
 export function practiceOn(cfg: PublicConfig | undefined): boolean {
   return !!cfg?.practice && cfg.practice.perDay > 0 && !cfg.betaClosed;
+}
+
+/** On here, and this browser has a try left today (the relay may still say no: its IP count, the day's cap). */
+export function tryLeft(cfg: PublicConfig | undefined, now = Date.now()): boolean {
+  return practiceOn(cfg) && !triedToday(cfg?.practice?.perDay, now);
+}
+
+/** "Play again": another open character of the room, never the one just played (at random); none left: undefined. */
+export function againSeat(seats: readonly Seat[], playedSeed: string, rnd: () => number = Math.random): Seat | undefined {
+  const others = seats.filter((x) => x.state === 'open' && x.skin.seed !== playedSeed);
+  return others[Math.floor(rnd() * others.length)];
 }
 
 /**

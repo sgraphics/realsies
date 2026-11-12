@@ -102,6 +102,10 @@
 .login-try { width: 100%; min-height: 52px; font-size: clamp(11px, calc(var(--px) * 3.4), 17px); white-space: normal; text-align: center; line-height: 1.45; }
 @media (max-width: 480px) { .login-try { font-size: 12px; padding-left: 8px; padding-right: 8px; } }
 @media (max-height: 520px) and (orientation: landscape) { .login-try { min-height: 40px; } }
+/* a free try left: the terms' button starts it; the wallet is one small plain link under it */
+.login-wallet { margin: 0; text-align: center; font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.4), 16px); }
+.login-wallet .px-link { font: inherit; padding: 4px 6px; }
+.login-wallet .px-link:disabled { opacity: 0.5; cursor: default; }
 .login-why { margin: 0; font-family: var(--font-body); font-size: clamp(14px, calc(var(--px) * 3.6), 18px); line-height: 1.3; }
 
 /* the reveal, right after the call: who it was, the verdict, the card, the way to the real rounds */
@@ -114,5 +118,8 @@
 .practice-verdict.px-badge { align-self: flex-start; height: auto; margin: 0; padding: 6px 10px; gap: 8px; font-size: clamp(10px, calc(var(--px) * 3), 14px); line-height: 1.3; }
 .practice-persona { margin: 0; }
 .practice-invite { margin: 0; font-family: var(--font-body); font-size: clamp(15px, calc(var(--px) * 3.8), 19px); line-height: 1.3; }
+/* where to follow Turing Hour: one quiet line under the invite */
+.practice-follow { margin: -4px 0 0; font-family: var(--font-body); font-size: clamp(13px, calc(var(--px) * 3.2), 15px); line-height: 1.35; color: var(--ink-dim); }
+.practice-follow .px-link { font: inherit; }
 .practice-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .practice-actions .px-btn { flex: 1 1 180px; min-height: 48px; }

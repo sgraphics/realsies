@@ -2,8 +2,10 @@
 // call -> locked) and layers the dialogs (sign-in, seat, deposit, results, verify, past rounds) on top. A guest
 // watches the room without a session; tapping a character (or "Sign in") opens "Before you play" (Login.tsx): the
 // terms with one checkbox, then the sign-in; once signed in, the tapped character's seat opens. Where the relay offers
-// it, a guest may instead try one practice chat (protocol v1.14): the chat and call screens as in a round, then the
-// reveal (PracticeResult.tsx) with the way to sign in.
+// it, a guest may instead play free practice chats (protocol v1.14; PublicConfig.practice.perDay a day): the chat and
+// call screens as in a round, then the reveal (PracticeResult.tsx) with "Play again" while a try is left and the way to
+// sign in. While a try is left the terms' button starts the chat with the tapped character, and once the terms are
+// accepted a tap on a character starts it with no prompt at all.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Level, Seat, ThemeId } from '../../shared/protocol.ts';
@@ -29,6 +31,7 @@ import { applyTheme } from './ui/theme.ts';
 import { qaAmount, qaConsent, qaTicked, runQa } from './qa.ts';
 import { airdropOn, holdsAny, panelMode } from './state/airdrop.ts';
 import { termsAccepted } from './state/consent.ts';
+import { againSeat, tryLeft } from './state/practice.ts';
 import type { PendingSeat } from './state/guest.ts';
 import { BETA_OVER, BETA_OVER_LANDING, BETA_REDIRECT_MS, betaEndOf, betaOverUrl, chatRunning, consumeBetaOver } from './state/beta.ts';
 
@@ -56,8 +59,8 @@ export function App({ store }: { store: Store }) {
     return termsAccepted();
   });
   // "Before you play" for a guest, with the seat that was tapped (or none: the HUD's Sign in); afterPractice: opened
-  // from a practice chat's reveal
-  const [login, setLogin] = useState<{ seat?: PendingSeat; afterPractice?: boolean } | null>(null);
+  // from a practice chat's reveal; wallet: opened to sign in (no free chat offered)
+  const [login, setLogin] = useState<{ seat?: PendingSeat; afterPractice?: boolean; wallet?: boolean } | null>(null);
   // the tapped seat, waiting for the player's own room after sign-in
   const pending = useRef<PendingSeat | null>(null);
   // the REAL auction's deposit dialog (Get $REAL on the banner); a guest signs in first, then it opens
@@ -216,17 +219,34 @@ export function App({ store }: { store: Store }) {
 
   const testnet = !!(s.config?.testMode || s.config?.network === 'testnet');
   const openTerms = () => setTerms(true);
-  const openLogin = (seat?: PendingSeat) => setLogin({ seat });
-  // "Try one chat free" (v1.14): the character tapped (or, from the HUD's Sign in, one of the room's) is the partner's look
-  const tryPractice = async (): Promise<PracticeAnswer> => {
-    const want = login?.seat;
+  const openLogin = (seat?: PendingSeat, wallet?: boolean) => setLogin({ seat, ...(wallet ? { wallet } : {}) });
+  // a free practice chat (v1.14): the character tapped (or, from the HUD's Play free, one of the room's) is the partner's look
+  const startFree = async (want?: PendingSeat): Promise<PracticeAnswer> => {
     const lv = want?.level ?? s.level;
     const seats = s.rooms[lv]?.seats ?? [];
     const seat = want ? seats[want.index] : seats[Math.floor(Math.random() * seats.length)];
     if (!seat) return { ok: false, error: 'The room is still loading. Try again in a moment.' };
-    const a = await store.actions.startPractice({ level: lv, skin: seat.skin });
+    return store.actions.startPractice({ level: lv, skin: seat.skin });
+  };
+  // "Start free chat" in "Before you play"
+  const tryPractice = async (): Promise<PracticeAnswer> => {
+    const a = await startFree(login?.seat);
     if (a.ok) setLogin(null);
     return a;
+  };
+  // a guest's tap on a character: with the terms accepted and a try left, straight into the chat (no prompt); else, or
+  // when the relay says no (its IP count, the day's cap), "Before you play" with the line why
+  const tapAsGuest = (want: PendingSeat) => {
+    if (!termsAccepted() || !tryLeft(s.config)) return openLogin(want);
+    void startFree(want).then((a) => !a.ok && openLogin(want));
+  };
+  // "Play again" on the reveal: another chat at once, with another open character of the same room
+  const playAgain = () => {
+    const pr = s.practice;
+    if (!pr) return;
+    const seat = againSeat(s.rooms[pr.level]?.seats ?? [], pr.skin.seed);
+    if (!seat) return store.actions.endPractice();
+    void store.actions.startPractice({ level: pr.level, skin: seat.skin }).then((a) => !a.ok && openLogin());
   };
   // Get $REAL: the deposit dialog for a wallet player; a guest signs in first (mainnet, while the auction runs)
   const openAuction = auctionDepositOn(s.config, Date.now())
@@ -234,7 +254,7 @@ export function App({ store }: { store: Store }) {
         if (s.session) setAuction(true);
         else {
           pendingAuction.current = true;
-          openLogin();
+          openLogin(undefined, true);
         }
       }
     : undefined;
@@ -249,8 +269,8 @@ export function App({ store }: { store: Store }) {
         store={store}
         guest
         selectedSeat={login?.seat?.level === s.level ? login.seat.index : null}
-        onSeat={(lv, seat) => openLogin({ level: lv, index: seat.index })}
-        onSignIn={() => openLogin()}
+        onSeat={(lv, seat) => tapAsGuest({ level: lv, index: seat.index })}
+        onSignIn={(wallet) => openLogin(undefined, wallet)}
         onAuctionDeposit={openAuction}
         onResults={() => openLogin()}
         onRounds={() => openLogin()}
@@ -308,6 +328,7 @@ export function App({ store }: { store: Store }) {
           }}
           onPractice={reconsent ? undefined : tryPractice}
           afterPractice={!!login?.afterPractice}
+          wallet={!!login?.wallet}
         />
       )}
       {practicing && s.practice?.result && (
@@ -315,9 +336,10 @@ export function App({ store }: { store: Store }) {
           store={store}
           onSignIn={() => {
             store.actions.endPractice();
-            setLogin({ afterPractice: true });
+            setLogin({ afterPractice: true, wallet: true });
           }}
           onBack={() => store.actions.endPractice()}
+          onPlayAgain={playAgain}
         />
       )}
       {auction && s.session && !modal && <AuctionDepositDialog store={store} onClose={() => setAuction(false)} amount={qaAmount(location.search)} />}

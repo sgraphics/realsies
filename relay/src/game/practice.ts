@@ -17,8 +17,9 @@
 // free house persona, as before. Nothing changes once the chat runs: no swapping partners mid-chat (that would give it
 // away), and a persona still reads only its own languages (src/persona/languages.ts).
 //
-// One try a day per device (an id the browser keeps) and per IP, whichever is reached first (GUEST_CHATS_PER_DAY, 0 =
-// off), and a cap a day for every guest together (GUEST_CHATS_DAILY_CAP) so NEAR AI credits stay safe. None while the
+// GUEST_CHATS_PER_DAY tries a day per device (an id the browser keeps; 0 = off) and GUEST_CHATS_PER_IP per IP for every
+// device behind it together (default 4 times as many: many phones share one carrier address), whichever is reached
+// first, and a cap a day for every guest together (GUEST_CHATS_DAILY_CAP) so NEAR AI credits stay safe. None while the
 // bots are out of credits or the beta is closed. The try counts from the moment it is reserved (POST /api/practice),
 // so asking for many tickets gets nothing more; a chat that could not start gives it back. The guest's id is random,
 // issued here, bound to the IP that asked, and the socket takes a one-time ticket, like a wallet session's.
@@ -158,7 +159,7 @@ export class Practice implements BotHost {
     game.db.sql.exec(SCHEMA);
     log.info(
       this.on
-        ? `practice chats for guests: ${game.cfg.guestChatsPerDay} a day per device and per IP, ${game.cfg.guestChatsDailyCap} a day in all (GUEST_CHATS_PER_DAY, GUEST_CHATS_DAILY_CAP)`
+        ? `practice chats for guests: ${game.cfg.guestChatsPerDay} a day per device, ${this.perIp} a day per IP, ${game.cfg.guestChatsDailyCap} a day in all (GUEST_CHATS_PER_DAY, GUEST_CHATS_PER_IP, GUEST_CHATS_DAILY_CAP)`
         : 'practice chats for guests: off (GUEST_CHATS_PER_DAY or GUEST_CHATS_DAILY_CAP is 0)',
     );
   }
@@ -195,6 +196,11 @@ export class Practice implements BotHost {
     return this.game.cfg.guestChatsPerDay > 0 && this.game.cfg.guestChatsDailyCap > 0;
   }
 
+  /** Tries a day from one IP, every device behind it together (GUEST_CHATS_PER_IP; 0: 4 times the device's). */
+  get perIp(): number {
+    return this.game.cfg.guestChatsPerIp || 4 * this.game.cfg.guestChatsPerDay;
+  }
+
   /** The IP as the table keeps it: keyed with the relay's skin secret, so the database holds no address. */
   private ipKey(ip: string): string {
     return crypto.createHmac('sha256', this.game.skinSecret || 'realsies').update(`practice|${ip}`).digest('hex').slice(0, 32);
@@ -218,8 +224,7 @@ export class Practice implements BotHost {
     if (this.game.betaClosed()) return 'beta_closed';
     if (!this.game.credits.usable('house')) return 'bots_unavailable';
     const day = utcDay();
-    const per = this.game.cfg.guestChatsPerDay;
-    if (this.count(day, { device }) >= per || this.count(day, { ip: ipKey }) >= per) return 'practice_used';
+    if (this.count(day, { device }) >= this.game.cfg.guestChatsPerDay || this.count(day, { ip: ipKey }) >= this.perIp) return 'practice_used';
     if (this.count(day) >= this.game.cfg.guestChatsDailyCap) return 'practice_cap';
     return null;
   }

@@ -337,6 +337,9 @@ html.kb-open .world-chat .chat-info-slot.side { visibility: hidden; }
 .who-agents { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-body); font-size: 14px; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
 .who-agents .px-icon { width: 14px; height: 14px; }
 .hud .hud-menu a.hud-menu-item { text-decoration: none; }
+/* Telegram and X: two small entries side by side at the bottom of the room's menu */
+.hud-menu-follow { display: flex; gap: 6px; }
+.hud .hud-menu .hud-menu-follow .px-btn { flex: 1 1 0; min-width: 0; }
 @keyframes nudge { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
 @media (max-width: 599px) {
   .who-title { gap: 3px 10px; }

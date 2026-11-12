@@ -2,9 +2,13 @@
 // the short terms with one checkbox, "I'm 18 or older, I play at my own risk and I accept the terms", and Continue,
 // compulsory (no close, no click outside, Esc does nothing); then the sign-in: a NEAR wallet (NEAR Connect), and on
 // testnet the six test players too. Once signed in the prompt goes and the tapped character's seat opens (app.tsx).
-// Where the relay offers the practice chat (protocol v1.14), the sign-in step has two choices: "Try one chat free"
-// (one chat with a house bot, the reveal right after the call) and the wallet. When this browser or its network had
-// its try today, or every free chat of the day is gone, the try gives way to one plain line saying why.
+// Where the relay offers the practice chat (protocol v1.14) and this browser has a free try left today, the terms'
+// button is "Start free chat": it accepts the terms and starts the chat with the tapped character at once (a chat with
+// a house bot, the reveal right after the call); a small link under it, "I have a NEAR wallet: sign in", goes to the
+// sign-in instead. (A guest who accepted the terms before gets no prompt at all on a tap: app.tsx starts the chat.)
+// The sign-in step offers the same two choices, "Start free chat" and the wallet, unless it was opened to sign in
+// (`wallet`: the menu's Sign in, the reveal's, Get $REAL). When this browser or its network had its tries today, or
+// every free chat of the day is gone, the try gives way to one plain line saying why, and the terms say Continue.
 // A signed-in player whose accepted terms are older than the current version (state/consent.ts) gets the first step
 // alone. Accepting is remembered in this browser until the terms version changes.
 
@@ -12,7 +16,7 @@ import { useEffect, useState } from 'preact/hooks';
 import type { PracticeAnswer, Store } from '../state/store.ts';
 import { useStore } from '../state/hooks.ts';
 import { acceptTerms, termsAccepted } from '../state/consent.ts';
-import { TRY_FREE, practiceOn, refusalLine } from '../state/practice.ts';
+import { TRY_FREE, WALLET_LINK, practiceOn, refusalLine, tryLeft } from '../state/practice.ts';
 import { Button, Icon } from '../ui/kit.tsx';
 import { useEscape } from '../ui/hooks.ts';
 import { TermsList } from './Terms.tsx';
@@ -30,10 +34,12 @@ export function LoginModal(p: {
   onConsent(): void;
   /** the guest closed the sign-in step: back to watching */
   onClose(): void;
-  /** v1.14: "Try one chat free" (a guest, where the relay offers it); the app closes the prompt once it starts */
+  /** v1.14: "Start free chat" (a guest, where the relay offers it); the app closes the prompt once it starts */
   onPractice?(): Promise<PracticeAnswer>;
   /** opened from the reveal of a practice chat: the guest knows the try is used, so no line says it */
   afterPractice?: boolean;
+  /** opened to sign in (the menu's "Sign in to play", the reveal's Sign in, Get $REAL): the wallet, no free chat offered */
+  wallet?: boolean;
 }) {
   const s = useStore(p.store);
   const cfg = s.config;
@@ -56,11 +62,13 @@ export function LoginModal(p: {
       live = false;
     };
   }, [tryOn]);
-  const offerTry = tryOn && (offer === null || offer.ok);
+  // the wallet's way chosen (opened to sign in, or the terms' link): the sign-in alone
+  const [wallet, setWallet] = useState(!!p.wallet);
+  const offerTry = tryOn && !wallet && tryLeft(cfg) && (offer === null || offer.ok);
   // (a status that could not be read just leaves the try out: the sign-in is still there)
   const why = tryOn && !p.afterPractice && offer && !offer.ok ? refusalLine(offer.reason) ?? tapError : null;
-  const tryIt = async () => {
-    if (!p.onPractice || starting) return;
+  const tryIt = async (): Promise<PracticeAnswer | null> => {
+    if (!p.onPractice || starting) return null;
     setStarting(true);
     const a = await p.onPractice();
     // started: the app has closed the prompt; refused: the plain line in place of the try
@@ -69,6 +77,7 @@ export function LoginModal(p: {
       setOffer(a);
       setStarting(false);
     }
+    return a;
   };
   const close = () => {
     if (step === 'signin' && !busy && !starting) p.onClose();
@@ -95,6 +104,21 @@ export function LoginModal(p: {
       p.onConsent();
       if (!p.consentOnly) setStep('signin');
     };
+    // a free try left: the terms' button starts it at once (refused: the sign-in step, with the line why)
+    const startFree = async () => {
+      if (!ticked || starting) return;
+      acceptTerms();
+      p.onConsent();
+      const a = await tryIt();
+      if (a && !a.ok) setStep('signin');
+    };
+    const toWallet = () => {
+      if (!ticked || starting) return;
+      acceptTerms();
+      p.onConsent();
+      setWallet(true);
+      setStep('signin');
+    };
     return (
       <div class="scrim login-scrim">
         <div class="modal narrow px-panel sheet-enter px-terms login-modal login-consent" role="dialog" aria-modal="true" aria-labelledby="login-title">
@@ -113,8 +137,21 @@ export function LoginModal(p: {
               <span>{CONSENT_LINE}</span>
             </label>
             <div class="px-row center">
-              <Button kind="primary" disabled={!ticked} onClick={accept}>Continue</Button>
+              {offerTry ? (
+                <Button kind="primary" class="login-start" disabled={!ticked || starting} onClick={() => void startFree()}>
+                  <Icon name="chat" /> {starting ? 'Starting…' : TRY_FREE}
+                </Button>
+              ) : (
+                <Button kind="primary" disabled={!ticked} onClick={accept}>Continue</Button>
+              )}
             </div>
+            {offerTry && (walletOn || testMode) && (
+              <p class="login-wallet">
+                <button type="button" class="px-link" disabled={!ticked || starting} onClick={toWallet}>
+                  {walletOn ? WALLET_LINK : 'Play as a test player'}
+                </button>
+              </p>
+            )}
           </div>
         </div>
       </div>

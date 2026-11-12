@@ -2,7 +2,8 @@
 // asked about, started with the character tapped, chatted, called, and revealed at once: "It fooled you" for a human
 // call, "You spotted it" for a bot call, no verdict for a missed one. Then this browser has had it (and the mock relay
 // knows the device), the day's cap, the napping bots and "off" refuse it, a guest's socket takes nothing of the round,
-// and a sign-in ends a practice. The real client: the HTTP and socket wiring with fakes. Run by mock-flow.test.ts.
+// and a sign-in ends a practice. Five a day: "Play again" from the reveal with another character until none is left.
+// The real client: the HTTP and socket wiring with fakes. Run by mock-flow.test.ts.
 
 class MemStorage {
   private m = new Map<string, string>();
@@ -22,7 +23,7 @@ const P = await import('../src/state/practice.ts');
 const { BOTS_NAPPING } = await import('../src/state/notices.ts');
 const { isCounting } = await import('../src/state/countdown.ts');
 import type { AppState, Store } from '../src/state/store.ts';
-import type { ServerMsg } from '../../shared/protocol.ts';
+import type { Seat, ServerMsg } from '../../shared/protocol.ts';
 
 let failures = 0;
 let passes = 0;
@@ -83,11 +84,16 @@ console.log('practice chat: the config and the words');
 {
   ok(JSON.stringify(mockConfig({}).practice) === '{"perDay":1}', 'the mock relay offers the free try, one a day, like the relay by default');
   ok(mockConfig({ practicePerDay: 0 }).practice === undefined, 'practicePerDay 0: off');
-  ok(P.TRY_FREE === 'Try one chat free' && P.REVEAL_TITLE === 'That was a bot' && P.SPOTTED === 'You spotted it' && P.FOOLED === 'It fooled you', 'the words of the try and the reveal');
+  ok(P.TRY_FREE === 'Start free chat' && P.REVEAL_TITLE === 'That was a bot' && P.SPOTTED === 'You spotted it' && P.FOOLED === 'It fooled you', 'the words of the try and the reveal');
+  ok(P.HINT_FREE === "Tap anyone to chat. It's free: no wallet needed" && P.WALLET_LINK === 'I have a NEAR wallet: sign in' && P.PLAY_AGAIN === 'Play again', 'the room hint, the wallet link and Play again');
+  ok(P.PRACTICE_USED === "You've had your free chats for today." && P.PRACTICE_CAP === 'The free chats are all gone for today.', 'the lines with no try left: true for one a day and for five');
+  const counter = /\b(one|first|1|2|3|4|5)\b|\d+ (left|of)/i;
+  ok(![P.HINT_FREE, P.TRY_FREE, P.PRACTICE_USED, P.PRACTICE_CAP, P.PLAY_AGAIN].some((t) => counter.test(t)), 'no "one" or "first" chat, and no counter');
+  ok(P.TELEGRAM_URL === 'https://t.me/realsieslol' && P.X_URL === 'https://x.com/realsieslol', 'where to follow: Telegram and X');
   ok(P.refusalLine('practice_used') === P.PRACTICE_USED && P.refusalLine('practice_cap') === P.PRACTICE_CAP && P.refusalLine('bots_unavailable') === BOTS_NAPPING, 'one plain line for used, all gone, and napping bots (the existing words)');
   ok(P.refusalLine('practice_off') === null && P.refusalLine('beta_closed') === null, 'no line when it is simply off, or the beta is over (the app says that)');
   const banned = /\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i;
-  ok(![P.TRY_FREE, P.PRACTICE_USED, P.PRACTICE_CAP, P.REVEAL_TITLE, P.SPOTTED, P.FOOLED, P.NO_CALL, P.INVITE].some((t) => banned.test(t)), 'no banned vocabulary');
+  ok(![P.TRY_FREE, P.PRACTICE_USED, P.PRACTICE_CAP, P.REVEAL_TITLE, P.SPOTTED, P.FOOLED, P.NO_CALL, P.INVITE, P.HINT_FREE, P.WALLET_LINK, P.PLAY_AGAIN].some((t) => banned.test(t)), 'no banned vocabulary');
   fresh();
   const id = P.deviceId();
   ok(/^[A-Za-z0-9_-]{16,64}$/.test(id) && P.deviceId() === id, 'a device id, made once and kept');
@@ -96,6 +102,26 @@ console.log('practice chat: the config and the words');
   ok(P.triedToday(1) && !P.triedToday(2), 'one try marked: used at one a day, not at two');
   P.forgetPractice();
   ok(!P.triedToday(1), 'forgotten (QA)');
+  // five a day: a try left after one, two, ... four; none after five
+  const five = mockConfig({ practicePerDay: 5 });
+  ok(P.tryLeft(five) && P.tryLeft(mockConfig({})) && !P.tryLeft(mockConfig({ practicePerDay: 0 })) && !P.tryLeft(undefined), 'a try left on a first visit (on), none when off');
+  const left: boolean[] = [];
+  for (let i = 0; i < 5; i++) {
+    P.markTried();
+    left.push(P.tryLeft(five));
+  }
+  ok(left.join() === 'true,true,true,true,false', 'five a day: tries left after 1 to 4, none after 5 (' + left.join() + ')');
+  ok(!P.tryLeft({ ...five, betaClosed: { redirect: 'https://x', reason: 'spend_cap' } } as never), 'none once the beta is over');
+  P.forgetPractice();
+  P.markTried(Date.now(), true, 5);
+  ok(!P.tryLeft(five), 'the relay said used (this network had its tries): none left here either');
+  P.forgetPractice();
+  // Play again: another open character of the room, never the one just played
+  const seat = (i: number, state: 'open' | 'called' = 'open') => ({ index: i, state, skin: { seed: String(i).repeat(64).slice(0, 64), name: 'N' + i } }) as never as Seat;
+  const room = [seat(0), seat(1), seat(2, 'called'), seat(3)];
+  const picks = new Set(Array.from({ length: 60 }, (_, k) => P.againSeat(room, room[1].skin.seed, () => (k % 10) / 10)?.index));
+  ok([...picks].sort().join() === '0,3', 'Play again: another open character, never the one just played or a called one (' + [...picks].join() + ')');
+  ok(P.againSeat([room[1]], room[1].skin.seed) === undefined, 'nobody else open: none');
 }
 
 console.log('practice chat: a guest tries one, calls human, and the reveal comes at once');
@@ -138,6 +164,40 @@ console.log('practice chat: called bot (spotted), and no call at all');
   const missed = (await playOnce(b.store, 'none')).practice!.result!;
   ok(missed.myCall === null && missed.right === null && !!missed.persona, 'no call in time: the reveal without a verdict, card and all');
   b.client.dispose();
+}
+
+console.log('practice chat: five a day, "Play again" from the reveal with another character, then none left');
+{
+  fresh();
+  const { client, store } = await guest({ practicePerDay: 5 });
+  const cfg = store.get().config;
+  ok(cfg?.practice?.perDay === 5, 'the relay offers five a day');
+  let s = await playOnce(store, true);
+  ok(P.tryLeft(cfg) && s.practice?.phase === 'over', 'one played: a try left, the reveal on screen');
+  const partners = [s.chat!.partner.seed];
+  let others = true;
+  for (let n = 2; n <= 5; n++) {
+    // as app.tsx does it: another open character of the same room, straight from the reveal, no prompt
+    const pr = s.practice!;
+    const seat = P.againSeat(store.get().rooms[pr.level]!.seats, pr.skin.seed)!;
+    const a = await store.actions.startPractice({ level: pr.level, skin: seat.skin });
+    if (!a.ok) {
+      ok(false, `play again ${n}: refused (${a.reason ?? a.error})`);
+      break;
+    }
+    await waitFor(store, (x) => x.chat?.phase === 'chatting' && x.chat.partner.seed === seat.skin.seed && !isCounting(x.chat), `chat ${n} open`);
+    store.actions.say('hi again');
+    await waitFor(store, (x) => x.chat?.phase === 'calling', `call ${n}`, 8000);
+    store.actions.call(false);
+    s = await waitFor(store, (x) => x.practice?.phase === 'over', `reveal ${n}`, 6000);
+    others &&= s.chat!.partner.seed !== partners[partners.length - 1];
+    partners.push(s.chat!.partner.seed);
+    ok(P.tryLeft(cfg) === n < 5, `after ${n}: ${n < 5 ? 'a try left, Play again shows' : 'none left, the reveal as before'}`);
+  }
+  ok(partners.length === 5 && others, 'each Play again with another character than the one just played');
+  const sixth = await store.actions.startPractice({ level: 1, skin: store.get().rooms[1]!.seats[0].skin });
+  ok(!sixth.ok && sixth.reason === 'practice_used' && !P.tryLeft(cfg), 'a sixth is refused: used');
+  client.dispose();
 }
 
 console.log('practice chat: refused when the day is full, the bots nap, or it is off');

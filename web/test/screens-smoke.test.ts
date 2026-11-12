@@ -428,25 +428,85 @@ try {
     tries++;
     return prStore.actions.startPractice({ level: 1, skin: prStore.get().rooms[1]!.seats[2].skin });
   };
+  const TRY = new RegExp(practiceWords.TRY_FREE);
+  const all = (n: El, out: El[] = []): El[] => {
+    out.push(n);
+    for (const c of n.childNodes as El[]) all(c, out);
+    return out;
+  };
+  const cls = (n: El | null) => String(n?.attrs.class ?? (n as { className?: string } | null)?.className ?? '').split(' ');
+  // the room as a guest: while a try is left, the hint says it is free with no wallet
+  const { LobbyScreen } = await import('../src/screens/Lobby.tsx');
+  const noop = () => {};
+  const lobbyProps = { store: prStore, guest: true, onSeat: noop, onResults: noop, onRounds: noop, onWallet: noop, onSwitchUser: noop, onTerms: noop, onSignIn: noop };
+  render(h(LobbyScreen, lobbyProps), root as unknown as Element);
+  await sleep(30);
+  ok(root.textContent.includes(practiceWords.HINT_FREE) && practiceWords.HINT_FREE === "Tap anyone to chat. It's free: no wallet needed", 'the room hint with a try left: "' + practiceWords.HINT_FREE + '"');
+  render(null, root as unknown as Element);
+  // the guest's HUD: "Play free" opens the prompt; the menu's "Sign in to play" goes to the wallet; Telegram and X at the bottom
+  const hudCalls: unknown[] = [];
+  render(h(Hud, { store: prStore, kind: 'lobby', guest: true, onSignIn: (w?: boolean) => hudCalls.push(w) }), root as unknown as Element);
+  await sleep(20);
+  click(findButton(root as never, /Play free/));
+  click(all(root as never).find((n) => n.nodeName === 'BUTTON' && cls(n).includes('hud-menu-btn')) ?? null);
+  await sleep(20);
+  const links = all(root as never).filter((n) => n.nodeName === 'A' && cls(n).includes('hud-menu-item'));
+  const tg = links.find((n) => /Telegram/.test(n.textContent));
+  const xl = links.find((n) => /^\s*X$/.test(n.textContent));
+  ok(!!tg && tg.attrs.href === 'https://t.me/realsieslol' && tg.attrs.target === '_blank' && tg.attrs.rel === 'noopener' && !!xl && xl.attrs.href === 'https://x.com/realsieslol' && xl.attrs.target === '_blank' && xl.attrs.rel === 'noopener', 'the room menu ends with Telegram and X, new tab, rel noopener');
+  ok(links.indexOf(xl!) === links.length - 1 && links.indexOf(tg!) === links.length - 2, 'at the very bottom');
+  click(findButton(root as never, /Sign in to play/));
+  ok(hudCalls.length === 2 && hudCalls[0] === undefined && hudCalls[1] === true, 'Play free opens the prompt; the menu\'s Sign in goes to the wallet in one tap');
+  render(null, root as unknown as Element);
+  // the terms accepted: the sign-in step offers the two choices, "Start free chat" and the wallet
   render(h(LoginModal, { key: 'try', store: prStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
-  for (let i = 0; i < 40 && disabled(findButton(root as never, /Try one chat free/)); i++) await sleep(25);
+  for (let i = 0; i < 40 && disabled(findButton(root as never, TRY)); i++) await sleep(25);
   const prText = root.textContent;
-  const tryBtn = findButton(root as never, /Try one chat free/);
-  ok(/Ready to play\?/.test(prText) && !!tryBtn && !disabled(tryBtn) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'first visit: two choices, "Try one chat free" and the wallet');
+  const tryBtn = findButton(root as never, TRY);
+  ok(/Ready to play\?/.test(prText) && !!tryBtn && !disabled(tryBtn) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'first visit: two choices, "Start free chat" and the wallet');
   ok(!prText.includes(practiceWords.PRACTICE_USED) && !prText.includes(practiceWords.PRACTICE_CAP), 'no line on a first visit');
-  click(tryBtn);
+  // opened to sign in (the menu, the reveal, Get $REAL): the wallet alone
+  render(h(LoginModal, { key: 'wallet', store: prStore, onConsent() {}, onClose() {}, onPractice, wallet: true }), root as unknown as Element);
+  await sleep(60);
+  ok(/Sign in to play/.test(root.textContent) && !findButton(root as never, TRY) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'opened to sign in: the wallet, no free chat offered');
+  // a first-time visitor with a try left: the terms' button is "Start free chat", the wallet a small link under it
+  consent.forgetTerms();
+  render(h(LoginModal, { key: 'link', store: prStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
+  await sleep(30);
+  const wl = findButton(root as never, new RegExp(practiceWords.WALLET_LINK));
+  ok(!!findButton(root as never, TRY) && disabled(findButton(root as never, TRY)) && !findButton(root as never, /^Continue$/) && !!wl && disabled(wl), 'the terms: "Start free chat" in place of Continue, and "' + practiceWords.WALLET_LINK + '", both off until ticked');
+  change(findEl(root as never, 'INPUT'), true);
+  await sleep(10);
+  click(findButton(root as never, new RegExp(practiceWords.WALLET_LINK)));
+  await sleep(40);
+  ok(consent.termsAccepted() && /Sign in to play/.test(root.textContent) && !!findButton(root as never, /Sign in with a NEAR wallet/) && !findButton(root as never, TRY) && tries === 0, 'the link: terms accepted, the wallet sign-in, no free chat started');
+  render(null, root as unknown as Element);
+  consent.forgetTerms();
+  let consents2 = 0;
+  render(h(LoginModal, { key: 'start', store: prStore, onConsent: () => consents2++, onClose() {}, onPractice }), root as unknown as Element);
+  await sleep(30);
+  change(findEl(root as never, 'INPUT'), true);
+  await sleep(10);
+  ok(!disabled(findButton(root as never, TRY)), 'ticked: "Start free chat" is on');
+  click(findButton(root as never, TRY));
   for (let i = 0; i < 40 && !prStore.get().practice; i++) await sleep(10);
-  ok(tries === 1 && !!prStore.get().practice && !prStore.get().accountId, 'the free try starts, still a guest');
+  ok(tries === 1 && consents2 === 1 && consent.termsAccepted() && !!prStore.get().practice && !prStore.get().accountId && !/Ready to play\?/.test(root.textContent), 'Start free chat: the terms accepted and the chat started at once, no second step, still a guest');
   render(null, root as unknown as Element);
   await runToReveal(prStore, true);
   let signIns2 = 0;
   let backs = 0;
-  render(h(PracticeResultDialog, { store: prStore, onSignIn: () => signIns2++, onBack: () => backs++ }), root as unknown as Element);
+  let agains = 0;
+  // one a day (this relay): no try left, the reveal as before even with the app's Play again handler
+  render(h(PracticeResultDialog, { store: prStore, onSignIn: () => signIns2++, onBack: () => backs++, onPlayAgain: () => agains++ }), root as unknown as Element);
   await sleep(20);
   const revealText = root.textContent;
   ok(/That was a bot/.test(revealText) && /It fooled you/.test(revealText) && /BOT/.test(revealText) && revealText.includes(prStore.get().chat!.partner.name), 'the reveal: a bot, it fooled you, the character by name: ' + revealText.slice(0, 90).replace(/\s+/g, ' '));
   ok(/Was playing/.test(revealText) && revealText.includes(practiceWords.INVITE), 'the persona card, then the way to the real rounds');
   ok(!!findButton(root as never, /^\s*Sign in$/) && !!findButton(root as never, /^Back to room$/) && !/might|maybe|could have been/i.test(revealText), 'two buttons; no word that it might have been human');
+  ok(!findButton(root as never, /Play again/) && cls(findButton(root as never, /^\s*Sign in$/) as El).includes('primary'), 'no try left: no Play again, Sign in is the green one');
+  ok(revealText.includes('Turing Hour, every day at 20:00 UTC: real people in the room. Reminders on Telegram and X.'), 'the follow line under the invite');
+  const follow = all(root as never).filter((n) => n.nodeName === 'A');
+  ok(follow.length === 2 && follow[0].attrs.href === 'https://t.me/realsieslol' && follow[0].textContent === 'Telegram' && follow[1].attrs.href === 'https://x.com/realsieslol' && follow[1].textContent === 'X' && follow.every((n) => n.attrs.target === '_blank' && n.attrs.rel === 'noopener'), 'Telegram and X link out, new tab, rel noopener');
   click(findButton(root as never, /^\s*Sign in$/));
   click(findButton(root as never, /^Back to room$/));
   ok(signIns2 === 1 && backs === 1, 'Sign in and Back to room do what they say');
@@ -496,13 +556,50 @@ try {
   render(h(LoginModal, { key: 'used', store: prStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
   for (let i = 0; i < 40 && !root.textContent.includes(practiceWords.PRACTICE_USED); i++) await sleep(25);
   const usedText = root.textContent;
-  ok(usedText.includes(practiceWords.PRACTICE_USED) && practiceWords.PRACTICE_USED === "You've had your free chat today." && !findButton(root as never, /Try one chat free/), 'the try used: one plain line, no try');
+  ok(usedText.includes(practiceWords.PRACTICE_USED) && practiceWords.PRACTICE_USED === "You've had your free chats for today." && !findButton(root as never, TRY), 'the try used: one plain line, no try');
   ok(/Sign in to play/.test(usedText) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'and the sign-in as before');
   render(h(LoginModal, { key: 'after', store: prStore, onConsent() {}, onClose() {}, onPractice, afterPractice: true }), root as unknown as Element);
   await sleep(80);
-  ok(!root.textContent.includes(practiceWords.PRACTICE_USED) && !findButton(root as never, /Try one chat free/) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'from the reveal: the sign-in, no line');
+  ok(!root.textContent.includes(practiceWords.PRACTICE_USED) && !findButton(root as never, TRY) && !!findButton(root as never, /Sign in with a NEAR wallet/), 'from the reveal: the sign-in, no line');
+  // the terms step with no try left: Continue, as before
+  consent.forgetTerms();
+  render(h(LoginModal, { key: 'used-terms', store: prStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
+  await sleep(40);
+  ok(!!findButton(root as never, /^Continue$/) && !findButton(root as never, TRY) && !findButton(root as never, new RegExp(practiceWords.WALLET_LINK)), 'no try left: the terms say Continue, no link');
+  consent.acceptTerms();
+  // and the room's hint goes back to "Tap anyone to chat"
+  render(h(LobbyScreen, { ...lobbyProps, key: 'used-room' }), root as unknown as Element);
+  await sleep(30);
+  ok(/Tap anyone to chat/.test(root.textContent) && !root.textContent.includes(practiceWords.HINT_FREE), 'no try left: the hint says "Tap anyone to chat"');
   render(null, root as unknown as Element);
   prClient.dispose();
+  // five a day: the reveal with a try left has "Play again" first (green), then Sign in, Share, Back to room
+  newVisitor();
+  const fiveClient = new MockGameClient({ ...prOpts, practicePerDay: 5 });
+  const fiveStore = createStore(fiveClient, new MockWallet(fiveClient, { accountId: 'pat.testnet', delayMs: 2 }));
+  await fiveStore.actions.loadConfig();
+  await fiveStore.actions.loadGuest();
+  await fiveStore.actions.startPractice({ level: 1, skin: fiveStore.get().rooms[1]!.seats[3].skin });
+  await runToReveal(fiveStore, false);
+  let agains5 = 0;
+  render(h(PracticeResultDialog, { store: fiveStore, onSignIn() {}, onBack() {}, onPlayAgain: () => agains5++ }), root as unknown as Element);
+  await sleep(20);
+  const order = all(root as never).filter((n) => n.nodeName === 'BUTTON').map((n) => n.textContent.trim());
+  ok(order.join(' | ') === 'Play again | Sign in | Share | Back to room', 'a try left: ' + order.join(' | '));
+  ok(cls(findButton(root as never, /Play again/) as El).includes('primary') && !cls(findButton(root as never, /^\s*Sign in$/) as El).includes('primary'), 'Play again is the green one, Sign in second');
+  click(findButton(root as never, /Play again/));
+  ok(agains5 === 1 && agains === 0, 'Play again does what it says');
+  render(h(PracticeResultDialog, { key: 'no-handler', store: fiveStore, onSignIn() {}, onBack() {} }), root as unknown as Element);
+  await sleep(10);
+  ok(!findButton(root as never, /Play again/), 'without the app\'s handler: no Play again');
+  render(null, root as unknown as Element);
+  // with a try left the room says it is free again after the reveal
+  fiveStore.actions.endPractice();
+  render(h(LobbyScreen, { ...lobbyProps, store: fiveStore, key: 'five-room' }), root as unknown as Element);
+  await sleep(30);
+  ok(root.textContent.includes(practiceWords.HINT_FREE), 'one of five played: the hint still says it is free');
+  render(null, root as unknown as Element);
+  fiveClient.dispose();
   // called bot: "You spotted it"
   newVisitor();
   const spClient = new MockGameClient(prOpts);
@@ -524,7 +621,7 @@ try {
     await capStore.actions.loadConfig();
     render(h(LoginModal, { key: label, store: capStore, onConsent() {}, onClose() {}, onPractice: async () => ({ ok: false }) }), root as unknown as Element);
     for (let i = 0; i < 40 && !root.textContent.includes(line); i++) await sleep(25);
-    ok(root.textContent.includes(line) && !findButton(root as never, /Try one chat free/) && !!findButton(root as never, /Sign in with a NEAR wallet/), label + ': "' + line.slice(0, 40) + '...", no try, the wallet');
+    ok(root.textContent.includes(line) && !findButton(root as never, TRY) && !!findButton(root as never, /Sign in with a NEAR wallet/), label + ': "' + line.slice(0, 40) + '...", no try, the wallet');
     render(null, root as unknown as Element);
     capClient.dispose();
   }
@@ -535,7 +632,7 @@ try {
   await offStore.actions.loadConfig();
   render(h(LoginModal, { key: 'off', store: offStore, onConsent() {}, onClose() {}, onPractice }), root as unknown as Element);
   await sleep(80);
-  ok(/Sign in to play/.test(root.textContent) && !findButton(root as never, /Try one chat free/) && !root.textContent.includes(practiceWords.PRACTICE_USED), 'off: no try, no line');
+  ok(/Sign in to play/.test(root.textContent) && !findButton(root as never, TRY) && !root.textContent.includes(practiceWords.PRACTICE_USED), 'off: no try, no line');
   render(null, root as unknown as Element);
   offClient.dispose();
   await ws.actions.walletSignIn();

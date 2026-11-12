@@ -153,9 +153,15 @@ export interface Config {
   // ---------- the practice chat (protocol v1.14, src/game/practice.ts) ----------
   /**
    * GUEST_CHATS_PER_DAY: practice chats a visitor without a wallet may have a day, counted per device (an id the
-   * browser keeps) and per IP, whichever is reached first. 0 = no practice chats (PublicConfig.practice absent).
+   * browser keeps), and per IP up to guestChatsPerIp, whichever is reached first. 0 = no practice chats
+   * (PublicConfig.practice absent).
    */
   guestChatsPerDay: number;
+  /**
+   * GUEST_CHATS_PER_IP: practice chats a day from one IP, for every device behind it together (many phones share one
+   * address behind a mobile carrier, so it is higher than the device's). 0 or unset: 4 times GUEST_CHATS_PER_DAY.
+   */
+  guestChatsPerIp: number;
   /** GUEST_CHATS_DAILY_CAP: practice chats a day for every guest together, so NEAR AI credits stay safe; 0 = none */
   guestChatsDailyCap: number;
 }
@@ -314,6 +320,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     playGasTgas: num('PLAY_GAS_TGAS', 30),
     signTimeoutSeconds: num('SIGN_TIMEOUT_SECONDS', 20),
     guestChatsPerDay: num('GUEST_CHATS_PER_DAY', 1),
+    guestChatsPerIp: num('GUEST_CHATS_PER_IP', 0),
     guestChatsDailyCap: num('GUEST_CHATS_DAILY_CAP', 300),
     ...('launch' in overrides ? {} : { launch: launchFromEnv(env) }),
     ...('swap' in overrides ? {} : { swap: swapFromEnv(env) }),
@@ -339,6 +346,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
   if (!(cfg.playGasTgas >= 5 && cfg.playGasTgas <= 100)) throw new Error('PLAY_GAS_TGAS must be from 5 to 100');
   if (!(cfg.signTimeoutSeconds >= 3 && cfg.signTimeoutSeconds <= 120)) throw new Error('SIGN_TIMEOUT_SECONDS must be from 3 to 120');
   if (!(Number.isInteger(cfg.guestChatsPerDay) && cfg.guestChatsPerDay >= 0 && cfg.guestChatsPerDay <= 100)) throw new Error('GUEST_CHATS_PER_DAY must be a whole number from 0 to 100 (0 = no practice chats)');
+  if (!(Number.isInteger(cfg.guestChatsPerIp) && cfg.guestChatsPerIp >= 0 && cfg.guestChatsPerIp <= 10_000)) throw new Error('GUEST_CHATS_PER_IP must be a whole number from 0 to 10000 (0 = 4 times GUEST_CHATS_PER_DAY)');
+  if (!cfg.guestChatsPerIp) cfg.guestChatsPerIp = 4 * cfg.guestChatsPerDay;
   if (!(Number.isInteger(cfg.guestChatsDailyCap) && cfg.guestChatsDailyCap >= 0 && cfg.guestChatsDailyCap <= 100_000)) throw new Error('GUEST_CHATS_DAILY_CAP must be a whole number from 0 to 100000');
   if (cfg.launch) checkLaunch(cfg.launch);
   else delete cfg.launch;

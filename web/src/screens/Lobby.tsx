@@ -1,8 +1,8 @@
 // Lobby: the HUD (logo, level tabs and theme, round clock, coins, rating, called, Results, menu) over
 // ten pedestals under an arch, each with its gamertag on a tag beneath. Tap a character -> seat dialog.
 // A guest sees the same room (drawn for guests, state/guest.ts) with "Sign in" in the HUD; a tap asks to sign in.
-// A first visitor must not have to guess what to do: over the room a guest reads "Tap anyone to chat", and that the
-// first chat is free with no wallet while the free try is theirs (the HUD's button says "Play free" then).
+// A first visitor must not have to guess what to do: over the room a guest reads "Tap anyone to chat", and that it is
+// free with no wallet while a free try is left today (the HUD's button says "Play free" then).
 
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { Level, Seat } from '../../../shared/protocol.ts';
@@ -13,7 +13,7 @@ import { fmtClock } from '../state/format.ts';
 import { World } from '../world/World.tsx';
 import { useNow, useRigs } from '../ui/hooks.ts';
 import { Hud } from '../ui/Hud.tsx';
-import { practiceOn, triedToday } from '../state/practice.ts';
+import { HINT_FREE, practiceOn, triedToday } from '../state/practice.ts';
 import { NameTag } from '../ui/NameTag.tsx';
 import type { IconName } from '../ui/kit.tsx';
 import type { SceneSeat, SeatLook } from '../../../art/src/scene/types.ts';
@@ -30,7 +30,8 @@ export interface LobbyProps {
   selectedSeat?: number | null;
   /** not signed in: watching the room */
   guest?: boolean;
-  onSignIn?(): void;
+  /** `wallet`: the menu's "Sign in to play", straight to the wallet */
+  onSignIn?(wallet?: boolean): void;
   /** the auction banner's Get $REAL */
   onAuctionDeposit?(): void;
 }
@@ -83,7 +84,7 @@ export function LobbyScreen(p: LobbyProps) {
 
   const accepting = round ? now < round.acceptingUntil && round.status === 'open' : false;
   const roundLeft = round ? round.endsAt - now : 0;
-  // a guest who still has the free practice chat (v1.14)
+  // a guest who still has a free practice chat today (v1.14)
   const freeTry = !!p.guest && practiceOn(s.config) && !triedToday(s.config?.practice?.perDay);
 
   return (
@@ -133,7 +134,7 @@ export function LobbyScreen(p: LobbyProps) {
               {/* one slim line right under the HUD, above the first heads: over the arch it would cover characters */}
               {p.guest && room && accepting && !s.search && !s.chat && (
                 <div style={w.box(l.inner)} class="world-top">
-                  <p class="px-panel tight guest-hint">{freeTry ? 'Tap anyone: your first chat is free' : 'Tap anyone to chat'}</p>
+                  <p class="px-panel tight guest-hint">{freeTry ? HINT_FREE : 'Tap anyone to chat'}</p>
                 </div>
               )}
               {round && !accepting && (

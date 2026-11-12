@@ -14,16 +14,19 @@
 //   &consent=1                     the terms already accepted (any screen past "Before you play" accepts them)
 // A guest (no ?as): the room before signing in, and "Before you play" (Login.tsx) after a tap on seat 2 (&seat=N):
 //   &qa=guest                      the room as a guest
-//   &qa=consent                    the tap of a first-time visitor: the terms with the checkbox (&tick=1: ticked)
+//   &qa=consent                    the tap of a first-time visitor: the terms with the checkbox (&tick=1: ticked); with a
+//                                  free try left the button is "Start free chat", the wallet a link under it
 //   &qa=guest-tap                  the tap of a visitor who accepted them before: the sign-in step
 //   &qa=guest-seat                 then signed in (a test player, or the mock wallet with &wallet=): the seat opens
 //   &longnames=1                   every seat gets an 11-character gamertag
-// The practice chat (protocol v1.14), a guest's one free try, the character on seat 2 (&seat=N):
-//   &qa=guest-tap                  the sign-in step offers "Try one chat free" next to the wallet
+// The practice chat (protocol v1.14), a guest's free tries (&practice=5: five a day), the character on seat 2 (&seat=N):
+//   &qa=guest-tap                  the sign-in step offers "Start free chat" next to the wallet (the HUD's Play free
+//                                  with the terms accepted; a tap on a character then starts the chat at once)
 //   &tried=1                       this browser had its free chat today: the try gives way to one line (&practicecap=1:
 //                                  every free chat of the day is gone)
 //   &qa=practice-chat              the practice chat running, a few lines in
-//   &qa=practice&call=human|bot    the call made: the reveal ("It fooled you" for human, "You spotted it" for bot)
+//   &qa=practice&call=human|bot    the call made: the reveal ("It fooled you" for human, "You spotted it" for bot;
+//                                  with &practice=5 a try is left: "Play again" first)
 //   &nobots=1                      the bots are napping: every pick gets bots_unavailable (no new chats)
 // Wallet sign-in (protocol v1.3), with &wallet=1 (a relay without test mode: no test users):
 //   &qa=signin-wait&hold=signIn    the sign-in step waiting for the wallet

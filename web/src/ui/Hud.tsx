@@ -2,7 +2,7 @@
 // panels: the logo with a small TESTNET marker (and in the room, while the player holds no test tokens at all,
 // the TESTNET panel above the bar: TestnetPanel.tsx), level tabs with the theme name, the round clock,
 // coins and locked coins, rating, "x of 10 called", Results with its badge, and a menu (coins,
-// past rounds, terms, switch player, test tools). One line on wide screens and phones held
+// past rounds, terms, switch player, test tools; in the room, Telegram and X at the bottom). One line on wide screens and phones held
 // sideways, two lines on phones and tablets. The world lays itself out under it (hudSize.ts). A guest (not signed
 // in) gets "Sign in" where the coins and rating are, and a menu with only what needs no account.
 
@@ -22,7 +22,7 @@ import { DevMenu } from '../screens/DevMenu.tsx';
 import { LaunchBanner } from './LaunchBanner.tsx';
 import { TestnetPanel } from './TestnetPanel.tsx';
 import { TuringBanner } from './TuringBanner.tsx';
-import { practiceOn, triedToday } from '../state/practice.ts';
+import { TELEGRAM_URL, X_URL, practiceOn, triedToday } from '../state/practice.ts';
 
 export type HudKind = 'lobby' | 'chat' | 'call' | 'who';
 
@@ -40,7 +40,8 @@ export interface HudProps {
   onBack?(): void;
   /** a guest watching the room: "Sign in" instead of the player's coins, rating and results; in a practice chat (v1.14) no coins, rating or test tools */
   guest?: boolean;
-  onSignIn?(): void;
+  /** `wallet`: the menu's "Sign in to play", straight to the wallet (no free chat offered); none: the HUD's button */
+  onSignIn?(wallet?: boolean): void;
   /** the auction banner's Get $REAL: the deposit dialog (mainnet, while REAL's auction runs) */
   onAuctionDeposit?(): void;
   /** who: the title panel content. */
@@ -179,7 +180,7 @@ export function Hud(p: HudProps) {
         {clock}
         {p.guest ? (
           // while the free practice chat is this visitor's, the button says so: "Sign in" reads as a wall to a newcomer
-          <button type="button" class="hud-cell px-btn primary hud-signin" title={freeTry ? 'Try one chat free, no wallet needed' : 'Sign in to play'} onClick={p.onSignIn}>
+          <button type="button" class="hud-cell px-btn primary hud-signin" title={freeTry ? 'Chat free, no wallet needed' : 'Sign in to play'} onClick={() => p.onSignIn?.()}>
             <Icon name={freeTry ? 'chat' : 'user'} /><span class="hud-btn-label">{freeTry ? 'Play free' : 'Sign in'}</span>
           </button>
         ) : (
@@ -274,7 +275,7 @@ export function Hud(p: HudProps) {
           <div class="hud-menu-scrim" onClick={() => setMenu(false)} />
           <nav class="hud-menu px-panel sheet-enter" role="menu" aria-label="Menu">
             {kind === 'lobby' && p.guest && (
-              <button type="button" class="px-btn small primary hud-menu-item" onClick={() => { setMenu(false); p.onSignIn?.(); }}>
+              <button type="button" class="px-btn small primary hud-menu-item" onClick={() => { setMenu(false); p.onSignIn?.(true); }}>
                 <Icon name="user" /> Sign in to play
               </button>
             )}
@@ -313,6 +314,17 @@ export function Hud(p: HudProps) {
               </button>
             )}
             {kind !== 'who' && !p.guest && <DevMenu store={store} onDone={() => setMenu(false)} />}
+            {/* where to follow the game (Turing Hour reminders), two small links at the very bottom */}
+            {kind === 'lobby' && (
+              <div class="hud-menu-follow">
+                <a class="px-btn small hud-menu-item" href={TELEGRAM_URL} target="_blank" rel="noopener" onClick={() => setMenu(false)}>
+                  <Icon name="link" /> Telegram
+                </a>
+                <a class="px-btn small hud-menu-item" href={X_URL} target="_blank" rel="noopener" onClick={() => setMenu(false)}>
+                  <Icon name="link" /> X
+                </a>
+              </div>
+            )}
           </nav>
         </>
       )}

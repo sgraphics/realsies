@@ -315,7 +315,8 @@ test('every house persona in the round: someone generated; a missed call reveals
 });
 
 test('one a day per device and per IP, a daily cap for all, a ticket bound to its IP, a cap on asking; off with 0', { timeout: 60_000 }, async () => {
-  const { app, base } = await setup({ guestChatsDailyCap: 2 });
+  // GUEST_CHATS_PER_IP=1 here: the IP limit as low as the device's, to see "whichever is reached first"
+  const { app, base } = await setup({ guestChatsDailyCap: 2, guestChatsPerIp: 1 });
   try {
     const post = (device: string, ip: string) => api(base, 'POST', '/api/practice', { body: { device, seed: SEED, level: 1 }, ip });
     const a = await post(dev(10), '192.0.2.1');
@@ -359,6 +360,52 @@ test('one a day per device and per IP, a daily cap for all, a ticket bound to it
   } finally {
     await off.app.close();
   }
+});
+
+test('GUEST_CHATS_PER_IP apart from the device limit: by default 4 times GUEST_CHATS_PER_DAY, many devices behind one carrier IP', { timeout: 60_000 }, async () => {
+  const { app, base } = await setup({ guestChatsPerDay: 2 });
+  try {
+    assert.equal(app.cfg.guestChatsPerIp, 8, 'unset: 4 times GUEST_CHATS_PER_DAY');
+    assert.equal(app.practice.perIp, 8);
+    assert.deepEqual((await api(base, 'GET', '/api/config')).body.practice, { perDay: 2 }, 'PublicConfig says the device limit only');
+    const post = (device: string, ip: string) => api(base, 'POST', '/api/practice', { body: { device, seed: SEED, level: 1 }, ip });
+    const carrier = '198.51.100.20';
+    // one phone: its two, then used, as before
+    assert.equal((await post(dev(60), carrier)).status, 200);
+    assert.equal((await post(dev(60), carrier)).status, 200);
+    const third = await post(dev(60), carrier);
+    assert.deepEqual([third.status, third.body.code], [429, 'practice_used'], 'the device limit');
+    assert.match(third.body.message, /This device or this network had its free chat today/, 'the same words as before');
+    // more phones behind the same address: up to 8 in all from it
+    for (const d of [61, 62, 63]) for (let i = 0; i < 2; i++) assert.equal((await post(dev(d), carrier)).status, 200, `device ${d}, try ${i + 1}`);
+    assert.equal(app.practice.stats().today, 8);
+    const ninth = await post(dev(64), carrier);
+    assert.deepEqual([ninth.status, ninth.body.code], [429, 'practice_used'], 'the ninth from that IP: used, though this device had none');
+    assert.deepEqual((await api(base, 'GET', `/api/practice?device=${dev(64)}`, { ip: carrier })).body, { ok: false, reason: 'practice_used' });
+    // the same phone on another network still has its own two
+    assert.equal((await post(dev(64), '198.51.100.21')).status, 200, 'another network: the device limit only');
+  } finally {
+    await app.close();
+  }
+  // set: that number, whatever GUEST_CHATS_PER_DAY is
+  const set = await setup({ guestChatsPerDay: 1, guestChatsPerIp: 3 });
+  try {
+    assert.equal(set.app.practice.perIp, 3);
+    const post = (device: string) => api(set.base, 'POST', '/api/practice', { body: { device, seed: SEED, level: 1 }, ip: '198.51.100.30' });
+    for (const d of [70, 71, 72]) assert.equal((await post(dev(d))).status, 200);
+    assert.equal((await post(dev(73))).body.code, 'practice_used', 'the fourth device from that IP');
+  } finally {
+    await set.app.close();
+  }
+  // 0 means the default; a value out of range stops the relay
+  const zero = await setup({ guestChatsPerDay: 5, guestChatsPerIp: 0 });
+  try {
+    assert.equal(zero.app.cfg.guestChatsPerIp, 20, '0: 4 times GUEST_CHATS_PER_DAY');
+  } finally {
+    await zero.app.close();
+  }
+  await assert.rejects(setup({ guestChatsPerIp: -1 }), /GUEST_CHATS_PER_IP/);
+  await assert.rejects(setup({ guestChatsPerIp: 1.5 }), /GUEST_CHATS_PER_IP/);
 });
 
 test('a guest socket takes messages and one call, nothing of the round; no practice chat while the bots are out of credits', { timeout: 60_000 }, async () => {
