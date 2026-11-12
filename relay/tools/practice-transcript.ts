@@ -7,7 +7,8 @@
 //   npx tsx tools/practice-transcript.ts --inbox <dir> [--chats 1]
 //
 // --scripts  one chat per named script (SCRIPTS below), all at once: the player sends the next line a reading
-//            pause after each bot burst (or after a long silence), typing it at a person's speed
+//            pause after each bot burst (or after a long silence), typing it at a person's speed; a script in another
+//            language (LANGS below) asks for its chat with that browser's Accept-Language, as a visitor's browser does
 // --inbox    interactive: chat i sends every line appended to <dir>/say-<i>.txt and writes what happens to
 //            <dir>/log-<i>.txt as it happens, so a person (or an agent) can play it by hand
 //
@@ -48,6 +49,21 @@ const SCRIPTS: Record<string, string[]> = {
   backwards: ['heyy', 'spell your name backwards', 'whats your favourite word', 'tell me a joke', 'bot?'],
 };
 
+/** The browser language a script's visitor asks with (Accept-Language on POST /api/practice); the rest send none. */
+const LANGS: Record<string, string> = {
+  ar: 'ar-EG,ar;q=0.9,en;q=0.8',
+  ru: 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+  id: 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+  pt: 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+};
+// a casual visitor in their own language: a greeting, where are you from, what are you up to, the bot question
+Object.assign(SCRIPTS, {
+  ar: ['اهلا', 'ازيك عامل ايه؟', 'انت منين؟', 'بتشتغل ايه', 'طب انت بوت ولا انسان بجد؟'],
+  ru: ['привет, как дела?', 'ты откуда?', 'чем занимаешься сейчас?', 'а ты точно не бот?'],
+  id: ['halo', 'lagi ngapain?', 'kamu dari mana?', 'kerja atau kuliah?', 'kamu bot ya?'],
+  pt: ['oi tudo bem?', 'de onde vc é?', 'o que vc tá fazendo agora?', 'vc é um bot né kkk'],
+});
+
 interface Ev {
   t: number;
   kind: 'me' | 'them' | 'typing_on' | 'typing_off' | 'ended' | 'me_typing_on' | 'me_typing_off';
@@ -79,7 +95,13 @@ async function playChat(base: string, idx: number, label: string, script: string
   const device = `boh-clip-${idx}-${crypto.randomBytes(6).toString('hex')}`;
   const seed = crypto.randomBytes(32).toString('hex');
   const level = ((idx % 3) + 1) as Level;
-  const t = await http<{ guest: string; ticket: string }>(base, 'POST', '/api/practice', { device, seed, level });
+  const lang = LANGS[label];
+  const t = lang
+    ? await fetch(`${base}/api/practice`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept-Language': lang }, body: JSON.stringify({ device, seed, level }) }).then(async (r) => {
+        if (!r.ok) throw new Error(`POST /api/practice: ${r.status} ${await r.text()}`);
+        return (await r.json()) as { guest: string; ticket: string };
+      })
+    : await http<{ guest: string; ticket: string }>(base, 'POST', '/api/practice', { device, seed, level });
   const c = await WsClient.connectPractice(base, t.ticket);
   const chat = (await c.waitT('matched', 15_000)).chat;
   chatIds.push(chat.chatId);

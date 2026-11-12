@@ -164,7 +164,8 @@ export function createServer(game: Game, opts: { webDist: string; testMode: bool
   });
   route('POST', /^\/api\/practice$/, async (_m, req) => {
     const { p, ip } = practiceFor(req);
-    return p.start(await readBody(req), ip);
+    // the browser's languages pick a partner who speaks the visitor's own (src/game/practice.ts)
+    return p.start(await readBody(req), ip, req.headers['accept-language']);
   });
   route('GET', /^\/api\/rounds\/(\d+)\/results\/([^/]+)$/, (m, req) => {
     const account = seg(m[2]);

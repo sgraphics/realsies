@@ -134,7 +134,8 @@ export interface PublicConfig {
 // character of the running round, and nothing of the round reaches the guest. No coins, no rating, nothing on chain,
 // no round record: the relay keeps the transcript in its own table, flagged as practice, never public.
 //   GET  /api/practice?device=<id>         may this browser have one now (PracticeStatus)
-//   POST /api/practice {device, seed, level}  reserves it (the try counts from here) and returns a PracticeTicket
+//   POST /api/practice {device, seed, level}  reserves it (the try counts from here) and returns a PracticeTicket; the
+//                                          browser's Accept-Language picks a partner who speaks the visitor's language
 //   POST /api/practice {guest}             a new ticket for the same practice from the same IP (a reconnect)
 //   /ws?practice=<ticket>                  one-time, bound to the IP that got it. The chat runs over it as any other
 //                                          (matched, chat_started, message, typing, chat_ended, call_recorded or

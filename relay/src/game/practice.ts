@@ -10,6 +10,13 @@
 // practice, and nothing serves it. Right after the call (or when the call window closes) comes the reveal: always a bot,
 // with its persona card, the same card a round shows after it settles.
 //
+// The partner meets the visitor in their language: the browser's Accept-Language on POST /api/practice (every browser
+// sends it, fetch included) names the visitor's first language, and when that is not English the partner is a free
+// house persona who speaks it natively, else a person generated for this chat from a country where it is the first
+// language, else a free house persona who speaks it fluently or well; English, an unknown language or no header: any
+// free house persona, as before. Nothing changes once the chat runs: no swapping partners mid-chat (that would give it
+// away), and a persona still reads only its own languages (src/persona/languages.ts).
+//
 // One try a day per device (an id the browser keeps) and per IP, whichever is reached first (GUEST_CHATS_PER_DAY, 0 =
 // off), and a cap a day for every guest together (GUEST_CHATS_DAILY_CAP) so NEAR AI credits stay safe. None while the
 // bots are out of credits or the beta is closed. The try counts from the moment it is reserved (POST /api/practice),
@@ -24,6 +31,9 @@ import { BotSession, type BotHost, type StoredMsg } from '../bot/session.js';
 import { defaultBrain } from '../bot/brain.js';
 import { atRound, fromGenerated, ownerOf, type Persona } from '../personas.js';
 import { generatePersona } from '../persona/generate.js';
+import { COUNTRY_WEIGHTS, CULTURES, PLACES } from '../persona/data.js';
+import { codeOfLanguage, LANGUAGE_NAMES } from '../persona/languages.js';
+import type { LangLevel } from '../bot/api.js';
 import { chatCostUsd } from '../models.js';
 import { chatTag, skinMessage } from '../formats.js';
 import { randomHex } from '../crypto.js';
@@ -63,6 +73,8 @@ export interface PracticeRun {
   day: string;
   seed: string;
   level: Level;
+  /** the visitor's first language from Accept-Language (an ISO 639 code), when the browser said */
+  lang?: string;
   createdAt: number;
   status: RunStatus;
   side?: ChatSide;
@@ -86,6 +98,54 @@ const REFUSED: Record<PracticeRefusal, { status: number; message: string }> = {
 };
 
 const sha256hex = (s: string) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+
+/** Old and alternative primary tags browsers still send, as the codes of src/persona/languages.ts. */
+const TAG_ALIASES: Record<string, string> = { in: 'id', iw: 'he', nb: 'no', nn: 'no', fil: 'tl', cmn: 'zh', zsm: 'ms' };
+
+/**
+ * The visitor's languages from an Accept-Language header, most preferred first, as ISO 639 codes a persona may list
+ * ("pt-BR,pt;q=0.9,en-US;q=0.8" -> ["pt", "en"]); unknown tags, "*" and q=0 are left out, a missing header is [].
+ */
+export function visitorLanguages(header: unknown): string[] {
+  if (typeof header !== 'string') return [];
+  const seen: { code: string; q: number; i: number }[] = [];
+  header.slice(0, 512).split(',').slice(0, 24).forEach((part, i) => {
+    const [tag, ...params] = part.split(';');
+    const primary = tag.trim().toLowerCase().split(/[-_]/)[0];
+    const code = Object.hasOwn(TAG_ALIASES, primary) ? TAG_ALIASES[primary] : primary;
+    let q = 1;
+    for (const x of params) {
+      const m = /^\s*q\s*=\s*([01](?:\.\d{0,3})?)\s*$/i.exec(x);
+      if (m) q = Number(m[1]);
+    }
+    if (q > 0 && Object.hasOwn(LANGUAGE_NAMES, code)) seen.push({ code, q, i });
+  });
+  seen.sort((a, b) => b.q - a.q || a.i - b.i);
+  return [...new Set(seen.map((x) => x.code))];
+}
+
+/** The countries (COUNTRY_WEIGHTS keys, with their weights) where the generator's people have `code` as their first language. */
+const speakersOf = new Map<string, [string, number][]>();
+function countriesSpeaking(code: string): [string, number][] {
+  let out = speakersOf.get(code);
+  if (!out) {
+    const m = new Map<string, number>();
+    for (const pl of PLACES) {
+      const c = CULTURES[pl.culture];
+      if (!c || c.native || !COUNTRY_WEIGHTS[pl.country]) continue;
+      if (codeOfLanguage(pl.language ?? c.language) === code) m.set(pl.country, COUNTRY_WEIGHTS[pl.country]);
+    }
+    out = [...m];
+    speakersOf.set(code, out);
+  }
+  return out;
+}
+
+function weightedPick<T>(xs: readonly [T, number][]): T {
+  let r = Math.random() * xs.reduce((a, [, w]) => a + w, 0);
+  for (const [x, w] of xs) if ((r -= w) <= 0) return x;
+  return xs[xs.length - 1][0];
+}
 
 export class Practice implements BotHost {
   private runs = new Map<string, PracticeRun>();
@@ -179,7 +239,7 @@ export class Practice implements BotHost {
    * POST /api/practice: {device, seed, level} reserves a practice (the try counts from here) and returns its id and a
    * ticket; {guest} gets a new ticket for the same practice, from the IP that reserved it (a socket that dropped).
    */
-  start(body: unknown, ip: string): PracticeTicket {
+  start(body: unknown, ip: string, acceptLanguage?: unknown): PracticeTicket {
     const b = (body ?? {}) as Record<string, unknown>;
     if (b.guest !== undefined) return this.again(b.guest, ip);
     const device = this.device(b.device);
@@ -191,8 +251,8 @@ export class Practice implements BotHost {
     const token = crypto.randomBytes(24).toString('base64url');
     const now = Date.now();
     const run: PracticeRun = {
-      id: sha256hex(token), chatId: randomId(10), ip, ipKey, device, day: utcDay(now), seed: b.seed, level: b.level as Level, createdAt: now,
-      status: 'issued', conns: new Set(), lastSay: 0,
+      id: sha256hex(token), chatId: randomId(10), ip, ipKey, device, day: utcDay(now), seed: b.seed, level: b.level as Level,
+      lang: visitorLanguages(acceptLanguage)[0], createdAt: now, status: 'issued', conns: new Set(), lastSay: 0,
     };
     this.runs.set(run.id, run);
     this.byChat.set(run.chatId, run);
@@ -294,18 +354,46 @@ export class Practice implements BotHost {
    * A house persona that is not in this round's cast, on the cheapest model, as a free chat in a round gets; when
    * every one of them plays in this round, a person generated for this chat alone, so the reveal never names a
    * character of the running round. AI builders' personas never play here.
+   *
+   * `lang`, the visitor's first language: when it is not English, someone who speaks it, at random among the best
+   * there are: a free house persona who speaks it natively, else a person generated for this chat from a country where
+   * it is the first language, else a free house persona who speaks it fluently, then well. Nobody: as above.
    */
-  pickPersona(level: Level, at: number): Persona {
+  pickPersona(level: Level, at: number, lang?: string): Persona {
     const house = this.game.personas.filter((p) => p.brain.kind === 'default' && !!p.person && !ownerOf(p));
     const r = this.game.current;
     const playing = new Set<string>();
     for (const c of r ? this.game.chars.get(r.id)?.values() ?? [] : []) if (c.kind === 'bot' && c.personaId) playing.add(c.personaId);
     const free = house.filter((p) => !playing.has(p.id));
-    if (free.length) {
-      const cheapest = Math.min(...free.map((p) => chatCostUsd(p.model)));
-      return atRound(pick(free.filter((p) => chatCostUsd(p.model) === cheapest)), at);
+    const cheapest = (ps: Persona[]): Persona => {
+      const min = Math.min(...ps.map((p) => chatCostUsd(p.model)));
+      return atRound(pick(ps.filter((p) => chatCostUsd(p.model) === min)), at);
+    };
+    if (lang && lang !== 'en') {
+      const speaking = (lv: LangLevel) => free.filter((p) => p.languages?.[lang] === lv);
+      const native = speaking('native');
+      if (native.length) return cheapest(native);
+      const generated = this.generatedSpeaker(lang, level, at);
+      if (generated) return generated;
+      for (const lv of ['fluent', 'good'] as const) {
+        const xs = speaking(lv);
+        if (xs.length) return cheapest(xs);
+      }
     }
+    if (free.length) return cheapest(free);
     return fromGenerated(generatePersona(randomHex(16), 0, { at }), level, at);
+  }
+
+  /** A person generated for this chat whose first language is `lang`; undefined when no country of the generator has it. */
+  private generatedSpeaker(lang: string, level: Level, at: number): Persona | undefined {
+    const countries = countriesSpeaking(lang);
+    if (!countries.length) return undefined;
+    // a country may have places with another first language (Belgium, India): a few draws until one fits
+    for (let i = 0; i < 12; i++) {
+      const g = generatePersona(randomHex(16), 0, { at, country: weightedPick(countries) });
+      if (g.person.languages[lang] === 'native') return fromGenerated(g, level, at);
+    }
+    return undefined;
   }
 
   /** The look the guest tapped and the theme of that level in the room (public, as GET /api/round has it). */
@@ -326,7 +414,7 @@ export class Practice implements BotHost {
     }
     const now = Date.now();
     const cfg = this.game.cfg;
-    const persona = this.pickPersona(run.level, now);
+    const persona = this.pickPersona(run.level, now, run.lang);
     const handle = randomHex(32);
     const tag = chatTag(handle);
     const skin: Skin = { seed: run.seed, name: gamertag(run.seed) };
@@ -350,7 +438,7 @@ export class Practice implements BotHost {
     run.endTimer = setTimeout(() => this.endChat(run), endsAt - now);
     run.bot = new BotSession(this, side, persona, side.skinMessage!, [], { brain: { kind: 'default', brain: defaultBrain({ seed: `${side.chatId}|${randomId(8)}` }) } });
     run.bot.start();
-    log.info(`practice ${run.chatId}: a guest with house bot ${persona.id} (${persona.model})`);
+    log.info(`practice ${run.chatId}: a guest${run.lang ? ` (${run.lang})` : ''} with house bot ${persona.id} (${persona.model})`);
   }
 
   /** A socket that came back: the chat so far, then where it stands. */
@@ -480,6 +568,7 @@ export class Practice implements BotHost {
     const s = run.side;
     const doc = {
       practice: true, chatId: run.chatId, status: run.status, device: run.device, level: run.level, seed: run.seed, createdAt: run.createdAt,
+      ...(run.lang ? { lang: run.lang } : {}),
       ...(run.persona ? { personaId: run.persona.id, model: run.persona.model, card: run.persona.card } : {}),
       ...(s
         ? {

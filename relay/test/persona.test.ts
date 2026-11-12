@@ -182,7 +182,7 @@ test('style rules and the base rules reach the committed prompt', () => {
 
 test('the hand-written personas carry the full attribute set, cards and the base rules', () => {
   const ps = loadPersonas(path.resolve(here, '../personas'), AT);
-  assert.equal(ps.length, 15);
+  assert.equal(ps.length, 18);
   for (const p of ps) {
     assert.equal(p.source, 'attributes', p.id);
     assert.equal(cardProblem(p.card), null, `${p.id}: ${JSON.stringify(p.card)}`);
@@ -218,6 +218,15 @@ test('languages: every demo persona lists them, consistent with home, age, schoo
   assert.deepEqual(by['marek-tallinn'].languages, { et: 'native', en: 'good', ru: 'good', fi: 'basic' }, 'Tallinn: Estonian, good English, Russian, some Finnish');
   assert.deepEqual(by['lena-berlin'].languages, { de: 'native', en: 'fluent' }, 'Berlin: German and English');
   assert.deepEqual(by['dottie-ohio'].languages, { en: 'native' });
+  // the languages visitors bring to the free chat (src/game/practice.ts): each has a native speaker in the house
+  assert.deepEqual(by['karim-cairo'].languages, { ar: 'native', en: 'good' }, 'Cairo: Arabic, good English');
+  assert.deepEqual(by['katya-riga'].languages, { ru: 'native', lv: 'good', en: 'good' }, 'Riga: a Russian speaker with school Latvian');
+  assert.deepEqual(by['ayu-jakarta'].languages, { id: 'native', en: 'good' }, 'Jakarta: Indonesian, good English');
+  assert.equal(by['rafa-saopaulo'].languages!.pt, 'native', 'São Paulo: Portuguese first');
+  for (const [id, lang] of [['karim-cairo', 'Arabic'], ['katya-riga', 'Russian'], ['ayu-jakarta', 'Indonesian'], ['rafa-saopaulo', 'Portuguese']]) {
+    assert.match(by[id].prompt, new RegExp(`${lang} is your first language`), id);
+    assert.match(by[id].prompt, new RegExp(`if they write to you in ${lang}`), `${id} may answer in ${lang}`);
+  }
   for (const p of ps) {
     const L = p.languages!;
     assert.equal(L.en, p.person!.english, `${p.id}: English at the level of person.english`);
