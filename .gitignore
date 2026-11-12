@@ -15,15 +15,15 @@ art/out/
 .vite/
 
 # rendered trailer videos stay out of git; the dashboard reads them from disk
-.bl0x/topics/near-hackathon/trailer/*.mp4
-.bl0x/topics/near-hackathon/trailer/frames/
-.bl0x/topics/near-hackathon/promo/*.mp4
-.bl0x/topics/near-hackathon/plug-in/*.mp4
 
 # trailer renders (npm run render in trailer/) stay out of git
 trailer/out/
-.bl0x/topics/near-hackathon/how-you-win/*.mp4
-.bl0x/topics/near-hackathon/post-kit/**/*.mp4
 
 # worktrees of helper sessions
 .claude/
+
+# the working folder of the chat hub (plans, checklists, post kits): local only
+.bl0x/
+
+# the owner's other accounts for the watcher and the gauge
+scripts/own-accounts.txt

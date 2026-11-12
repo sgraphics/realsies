@@ -64,6 +64,23 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 | Share a call | After a reveal, "Share" opens a ready post (the share sheet on a phone, X elsewhere) with a link whose preview is the card for that outcome: "A bot fooled me", "I spotted the bot", "I found the human", "I took a human for a bot" (`web/src/state/share.ts`, `web/public/s/`) |
 | Coins for NEAR | Inside the game: pay NEAR and the coins are in the game after one wallet approval (wrap, swap on Rhea, deposit); withdraw coins as plain NEAR the same way. Players never visit an exchange. A buy is an exact-input swap, the kind chart sites count as a buy (`web/src/wallet/swap.ts`, `relay/src/swap.ts`) |
 
+## Numbers so far
+
+<!-- stats:start -->
+Counted on 2026-11-12 at 07:36 UTC by `scripts/stats.py`, from the game's own records and the chain.
+
+| | |
+|---|---|
+| Mainnet game (since Nov 9) | 13 rounds settled on chain, 31 chats in rounds, 12 free chats by guests |
+| Players | 7 wallets have played (4 of them outside the team); about 90 different browsers have opened realsies.lol (counted by user agent, an estimate) |
+| Can people tell? | visitors called it right 5 times out of 10 |
+| Bots | 223 bot replies on mainnet, 223 of them signed in a NEAR AI enclave; 26 enclave attestations checked; NEAR AI has cost $0.05 so far, testnet included |
+| Chain | 201 transactions by the mainnet relay, 0 failed. Testnet since Nov 4: 167 rounds settled, 1,359 transactions |
+| REAL | 13.7 million REAL (1.4% of the supply) bought out of the pool; 3.55 NEAR paid in, 0.07 NEAR paid out, 3.48 NEAR in the pool. Most of it is the team's own play so far |
+| Community | X @realsieslol: 67 followers, Telegram t.me/realsieslol: 11 members |
+| Code | 118 commits since Nov 4; relay 136 tests, web 587 checks, vault 19 tests |
+<!-- stats:end -->
+
 ## The problem
 
 Bots now pass as people in chats, support lines and feeds, and nobody can prove what they talked to. Human or Not showed people love the guessing game: AI21's 2023 run had over 10 million conversations in a month and 68% accuracy. But it had no stakes, no proof of what you talked to, and no way for anyone else to enter a bot. Meanwhile the companies building chat and voice agents have no cheap way to learn how real people judge them.
@@ -214,7 +231,7 @@ Specs: `docs/spec.md` (protocol and rules), `docs/bot-api.md` (brains), `docs/ag
 ## Hackathon disclosure
 
 - New project, started 2026-11-04 by Silver Sepp (sgraphics), inside the hackathon window; single entry, no prior code.
-- The design, simulation and experiments are in this repository under `.bl0x/topics/near-hackathon/` and `experiments/`.
+- The design and its simulation are in `docs/design/`, the experiment notes in `docs/notes/`, the experiment scripts in `experiments/`.
 - Libraries: near-sdk, near-api-js, RxJS, ws, @noble/curves, @noble/hashes, Preact, Vite; Python eth-account and dcap-qvl for the trust-chain script; the test token is near-examples/FT (MIT). Full list in `THIRD_PARTY_NOTICES.md`.
 - The game launches on mainnet during the hackathon; judges can play free mode without buying REAL.
 

@@ -4,7 +4,7 @@
 // PublicConfig.nearPerCoin, and the wallet's NEAR and wNEAR for WalletInfo. The browser builds and the wallet sends
 // the swaps (web/src/wallet/swap.ts); the testnet proof (tools/swap-proof.ts) quotes with these same functions.
 //
-// Verified on testnet (dclv2.ref-dev.testnet 2.3.14, .bl0x/topics/near-hackathon/experiments/rhea-pool-rehearsal.md):
+// Verified on testnet (dclv2.ref-dev.testnet 2.3.14, docs/notes/rhea-pool-rehearsal.md):
 // `quote` and `quote_by_output` match real swaps to the unit; an amount the pool cannot fill quotes as "0"; get_pool of
 // an unknown pool is null.
 

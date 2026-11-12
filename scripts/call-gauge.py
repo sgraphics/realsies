@@ -19,8 +19,21 @@ import shutil
 import subprocess
 import sys
 
+# an ssh host alias (Host realsies-server in ~/.ssh/config), so the server's address is not in the repository
 SERVER = os.environ.get('SERVER', 'root@realsies-server')
-OWN = os.environ.get('OWN', 'realsies.near owner-two.near owner-three.near').split()
+def own_accounts():
+    """The owner's own accounts, never counted as visitors: realsies.near, OWN from the environment, and the lines of
+    scripts/own-accounts.txt (a local file, not in the repository)."""
+    names = set(os.environ.get('OWN', '').split()) | {'realsies.near'}
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'own-accounts.txt'), encoding='utf-8') as f:
+            names |= {l.strip() for l in f if l.strip() and not l.startswith('#')}
+    except OSError:
+        pass
+    return names
+
+
+OWN = sorted(own_accounts())
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 JS = """
