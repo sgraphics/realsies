@@ -236,7 +236,10 @@ export class Game implements BotHost {
     if (!this.chainCfg.coinsOpen) log.warn(`${this.chain.contractId} has no coin set yet: free play only, "Coins open when REAL launches" (re-checked every minute)`);
     this.logLaunch();
     log.info(this.telegram.describe());
-    if (this.cfg.turingHour) log.info(`Turing Hour: every day at ${this.cfg.turingHour.startUtc} UTC for ${this.cfg.turingHour.minutes} min (PublicConfig.turingHour)`);
+    if (this.cfg.turingHour) {
+      const th = this.cfg.turingHour;
+      log.info(`Turing Hour: every day at ${th.startUtc} UTC for ${th.minutes} min${th.prize ? `, prize "${th.prize}"` : ''} (PublicConfig.turingHour)`);
+    }
     this.loadUsers();
     const seen = Number(this.db.getKv('last_human_at') ?? '');
     this.lastHumanAt = Number.isFinite(seen) && seen > 0 ? seen : Date.now();

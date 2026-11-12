@@ -141,6 +141,8 @@ const { MockWallet } = await import('../src/wallet/mock.ts');
 const { LaunchPage } = await import('../src/launch/LaunchPage.tsx');
 const { mockLaunch } = await import('../src/launch/phase.ts');
 const { LaunchBanner } = await import('../src/ui/LaunchBanner.tsx');
+const { TuringBanner } = await import('../src/ui/TuringBanner.tsx');
+const { mockTuringHour } = await import('../src/launch/turing.ts');
 const { TestnetPanel } = await import('../src/ui/TestnetPanel.tsx');
 const { AuctionDepositDialog, AUCTION_WARNING } = await import('../src/launch/AuctionDeposit.tsx');
 const { PracticeResultDialog } = await import('../src/screens/PracticeResult.tsx');
@@ -942,6 +944,30 @@ try {
   g.innerWidth = 1280;
   ok(/REAL auction is live/.test(await bannerText({ phase: 'auction', chat: true })), 'in a chat on a wide screen it stays');
   g.innerWidth = 390;
+
+  // Turing Hour's line with its prize (v1.16): "prize" opens the rules in a new tab; on a phone the fewest words
+  const turingOf = async (turingHour: { startUtc: string; minutes: number; prize?: string }) => {
+    const tuc = new MockGameClient({ turingHour, storageKey: null, timeScale: 0.02 });
+    const tus = createStore(tuc);
+    await tus.actions.loadConfig();
+    render(h(TuringBanner, { key: 'tb' + Math.random(), store: tus }), root as unknown as Element);
+    await sleep(20);
+    const t = root.textContent;
+    const a = findEl(root as unknown as El, 'A');
+    render(null, root as unknown as Element);
+    tuc.dispose();
+    return { t, a };
+  };
+  const tp = await turingOf(mockTuringHour('soon', Date.now(), '5 NEAR')!);
+  ok(/^Turing Hour in 3 h 1[12] min · 5 NEAR prize×$/.test(tp.t) && tp.a?.textContent === 'prize' && tp.a.attrs.href === '/prize.html' && tp.a.attrs.target === '_blank', `Turing Hour soon with a prize, on a phone: "${tp.t}", "prize" opens /prize.html in a new tab`);
+  const to = await turingOf(mockTuringHour('on', Date.now(), '5 NEAR')!);
+  ok(to.t === 'Turing Hour is on · 5 NEAR prize×' && to.a?.attrs.href === '/prize.html', `during the hour, on a phone: "${to.t}"`);
+  const tn = await turingOf(mockTuringHour('on')!);
+  ok(/^Turing Hour: real people here until .+×$/.test(tn.t) && !tn.a, `without a prize: the line as before, no link: "${tn.t}"`);
+  g.innerWidth = 1280;
+  const tw = await turingOf(mockTuringHour('on', Date.now(), '5 NEAR')!);
+  ok(/^Turing Hour is on until .+: real people are here now · 5 NEAR prize×$/.test(tw.t) && tw.a?.attrs.target === '_blank', `wide: the whole line, then the prize: "${tw.t}"`);
+  g.innerWidth = 390;
 } catch (e) {
   failures++;
   console.log('  FAIL', e);
@@ -955,7 +981,7 @@ for (const f of ['PracticeResult.tsx', 'Countdown.tsx', 'Results.tsx', 'Verify.t
   const src = readFileSync(join(here, '..', 'src', 'screens', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `${f}: no banned vocabulary`);
 }
-for (const f of ['LaunchPage.tsx', 'BigClock.tsx', 'phase.ts', 'index.tsx', '../ui/LaunchBanner.tsx', '../ui/TestnetPanel.tsx', '../state/airdrop.ts']) {
+for (const f of ['LaunchPage.tsx', 'BigClock.tsx', 'phase.ts', 'index.tsx', 'turing.ts', '../ui/LaunchBanner.tsx', '../ui/TuringBanner.tsx', '../ui/TestnetPanel.tsx', '../state/airdrop.ts']) {
   const src = readFileSync(join(here, '..', 'src', 'launch', f), 'utf8');
   ok(!banned.test(src.replace(/\/\/.*$/gm, '')), `launch/${f}: no banned vocabulary`);
 }

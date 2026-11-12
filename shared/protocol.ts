@@ -1,4 +1,5 @@
-// Realsies relay <-> web protocol, v1.15 (2026-11-11: SwapQuote.swapIn, a buy's exact-input Swap, which chart sites count as a buy; additive).
+// Realsies relay <-> web protocol, v1.16 (2026-11-12: PublicConfig.turingHour.prize, the Turing Hour prize in the hour's line with a link to its rules; additive).
+// v1.15 (2026-11-11: SwapQuote.swapIn, a buy's exact-input Swap, which chart sites count as a buy; additive).
 // v1.14 (2026-11-10: the practice chat, one free try for a visitor without a wallet: PublicConfig.practice, GET and POST /api/practice, /ws?practice=, ServerMsg practice_result; additive).
 // v1.13 (2026-11-10: PublicConfig.turingHour, the daily Turing Hour when real people are promised in the room; additive).
 // v1.12 (2026-11-10: coins for NEAR and back on Rhea: PublicConfig.swap and nearPerCoin, GET /api/swap/quote and SwapQuote, WalletInfo.nearBalance, wrapRegistered, wnearBalance and wrapStorageDeposit; additive).
@@ -118,8 +119,12 @@ export interface PublicConfig {
    * Turing Hour: every day from `startUtc` ("HH:MM", UTC) for `minutes`, real people are promised to be in the room.
    * Sent when the relay has TURING_HOUR_UTC. The web shows one line from 6 hours before the start until the end
    * (shared/turing.ts works out when), never while the launch banner shows.
+   * v1.16, `prize`: the hour's prize, free text of at most 80 characters as the line shows it, e.g. "5 NEAR"; sent while
+   * the relay has TURING_PRIZE, absent = no prize. The line then ends in "· 5 NEAR prize" before and during the hour,
+   * the word "prize" (the text's own, or added after it) a link to the rules at /prize.html in a new tab; on a phone
+   * what follows that word is left out. The words around it are the web's; amounts come only from here.
    */
-  turingHour?: { startUtc: string; minutes: number };
+  turingHour?: { startUtc: string; minutes: number; prize?: string };
   // ----- v1.14, optional -----
   /**
    * The practice chat: a visitor without a wallet may try `perDay` chats a day (per device and per IP) with a house

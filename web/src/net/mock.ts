@@ -94,8 +94,8 @@ export interface MockOptions {
   priceMoves?: boolean;
   /** a relay from before v1.15: buy quotes have no swapIn, so the web buys with SwapByOutput */
   swapByOutput?: boolean;
-  /** Turing Hour (protocol v1.13, PublicConfig.turingHour) */
-  turingHour?: { startUtc: string; minutes: number };
+  /** Turing Hour (protocol v1.13, PublicConfig.turingHour; v1.16: with its prize) */
+  turingHour?: { startUtc: string; minutes: number; prize?: string };
   /** the practice chat (protocol v1.14, PublicConfig.practice): tries a day per device; default 1, 0 = off */
   practicePerDay?: number;
   /** every guest's practice chats for today are gone: a try is refused with practice_cap (QA: &practicecap=1) */

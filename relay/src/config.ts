@@ -148,7 +148,10 @@ export interface Config {
    * summaries and the end of Turing Hour posted to the channel; off unless both are set, and never in test mode.
    */
   telegram?: TelegramSettings;
-  /** TURING_HOUR_UTC ("HH:MM") and TURING_HOUR_MINUTES: PublicConfig.turingHour, the daily hour with real people. Unset: none. */
+  /**
+   * TURING_HOUR_UTC ("HH:MM") and TURING_HOUR_MINUTES: PublicConfig.turingHour, the daily hour with real people. Unset:
+   * none. TURING_PRIZE (v1.16): its prize as the line shows it ("5 NEAR"), only with the hour.
+   */
   turingHour?: TuringHourSetting;
   // ---------- the practice chat (protocol v1.14, src/game/practice.ts) ----------
   /**
@@ -239,10 +242,18 @@ export function checkLaunch(l: LaunchConfig): void {
   if (l.telegramUrl !== undefined && !isTelegramUrl(l.telegramUrl)) throw new Error('LAUNCH_TELEGRAM_URL must be an https link on t.me or telegram.me');
 }
 
-/** TURING_HOUR_UTC and TURING_HOUR_MINUTES (undefined when the hour is not set); a value that cannot work throws. */
+/** TURING_PRIZE (protocol v1.16): free text of at most this many characters. */
+export const TURING_PRIZE_MAX = 80;
+
+/**
+ * TURING_HOUR_UTC, TURING_HOUR_MINUTES and TURING_PRIZE (undefined when the hour is not set); a value that cannot work
+ * throws. A prize without the hour has nowhere to show and is left out, so a prize in the env file the testnet and
+ * mainnet relays share never stops a relay without Turing Hour.
+ */
 export function turingHourFromEnv(env: NodeJS.ProcessEnv): TuringHourSetting | undefined {
   const at = env.TURING_HOUR_UTC?.trim();
   const mins = env.TURING_HOUR_MINUTES?.trim();
+  const prize = env.TURING_PRIZE?.trim().replace(/\s+/g, ' ');
   if (!at) {
     if (mins) throw new Error('TURING_HOUR_MINUTES needs TURING_HOUR_UTC');
     return undefined;
@@ -252,7 +263,8 @@ export function turingHourFromEnv(env: NodeJS.ProcessEnv): TuringHourSetting | u
   if (!(Number.isInteger(minutes) && minutes >= 1 && minutes <= TURING_MAX_MINUTES)) {
     throw new Error(`TURING_HOUR_MINUTES must be a whole number of minutes from 1 to ${TURING_MAX_MINUTES} (got ${mins})`);
   }
-  return { startUtc: at, minutes };
+  if (prize && [...prize].length > TURING_PRIZE_MAX) throw new Error(`TURING_PRIZE must be at most ${TURING_PRIZE_MAX} characters (got ${[...prize].length})`);
+  return { startUtc: at, minutes, ...(prize ? { prize } : {}) };
 }
 
 function num(name: string, def: number): number {

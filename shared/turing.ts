@@ -13,6 +13,8 @@ export const TURING_SOON_MS = 6 * 60 * MIN;
 export interface TuringHourSetting {
   startUtc: string;
   minutes: number;
+  /** v1.16: the hour's prize as its line shows it ("5 NEAR"), from TURING_PRIZE; absent: none. Not part of the clock. */
+  prize?: string;
 }
 
 /** "20:00" -> minutes after midnight UTC; null for anything else ("8:00", "24:00", "20:60", "20:00Z"). */

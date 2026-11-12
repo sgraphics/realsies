@@ -49,7 +49,8 @@
 //   &as=sam&qa=swap-sold&game=120  40 coins (&sell=) withdrawn as NEAR
 //   &room=1                        (any swap step) no dialog: the room, its HUD with the coins (after the buy, if any)
 // The launch (?mock=1&launch=soon|auction|finalizing): the coming-soon page, then the game with its auction banner; see src/net/index.ts.
-// Turing Hour (protocol v1.13, &turing=soon|on): the line above the room 3 h 12 min before the hour, or during it.
+// Turing Hour (protocol v1.13, &turing=soon|on): the line above the room 3 h 12 min before the hour, or during it;
+// &prize=1 with its prize (v1.16, "5 NEAR prize", "prize" linking to /prize.html), &prize=<text> with that text.
 // Only active together with ?mock=1.
 
 import type { Level } from '../../shared/protocol.ts';

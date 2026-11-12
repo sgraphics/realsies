@@ -97,6 +97,16 @@ html.kit .hud-title { padding: 2px calc(var(--upx) * 2 + 6px); }
 .hud-launch.turing-soon { background: #262b44; color: #ffffff; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.15); }
 .hud-launch.turing-on { background: #63c74d; color: #181425; }
 .hud-launch.turing-on .hud-launch-dot { border-color: #181425; }
+/* v1.16, the prize: "<the line> · 5 NEAR prize" stays one line at any width. The line's own words (.turing-w) only get
+   the room the prize leaves (basis 0, at most their own width), so they give way first, cut with "…"; then the prize's
+   text; the word "prize" (the link to the rules) never shrinks. Spaces at the parts' edges are kept (pre). */
+.hud-launch-t.turing-t { display: flex; align-items: baseline; }
+.turing-t > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.turing-t > .turing-w { flex: 1 1 0%; max-width: max-content; }
+.turing-t > .turing-l, .turing-t > .turing-r { flex: 0 1 auto; }
+.turing-a { flex: none; color: inherit; font-weight: 600; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.turing-a:hover { text-decoration-thickness: 2px; }
+.turing-a:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
 /* phones held sideways: the HUD is one short line; keep the banner as slim */
 @media (max-height: 520px) and (min-width: 700px) { .hud-launch { min-height: 24px; margin-bottom: 3px; font-size: 13px; } .hud-launch-cta { min-height: 20px; } .hud-launch-x { height: 20px; } }
 

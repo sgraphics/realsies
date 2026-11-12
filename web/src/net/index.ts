@@ -18,6 +18,8 @@
 //                               withdraws as NEAR; the mock plays wrap.testnet and the pool contract (400 coins per NEAR);
 //                               &moved=1 the price moves past every swap (nothing bought or sold, everything comes back)
 //   &turing=soon|on             Turing Hour (protocol v1.13): it starts 3 h 12 min from now, or it started 20 minutes ago
+//   &prize=1|<text>             (with &turing=) the hour's prize (v1.16, turingHour.prize): 1 is the mock's "5 NEAR", any
+//                               other text is sent as is (a long one, to see the line give way)
 //   &practice=0|N               no practice chat for guests, or N a day (protocol v1.14; on by default, one a day, like the relay)
 //   &practicecap=1              every guest's practice chats for today are gone: a try is refused (practice_cap)
 
@@ -53,7 +55,8 @@ export function createClient(search?: string): GameClient {
     const token = q.get('notoken') !== '1';
     // the video card (the launch tweet, the account, none) and the footer's Telegram and X
     const links = { tweet: q.get('tweet') !== '0', x: q.get('nox') !== '1', telegram: q.get('notg') !== '1' };
-    const turingHour = mockTuringHour(q.get('turing'));
+    const prize = q.get('prize');
+    const turingHour = mockTuringHour(q.get('turing'), Date.now(), prize === '1' ? '5 NEAR' : prize || undefined);
     const client = new MockGameClient({
       longNames: q.get('longnames') === '1',
       ...(round > 1 ? { startRoundId: round } : {}),

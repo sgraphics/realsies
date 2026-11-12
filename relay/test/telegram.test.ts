@@ -95,6 +95,26 @@ test('settings: TURING_HOUR_UTC as HH:MM and TURING_HOUR_MINUTES (default 60); u
   assert.equal('turingHour' in loadConfig({ telegram: undefined }), false, 'unset: no turingHour at all');
 });
 
+test('settings: TURING_PRIZE (v1.16), free text of at most 80 characters, only with the hour; unset or empty: no prize', () => {
+  const hour = { startUtc: '20:00', minutes: 60 };
+  assert.deepEqual(turingHourFromEnv({ TURING_HOUR_UTC: '20:00', TURING_PRIZE: ' 5  NEAR ' }), { ...hour, prize: '5 NEAR' }, 'trimmed, one space between words');
+  for (const v of ['', '   ']) assert.deepEqual(turingHourFromEnv({ TURING_HOUR_UTC: '20:00', TURING_PRIZE: v }), hour, `${JSON.stringify(v)}: no prize`);
+  assert.equal(turingHourFromEnv({ TURING_HOUR_UTC: '20:00', TURING_PRIZE: '🏆'.repeat(80) })?.prize, '🏆'.repeat(80), '80 characters (counted as characters, not UTF-16 units): fine');
+  assert.throws(() => turingHourFromEnv({ TURING_HOUR_UTC: '20:00', TURING_PRIZE: 'x'.repeat(81) }), /TURING_PRIZE must be at most 80 characters \(got 81\)/);
+  assert.equal(turingHourFromEnv({ TURING_PRIZE: '5 NEAR' }), undefined, 'without the hour: left out, never a stop (both relays read one env file)');
+  // and through loadConfig, the way the relay starts
+  process.env.TURING_HOUR_UTC = '20:00';
+  process.env.TURING_PRIZE = '5 NEAR';
+  try {
+    assert.deepEqual(loadConfig({ telegram: undefined }).turingHour, { ...hour, prize: '5 NEAR' });
+    process.env.TURING_PRIZE = 'x'.repeat(81);
+    assert.throws(() => loadConfig({ telegram: undefined }), /TURING_PRIZE must be at most 80 characters/);
+  } finally {
+    delete process.env.TURING_HOUR_UTC;
+    delete process.env.TURING_PRIZE;
+  }
+});
+
 test('the hour by the clock: on, soon from 6 hours before, off; the last hour over', () => {
   const t = { startUtc: '20:00', minutes: 60 };
   const day = Date.UTC(2026, 10, 10);
@@ -375,5 +395,26 @@ test('a slow Telegram does not hold up the round: results come at once, the summ
   } finally {
     for (const c of clients) c.close();
     await app.close();
+  }
+});
+
+// ---------- the prize in the relay's config (v1.16; an app sets the log level for the whole file: keep it last) ----------
+
+test('PublicConfig.turingHour carries the prize (v1.16), and none without it', { timeout: 60_000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'realsies-prize-'));
+  for (const turingHour of [{ startUtc: '20:00', minutes: 60, prize: '5 NEAR' }, { startUtc: '20:00', minutes: 60 }]) {
+    const app = await createApp(
+      {
+        port: 0, dbPath: path.join(dir, `relay-${'prize' in turingHour ? 'prize' : 'none'}.db`), chain: 'mock', nearAi: 'mock', logLevel: 'error', idleMinutes: 0,
+        webDist: path.join(dir, 'no-web'), botmastersDir: path.join(dir, 'botmasters'), telegram: undefined, turingHour,
+      },
+      { chain: new MockChain() },
+    );
+    try {
+      const cfg = (await (await fetch(`http://localhost:${app.port}/api/config`)).json()) as { turingHour?: unknown };
+      assert.deepEqual(cfg.turingHour, turingHour);
+    } finally {
+      await app.close();
+    }
   }
 });

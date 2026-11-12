@@ -1,11 +1,13 @@
 // Turing Hour in the room (protocol v1.13): the line's three states from (now, config) alone: from 6 hours before
 // the start with a countdown, during the hour, otherwise nothing; times in the visitor's zone, "today" or "tomorrow"
-// by the visitor's calendar; never while the launch banner shows; and the mock relay's hours for the QA shots.
+// by the visitor's calendar; never while the launch banner shows; and the mock relay's hours for the QA shots. The
+// prize (v1.16): " · 5 NEAR prize" after the line, before and during the hour, its text only from the config.
 
 const T = await import('../src/launch/turing.ts');
 const { mockConfig } = await import('../src/net/mock.ts');
 const { turingNow } = await import('../../shared/turing.ts');
 import type { PublicConfig } from '../../shared/protocol.ts';
+import { readFileSync } from 'node:fs';
 
 let failures = 0;
 let passes = 0;
@@ -84,6 +86,64 @@ console.log('the mock relay\'s hours (QA: &turing=soon|on)');
   eq(turingNow(on, now)?.phase, 'on', 'on: started 20 minutes ago');
   eq(T.mockTuringHour(null, now), undefined, 'no &turing: no hour');
   eq(mockConfig({ turingHour: soon }).turingHour?.startUtc, '12:53', 'mockConfig carries it');
+  eq('prize' in soon, false, 'no &prize: no prize');
+  const prized = T.mockTuringHour('on', now, '5 NEAR')!;
+  eq(prized.prize, '5 NEAR', '&prize: the hour carries the prize text');
+  eq(mockConfig({ turingHour: prized }).turingHour?.prize, '5 NEAR', 'and so does the mock config');
+}
+
+console.log('the prize (v1.16): after the line, before and during the hour');
+{
+  const withPrize = (prize: string) => cfg({ turingHour: { startUtc: '20:00', minutes: 60, prize } });
+  const soon = T.turingLine(withPrize('5 NEAR'), START - (3 * H + 12 * MIN), BERLIN)!;
+  eq(T.lineWords(soon, true), 'Turing Hour in 3 h 12 min · 5 NEAR prize', 'soon, on a phone: the countdown and the prize');
+  eq(T.lineWords(soon, false), 'Turing Hour today at 21:00: real people in the room. Starts in 3 h 12 min · 5 NEAR prize', 'soon, wide: the whole line, then the prize');
+  eq(soon.short, 'Turing Hour in 3 h 12 min', 'the words stop before the prize');
+  ok(soon.prize?.lead === '5 NEAR ' && soon.prize.word === 'prize' && soon.prize.tail === '', 'the word "prize" (the link to the rules) is a part of its own');
+  const on = T.turingLine(withPrize('5 NEAR'), START + 20 * MIN, BERLIN)!;
+  eq(on.phase, 'on', 'during the hour: on');
+  eq(T.lineWords(on, true), 'Turing Hour is on · 5 NEAR prize', 'on, on a phone');
+  eq(T.lineWords(on, false), 'Turing Hour is on until 22:00: real people are here now · 5 NEAR prize', 'on, wide');
+  eq(T.turingLine(withPrize('5 NEAR'), START + H, UTC), null, 'the hour over: nothing, prize or not');
+  eq(T.turingLine(withPrize('5 NEAR'), START - 6 * H - 1, UTC), null, 'more than 6 hours before: nothing');
+
+  // without a prize the line is as it was
+  const plain = T.turingLine(cfg(), START - (3 * H + 12 * MIN), BERLIN)!;
+  eq(plain.prize, undefined, 'no prize: no prize part');
+  eq(T.lineWords(plain, true), 'Turing Hour at 21:00 · starts in 3 h 12 min', 'no prize, soon, on a phone: as before');
+  eq(T.lineWords(plain, false), 'Turing Hour today at 21:00: real people in the room. Starts in 3 h 12 min.', 'no prize, soon, wide: as before');
+  const plainOn = T.turingLine(cfg(), START + 20 * MIN, BERLIN)!;
+  eq(T.lineWords(plainOn, true), 'Turing Hour: real people here until 22:00', 'no prize, on, on a phone: as before');
+  eq(T.lineWords(plainOn, false), 'Turing Hour is on until 22:00: real people are here now.', 'no prize, on, wide: as before');
+  for (const p of ['', '   ']) eq(T.turingLine(withPrize(p), START, UTC)?.prize, undefined, `prize ${JSON.stringify(p)}: none`);
+
+  // the text is the relay's: any amount, the word never doubled, on a phone what follows the word left out
+  eq(T.lineWords(T.turingLine(withPrize('10 NEAR'), START, UTC)!, true), 'Turing Hour is on · 10 NEAR prize', 'another amount: the config\'s');
+  eq(T.lineWords(T.turingLine(withPrize('5 NEAR prize'), START, UTC)!, true), 'Turing Hour is on · 5 NEAR prize', 'a text with the word: not doubled');
+  const long = T.turingLine(withPrize('5 NEAR prize for the three best callers'), START, UTC)!;
+  eq(T.lineWords(long, false), 'Turing Hour is on until 21:00: real people are here now · 5 NEAR prize for the three best callers', 'wide: the whole text');
+  eq(T.lineWords(long, true), 'Turing Hour is on · 5 NEAR prize', 'on a phone: up to the word, the rest left out');
+  eq(T.lineWords(T.turingLine(withPrize('Prize: 5 NEAR'), START, UTC)!, true), 'Turing Hour is on · Prize: 5 NEAR', 'the word first: nothing left out');
+  eq(JSON.stringify(T.prizeParts('  5   NEAR  ')), JSON.stringify({ lead: '5 NEAR ', word: 'prize', tail: '' }), 'spaces tidied');
+  eq(JSON.stringify(T.prizeParts('5 NEAR in prizes')), JSON.stringify({ lead: '5 NEAR in ', word: 'prizes', tail: '' }), '"prizes" is the word too');
+  eq(T.prizeParts(undefined), null, 'no text: no prize');
+
+  // the launch banner still wins
+  const launch = { auctionStart: START - 2 * H, auctionEnd: START + 22 * H };
+  const mainnet = cfg({ ...mockConfig({ wallet: true, coinsOpen: false, mainnet: true }), turingHour: { startUtc: '20:00', minutes: 60, prize: '5 NEAR' }, launch });
+  eq(T.turingLine(mainnet, START, UTC), null, 'the auction banner is up: no line, no prize');
+
+  // no amount in the web's own code: the prize's words come from the config only (comments may give examples)
+  const code = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8').replace(/\/\*[^]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  for (const f of ['../src/launch/turing.ts', '../src/ui/TuringBanner.tsx']) ok(!/\bNEAR\b/.test(code(f)), `${f.slice(7)}: no amount of its own`);
+}
+
+console.log('the rules page (web/public/prize.html)');
+{
+  const page = readFileSync(new URL('../public/prize.html', import.meta.url), 'utf8');
+  ok(/<title>Turing Hour prize<\/title>/.test(page) && /<h1>Turing Hour prize<\/h1>/.test(page), 'its title');
+  ok(!/\b(bet|bets|betting|stake|staking|odds|wager|pool|market)\b/i.test(page), 'no banned vocabulary');
+  ok(page.includes('href="/terms.html"') && page.includes('https://x.com/realsieslol') && page.includes('https://t.me/realsieslol'), 'the Terms of Use, X and Telegram linked');
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

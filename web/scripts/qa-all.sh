@@ -145,6 +145,10 @@ add turing-on          "mock=1&as=ana&level=1&turing=on" 8000 "$TURINGSIZES"
 add turing-guest       "mock=1&qa=guest&turing=on" 8000 "360x640:2 1280x720:1"
 add turing-launch      "mock=1&launch=auction&turing=on&as=sam&level=1" 8000 "360x640:2 1280x720:1"
 add turing-chat        "mock=1&as=ana&qa=chat&long=1&level=1&turing=on" 16000 "360x640:2 1280x720:1"
+# its prize (v1.16, &prize=1: the mock's "5 NEAR"): " · 5 NEAR prize" after the line, "prize" linking to the rules page
+add turing-prize-soon  "mock=1&as=ana&level=1&turing=soon&prize=1" 8000 "$TURINGSIZES"
+add turing-prize-on    "mock=1&as=ana&level=1&turing=on&prize=1" 8000 "$TURINGSIZES"
+add prize-page         "/prize.html" 3000 "360x640:2 390x844:3 1280x720:1"
 # the pages for AI builders (a path instead of a query: qa-shot.sh loads it as is)
 add agents          "/agents?mock=1&qa=top" 7000
 add agents-form     "/agents?mock=1&qa=form" 7000
