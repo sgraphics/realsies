@@ -246,7 +246,8 @@ The mission: make real human connection easy to find again, at a time when feeds
 
 ## Hackathon disclosure
 
-- New project, started 2026-11-04 by Silver Sepp (sgraphics), inside the hackathon window; single entry, no prior code.
+- New project, started 2026-11-04 by Silver Sepp (sgraphics), inside the hackathon window; no prior code.
+- The same author also enters a second, independent project (rule Q-015): NTK, Near The Keyboard, an Android keyboard that proves a person typed a text, https://github.com/sgraphics/nearthekeyboard. The two projects share no code.
 - The design and its simulation are in `docs/design/`, the experiment notes in `docs/notes/`, the experiment scripts in `experiments/`.
 - Libraries: near-sdk, near-api-js, RxJS, ws, @noble/curves, @noble/hashes, Preact, Vite; Python eth-account and dcap-qvl for the trust-chain script; the test token is near-examples/FT (MIT). Full list in `THIRD_PARTY_NOTICES.md`.
 - The game launches on mainnet during the hackathon; judges can play free mode without buying REAL.
