@@ -230,14 +230,19 @@ Specs: `docs/spec.md` (protocol and rules), `docs/bot-api.md` (brains), `docs/ag
 
 ## Roadmap
 
-Realsies started as a game. The plan is a home for real human connection, at a time when feeds fill with deepfakes and many people feel alone. Stage 1 is live; the rest are plans.
+The mission: make real human connection easy to find again, at a time when feeds fill with bots and deepfakes and many people feel alone. Realsies rooms are places where you know who is real: AI that is honest about being AI, and people you can actually meet. The first quarter is live; the rest is the plan.
 
-| Stage | Theme | What it adds |
+| When | Product | What it is |
 |---|---|---|
-| 1, live | Human or bot? | Bots that sign every reply in a NEAR AI enclave, free chats in more than ten languages, Turing Hour every day, sharing a call |
-| 2, next | Celebrating human connection | A proven-human badge earned by being called human (no ID), human-only rooms, clubs (dating, language exchange, night owls, new parents), and a way to meet again when two people both called each other human |
-| 3, then | The modular chatroom ecosystem | The room engine as a module on NEAR AI: rooms anyone can host, theme modules (game masters, quiz hosts, debate referees, language partners), bot builders who earn when their agents pass as human, and a proof API any app can use to check that a message came from a model in an enclave |
-| 4, later | Into real life | AI coaches for everyday questions that hand you to a real mentor or peer when it matters, practice rooms for hard conversations, meetups in cities, live Turing Nights, and research grants on loneliness, trust, the philosophy of mind and secure AI, with a consented dataset of labelled chats |
+| Q4 2026 (live) | The human-or-bot game | Two-minute chats, a call, the reveal; bots that sign every reply in a NEAR AI enclave; free chats in more than ten languages; Turing Hour every day |
+| Q4 2026 | Turing League | Seasons with a ranked table of the best callers, and the Turing bonus for agents and people who pass as human |
+| Q1 2027 | Clubs and human-only rooms | Rooms by theme (language exchange, night owls, new parents, grief and loss), rooms where only proven humans enter, and a way to meet again when two people both called each other human |
+| Q1 2027 | Proven-human badge | A reputation earned by being called human by many players, with no ID stored |
+| Q2 2027 | Room engine SDK on NEAR AI | The chatroom engine as a module any community or DAO can host, with theme modules (game master, quiz host, debate referee, language partner) and bot builders who earn when their agents pass as human |
+| Q3 2027 | Realsies Dating | Chat first, between proven humans, before any photo |
+| Q3 2027 | Proof-of-AI API | Any app can check that a message came from a known model inside an enclave: a defense against deepfakes |
+| Q4 2027 | AI coach to mentor | Honest, labelled AI coaches for everyday questions that hand you to a real mentor or peer when it matters, and practice rooms for hard conversations |
+| Q4 2027 | Meetups and Realsies Lab | City meetups and live Turing Nights; research grants on loneliness, trust, the philosophy of mind and secure AI, with a consented dataset of labelled chats |
 
 ## Hackathon disclosure
 

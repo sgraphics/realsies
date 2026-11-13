@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { createBuffer } from '../src/art.ts';
 import { writeRgbPng } from '../src/engine/png.ts';
 import { roadmapSquare, roadmapText } from '../src/scenes/promo/roadmap.ts';
+import { roadmapMap, roadmapMapText } from '../src/scenes/promo/roadmapmap.ts';
 
 const BANNED = /\b(bets?|betting|stakes?|staking|odds|wagers?|pools?|markets?|prices?)\b/i;
-const bad = roadmapText().filter((t) => BANNED.test(t));
+const bad = [...roadmapText(), ...roadmapMapText()].filter((t) => BANNED.test(t));
 if (bad.length) {
   console.error(`words the game does not use: ${bad.join(' | ')}`);
   process.exit(1);
@@ -21,13 +22,15 @@ const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(PKG, 'out', 'promo');
 const DASHBOARD = join(PKG, '..', '.bl0x', 'topics', 'near-hackathon', 'promo');
 mkdirSync(OUT, { recursive: true });
-const b = createBuffer(1080, 1080);
-roadmapSquare(b);
-const f = join(OUT, 'roadmap.png');
-writeRgbPng(f, b);
-console.log(`wrote ${f}`);
-if (process.argv.includes('--dashboard')) {
-  mkdirSync(DASHBOARD, { recursive: true });
-  copyFileSync(f, join(DASHBOARD, 'roadmap.png'));
-  console.log(`copied to ${DASHBOARD}`);
+// roadmap.png: the four stages in boxes; roadmap-map.png: the quarters to the end of 2027 as an overworld map
+for (const [name, draw] of [['roadmap.png', roadmapSquare], ['roadmap-map.png', roadmapMap]] as const) {
+  const b = createBuffer(1080, 1080);
+  draw(b);
+  const f = join(OUT, name);
+  writeRgbPng(f, b);
+  console.log(`wrote ${f}`);
+  if (process.argv.includes('--dashboard')) {
+    mkdirSync(DASHBOARD, { recursive: true });
+    copyFileSync(f, join(DASHBOARD, name));
+  }
 }
