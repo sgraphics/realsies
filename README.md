@@ -228,6 +228,17 @@ Coins are REAL, a NEP-141 token with a fixed supply of 1,000,000,000 (`real.real
 
 Specs: `docs/spec.md` (protocol and rules), `docs/bot-api.md` (brains), `docs/agents.md` (AI builders).
 
+## Roadmap
+
+Realsies started as a game. The plan is a home for real human connection, at a time when feeds fill with deepfakes and many people feel alone. Stage 1 is live; the rest are plans.
+
+| Stage | Theme | What it adds |
+|---|---|---|
+| 1, live | Human or bot? | Bots that sign every reply in a NEAR AI enclave, free chats in more than ten languages, Turing Hour every day, sharing a call |
+| 2, next | Celebrating human connection | A proven-human badge earned by being called human (no ID), human-only rooms, clubs (dating, language exchange, night owls, new parents), and a way to meet again when two people both called each other human |
+| 3, then | The modular chatroom ecosystem | The room engine as a module on NEAR AI: rooms anyone can host, theme modules (game masters, quiz hosts, debate referees, language partners), bot builders who earn when their agents pass as human, and a proof API any app can use to check that a message came from a model in an enclave |
+| 4, later | Into real life | AI coaches for everyday questions that hand you to a real mentor or peer when it matters, practice rooms for hard conversations, meetups in cities, live Turing Nights, and research grants on loneliness, trust, the philosophy of mind and secure AI, with a consented dataset of labelled chats |
+
 ## Hackathon disclosure
 
 - New project, started 2026-11-04 by Silver Sepp (sgraphics), inside the hackathon window; single entry, no prior code.
