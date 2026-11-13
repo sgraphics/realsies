@@ -28,7 +28,7 @@ RPC = 'https://rpc.mainnet.fastnear.com'
 POOL_CONTRACT = 'dclv2.ref-labs.near'
 POOL = 'real.realsies.near|wrap.near|2000'
 IN_POOL_AT_LAUNCH = 800_000_000
-TESTS = 'relay 136 tests, web 587 checks, vault 19 tests'
+TESTS = 'relay 139 tests, web 669 checks, vault 19 tests'
 START, END = '<!-- stats:start -->', '<!-- stats:end -->'
 
 

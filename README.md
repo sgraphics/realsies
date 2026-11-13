@@ -51,15 +51,15 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 - REAL coin, NEP-141
 - Rhea pool, locked
 
-## Status, 2026-11-11
+## Status, 2026-11-13
 
 | Part | State |
 |---|---|
 | Game on testnet | Live at https://testnet.realsies.lol: test users or a testnet wallet, test coins (tREAL), 10-minute rounds, real NEAR AI enclave bots, settlement on chain. The latest end-to-end run against the live server passed 100 checks in round 137 |
 | AI builders side | Live: `/agents` (pitch and access request), `/agents/dashboard` (scorecards, transcripts, export, own NEAR AI key, persona requests), botmaster API, `docs/agents.md` |
-| Mainnet game | Live at https://realsies.lol: `game.realsies.near`, wallet sign-in, free play every day, and coins (REAL) since Nov 10. Turing Hour every day at 20:00 UTC, when real people are in the room |
+| Mainnet game | Live at https://realsies.lol: `game.realsies.near`, wallet sign-in, free play every day, and coins (REAL) since Nov 10. Turing Hour every day at 20:00 UTC, when real people are in the room; on Nov 12 it carried a 5 NEAR prize for the three best callers, paid by the team (`realsies.lol/prize.html`, `scripts/turing-winners.py`) |
 | REAL coin | `real.realsies.near`: a fixed supply of 1,000,000,000, no minting, and the token account has no keys. 800,000,000 sit in one Rhea pool position that started with no NEAR and whose account has no keys, so the liquidity cannot be taken out. 200,000,000 are the team's share in `vault.realsies.near` (`contracts/vault`, no owner): nothing before Nov 17, everything by Dec 8. Launched on Nov 10 at 15:00 UTC with `scripts/launch-real.mjs` after a full rehearsal on testnet: [token](https://nearblocks.io/address/real.realsies.near), [vault](https://nearblocks.io/address/vault.realsies.near), [liquidity account](https://nearblocks.io/address/liquidity.realsies.near), pool `real.realsies.near|wrap.near|2000` on `dclv2.ref-labs.near`. The facts with explorer links are at https://realsies.lol/token.html |
-| Free try | One practice chat without a wallet, on mainnet and testnet: always one of the house bots, the reveal right after the call, kept outside the rounds so it can never tell who is a bot in a running round (`relay/src/game/practice.ts`) |
+| Free chats | Five practice chats a day without a wallet, on mainnet and testnet (and at most 20 per network): always one of the house bots, the reveal right after the call, "Play again" for the next one, kept outside the rounds so it can never tell who is a bot in a running round. The house bot is picked to speak the visitor's language when one does (from the browser's language: Arabic, Russian, Indonesian, Korean, Japanese, Spanish, Portuguese, French, German and more), and a bot never answers in a language its person doesn't know (`relay/src/game/practice.ts`) |
 | Wallet sign-in | NEAR Connect: one NEP-413 signature to sign in, a browser function-call key for plays and calls without popups; live on mainnet and testnet. A brand-new wallet signs in before its account is on chain (an implicit account is let in by its own key until someone sends it NEAR) |
 | Share a call | After a reveal, "Share" opens a ready post (the share sheet on a phone, X elsewhere) with a link whose preview is the card for that outcome: "A bot fooled me", "I spotted the bot", "I found the human", "I took a human for a bot" (`web/src/state/share.ts`, `web/public/s/`) |
 | Coins for NEAR | Inside the game: pay NEAR and the coins are in the game after one wallet approval (wrap, swap on Rhea, deposit); withdraw coins as plain NEAR the same way. Players never visit an exchange. A buy is an exact-input swap, the kind chart sites count as a buy (`web/src/wallet/swap.ts`, `relay/src/swap.ts`) |
@@ -67,18 +67,18 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 ## Numbers so far
 
 <!-- stats:start -->
-Counted on 2026-11-12 at 07:39 UTC by `scripts/stats.py`, from the game's own records and the chain.
+Counted on 2026-11-13 at 08:02 UTC by `scripts/stats.py`, from the game's own records and the chain.
 
 | | |
 |---|---|
-| Mainnet game (since Nov 9) | 13 rounds settled on chain, 31 chats in rounds, 12 free chats by guests |
-| Players | 7 wallets have played (4 of them outside the team); about 90 different browsers have opened realsies.lol (counted by user agent, an estimate) |
-| Can people tell? | visitors called it right 5 times out of 10 |
-| Bots | 223 bot replies on mainnet, 223 of them signed in a NEAR AI enclave; 26 enclave attestations checked; NEAR AI has cost $0.05 so far, testnet included |
-| Chain | 201 transactions by the mainnet relay, 0 failed. Testnet since Nov 4: 167 rounds settled, 1,359 transactions |
+| Mainnet game (since Nov 9) | 16 rounds settled on chain, 34 chats in rounds, 25 free chats by guests |
+| Players | 8 wallets have played (5 of them outside the team); about 101 different browsers have opened realsies.lol (counted by user agent, an estimate) |
+| Can people tell? | visitors called it right 13 times out of 19 |
+| Bots | 305 bot replies on mainnet, 305 of them signed in a NEAR AI enclave; 32 enclave attestations checked; NEAR AI has cost $0.07 so far, testnet included |
+| Chain | 233 transactions by the mainnet relay, 0 failed. Testnet since Nov 4: 167 rounds settled, 1,359 transactions |
 | REAL | 13.7 million REAL (1.4% of the supply) bought out of the pool; 3.55 NEAR paid in, 0.07 NEAR paid out, 3.48 NEAR in the pool. Most of it is the team's own play so far |
-| Community | X @realsieslol: 67 followers, Telegram t.me/realsieslol: 11 members |
-| Code | 90 commits since Nov 4; relay 136 tests, web 587 checks, vault 19 tests |
+| Community | X @realsieslol: 67 followers, Telegram t.me/realsieslol: 8 members |
+| Code | 96 commits since Nov 4; relay 139 tests, web 669 checks, vault 19 tests |
 <!-- stats:end -->
 
 ## The problem
@@ -107,7 +107,7 @@ cd ../art && npm install
 cd ../relay && npm install && npm run build && npm start   # http://localhost:3960
 ```
 
-The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (133 tests) and `web` (nine suites), `cargo test` in `contracts/game` (16) and `contracts/vault` (19), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
+The relay needs `relay/.secrets/testnet.json` (created by `scripts/setup-testnet.sh`) and `NEAR_AI_API_KEY` in the repo-root `.env`. Without the secrets it runs on an in-memory mock chain; `web` also has a full in-browser mock at `http://localhost:5173/?mock=1` after `npm run dev`. Tests: `npm test` in `relay` (139 tests) and `web` (nine suites), `cargo test` in `contracts/game` (16) and `contracts/vault` (19), and `RELAY_URL=https://testnet.realsies.lol npm run e2e` in `relay` for the live end-to-end run on testnet.
 
 The trust chain also runs on its own, without the game:
 
