@@ -67,18 +67,18 @@ Demo (testnet, no wallet needed): https://testnet.realsies.lol · Mainnet: https
 ## Numbers so far
 
 <!-- stats:start -->
-Counted on 2026-11-14 at 16:01 UTC by `scripts/stats.py`, from the game's own records and the chain.
+Counted on 2026-11-14 at 23:02 UTC by `scripts/stats.py`, from the game's own records and the chain.
 
 | | |
 |---|---|
-| Mainnet game (since Nov 9) | 17 rounds settled on chain, 34 chats in rounds, 30 free chats by guests |
+| Mainnet game (since Nov 9) | 17 rounds settled on chain, 34 chats in rounds, 32 free chats by guests |
 | Players | 8 wallets have played (5 of them outside the team); about 103 different browsers have opened realsies.lol (counted by user agent, an estimate) |
-| Can people tell? | visitors called it right 15 times out of 21 |
-| Bots | 331 bot replies on mainnet, 331 of them signed in a NEAR AI enclave; 34 enclave attestations checked; NEAR AI has cost $0.07 so far, testnet included |
+| Can people tell? | visitors called it right 16 times out of 23 |
+| Bots | 343 bot replies on mainnet, 343 of them signed in a NEAR AI enclave; 34 enclave attestations checked; NEAR AI has cost $0.07 so far, testnet included |
 | Chain | 240 transactions by the mainnet relay, 0 failed. Testnet since Nov 4: 167 rounds settled, 1,359 transactions |
 | REAL | 13.7 million REAL (1.4% of the supply) bought out of the pool; 3.55 NEAR paid in, 0.07 NEAR paid out, 3.48 NEAR in the pool. Most of it is the team's own play so far |
-| Community | X @realsieslol: 67 followers, Telegram t.me/realsieslol: 8 members |
-| Code | 102 commits since Nov 4; relay 139 tests, web 669 checks, vault 19 tests |
+| Community | X @realsieslol: 82 followers, Telegram t.me/realsieslol: 8 members |
+| Code | 103 commits since Nov 4; relay 139 tests, web 669 checks, vault 19 tests |
 <!-- stats:end -->
 
 ## The problem
