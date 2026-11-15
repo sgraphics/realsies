@@ -35,10 +35,14 @@ def own_accounts():
 
 
 def fetch(since):
-    day = f'{since:%d/%b/%Y}'
-    today = f'{datetime.datetime.now(datetime.timezone.utc):%d/%b/%Y}'
-    days = '|'.join(sorted({day, today}))
-    sh = (f"cat /var/log/nginx/access.log.1 /var/log/nginx/access.log 2>/dev/null | grep -E '{days}' | grep 'realsies.lol' | grep -v 'testnet.realsies' "
+    # every day from the start to today, so a span of several days misses none in between
+    now = datetime.datetime.now(datetime.timezone.utc)
+    d, wanted = since.date(), set()
+    while d <= now.date():
+        wanted.add(f'{d:%d/%b/%Y}')
+        d += datetime.timedelta(days=1)
+    days = '|'.join(sorted(wanted))
+    sh = (f"zcat -f /var/log/nginx/access.log.2.gz /var/log/nginx/access.log.1 /var/log/nginx/access.log 2>/dev/null | grep -E '{days}' | grep 'realsies.lol' | grep -v 'testnet.realsies' "
           "| grep -E '/api/config|/api/practice|/api/auth/verify'; echo ===JOURNAL===; "
           f"journalctl -u realsies-mainnet --since '{since:%Y-%m-%d %H:%M:%S} UTC' --no-pager -o cat | grep -E '\\[game\\] match |\\[auth\\] session for'")
     r = subprocess.run(['ssh', '-o', 'ConnectTimeout=15', '-o', 'BatchMode=yes', SERVER, sh], capture_output=True, timeout=120)
